@@ -50,6 +50,13 @@ export interface UsePointerInkOptions {
   /** Strokes temporarily hidden while the stroke eraser drags over them. */
   hiddenIdsRef: RefObject<Set<string>>;
   allowMouse: boolean;
+  /**
+   * CSS pixels per drawing unit (the page zoom). Pointer positions are divided
+   * by this so strokes are stored in page-local units. Default 1.
+   */
+  contentScaleRef?: RefObject<number>;
+  /** Fired when an accepted pointer starts any session (used to activate a page). */
+  onInteractionStart?: () => void;
   onCommitStroke: (stroke: Stroke) => void;
   onEraseStrokes: (ids: ReadonlySet<string>) => void;
   /** Full replay of the committed layer (honours `hiddenIdsRef`). */
@@ -86,6 +93,7 @@ interface InkSession {
   readonly pointerType: InkPointerType;
   readonly builder: StrokeBuilder;
   readonly rect: DOMRect;
+  readonly scale: number;
   readonly snap: SnapState | null;
 }
 
@@ -97,6 +105,7 @@ interface ShapeSession {
   readonly tool: ShapeTool;
   readonly style: StrokeStyle;
   readonly rect: DOMRect;
+  readonly scale: number;
   readonly start: Point;
   readonly planeConfig: CoordinatePlaneConfig;
   readonly angleSnapDeg: number | undefined;
@@ -113,6 +122,7 @@ interface EraseSession {
   readonly radius: number;
   readonly hits: Set<string>;
   readonly rect: DOMRect;
+  readonly scale: number;
   last: InkPoint;
 }
 
@@ -123,10 +133,15 @@ interface PenState {
   lastSeen: number;
 }
 
-function toInkPoint(e: PointerEvent, rect: DOMRect): InkPoint {
+/**
+ * Project a viewport position into drawing units: subtract the surface's
+ * on-screen origin (which already accounts for any scroll offsets, since
+ * `getBoundingClientRect` is viewport-relative) and undo the zoom.
+ */
+function toInkPoint(e: PointerEvent, rect: DOMRect, scale: number): InkPoint {
   return {
-    x: e.clientX - rect.left,
-    y: e.clientY - rect.top,
+    x: (e.clientX - rect.left) / scale,
+    y: (e.clientY - rect.top) / scale,
     pressure: normalizePressure(e.pressure),
   };
 }
@@ -449,13 +464,15 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
 
       const canvas = e.currentTarget;
       const rect = canvas.getBoundingClientRect();
+      const scale = opts.contentScaleRef?.current ?? 1;
       try {
         canvas.setPointerCapture(e.pointerId);
       } catch {
         /* capture unsupported; strokes will end at the element edge */
       }
+      opts.onInteractionStart?.();
 
-      const point = toInkPoint(e.nativeEvent, rect);
+      const point = toInkPoint(e.nativeEvent, rect, scale);
 
       if (tool === 'eraser-stroke') {
         const session: EraseSession = {
@@ -465,6 +482,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           radius: strokeEraserRadius(settings),
           hits: new Set<string>(),
           rect,
+          scale,
           last: point,
         };
         sessionRef.current = session;
@@ -480,6 +498,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           tool,
           style: styleForTool(tool, settings, pointerType),
           rect,
+          scale,
           start: point,
           planeConfig,
           angleSnapDeg,
@@ -498,6 +517,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           pointerType,
           builder,
           rect,
+          scale,
           snap: canSnap ? { anchor: point, since: now, timer: null, shape: null, hud: [] } : null,
         };
         sessionRef.current = session;
@@ -518,14 +538,14 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       if (session.kind === 'ink') {
         const now = performance.now();
         for (const sample of samples) {
-          const point = toInkPoint(sample, session.rect);
+          const point = toInkPoint(sample, session.rect, session.scale);
           session.builder.add(point);
           noteDwell(session, point, now);
         }
       } else if (session.kind === 'shape') {
         const sample = samples[samples.length - 1];
         if (sample) {
-          session.current = toInkPoint(sample, session.rect);
+          session.current = toInkPoint(sample, session.rect, session.scale);
           session.shape = buildDragShape(
             session.tool,
             session.start,
@@ -538,7 +558,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       } else {
         let dirty = false;
         for (const sample of samples) {
-          const point = toInkPoint(sample, session.rect);
+          const point = toInkPoint(sample, session.rect, session.scale);
           if (eraseSweep(session, session.last, point)) dirty = true;
           session.last = point;
         }

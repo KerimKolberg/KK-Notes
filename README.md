@@ -1,9 +1,11 @@
-# InkingCanvas
+# Notes: multi-page inking
 
-A standalone, low-latency inking surface for React + TypeScript, tuned for
-2-in-1 pen/touch laptops. Full-viewport HTML5 canvas, high-DPI aware, with
-palm rejection, pressure-sensitive strokes via [perfect-freehand], and an
-undo/redo stack.
+A React + TypeScript notes app for 2-in-1 pen/touch laptops: a low-latency
+inking engine (`src/inking/`) with palm rejection, pressure-sensitive strokes
+via [perfect-freehand], STEM shape tools and hold-to-snap, hosted in a
+multi-page document system (`src/document/`) with procedural page templates,
+canvas virtualisation and a Samsung Notes-style page arranger. Styled with
+Tailwind CSS and follows the system light/dark theme.
 
 ```bash
 npm install
@@ -13,7 +15,72 @@ npm run typecheck  # strict tsc
 npm run build      # typecheck + production bundle
 ```
 
-## Usage
+## Document system (`src/document/`)
+
+**State.** A Zustand store (`store.ts`) owns the `Document` (pages, active
+index, view mode, zoom), a `scrollRequest` counter that asks the viewer to
+scroll, and the arranger's open state; `toolStore.ts` holds the shared tool
+settings. All structural edits are pure functions in `operations.ts`
+(reorder, insert, duplicate with deep-cloned strokes, delete with a one-page
+guard, snapshot undo/redo per page) so they can be unit-tested without React.
+The inking render loop never subscribes to the store; a surface only calls
+`commitStroke` / `eraseStrokes` when a gesture ends, so React updates cannot
+stall a frame.
+
+**Pages.** `Page` carries A4 dimensions (794 × 1123 CSS px at 96 DPI), a
+template + `templateConfig`, background colour, the stroke list (the same
+`FreehandStroke | GeometricStroke` union as the engine) and snapshot
+`undoStack` / `redoStack`. `serialization.ts` round-trips a document to JSON
+without history.
+
+**Templates.** `templates.ts` generates the background lines once and feeds
+two renderers: an SVG data URL used as the live page's CSS background (a few
+KB, crisp at any zoom, no extra texture) and a canvas painter used by the
+raster pipeline. Ruled (with margin line), grid, engineering (bold majors,
+fine minors), isometric (30° triangular grid via clipped line families) and
+blank/PDF placeholders. Line colours derive from the page background's
+luminance unless `strokeColor` is set explicitly, so dark pages get light
+lines.
+
+**Viewer & virtualisation.** `layout.ts` stacks pages at the current zoom;
+`DocumentViewer` mounts an `InkSurface` (two full-resolution canvases) only
+for pages within 800 px of the viewport, shows a cached `ImageBitmap`
+snapshot for pages within 2400 px, and renders nothing beyond that while
+reserving their space. Snapshots and thumbnails come from the same pipeline
+(`raster/`): a module Worker paints pages onto an `OffscreenCanvas` and
+transfers the bitmap back; an LRU cache closes evicted bitmaps; a serial
+main-thread queue is the fallback. Single-page mode renders just the active
+page.
+
+**Coordinates.** `InkSurface` installs `setTransform(dpr·zoom)` so every
+stroke is stored in page-local CSS px, and the pointer pipeline divides
+viewport offsets by the zoom (`viewportToPagePoint` / `projectToPage` in
+`layout.ts`, unit-tested). Because `getBoundingClientRect()` is already
+viewport-relative, scroll offsets need no separate handling.
+
+**Page arranger.** Slide-over dialog with a thumbnail grid. Reordering is
+pointer-based (`usePointerReorder`) so it works with pen, mouse and touch
+(touch drags after a short hold; short swipes still scroll); Alt+arrows move
+the focused page. Operations: add before/after, duplicate, delete (disabled
+on the last page), template and background per page or for all pages, and
+single click to jump. The top bar shows `Page n / N`, a jump field, prev/next,
+continuous/single toggle, zoom and the arranger toggle.
+
+```
+src/document/
+├── types.ts            Page, Document, TemplateConfig, serialized forms
+├── operations.ts       pure page/history operations
+├── layout.ts           page stacking, visible ranges, coordinate projection
+├── templates.ts        line generator → SVG background / canvas painter
+├── serialization.ts    JSON round trip
+├── store.ts            Zustand document store   toolStore.ts  shared tool settings
+├── raster/             rasterize.ts, rasterWorker.ts, rasterClient.ts, rasterCache.ts
+├── hooks/              useRasterBitmap, usePointerReorder
+└── components/         DocumentApp, TopBar, DocumentViewer, PageFrame, PageSnapshot,
+                        PageArranger, PageThumbnail
+```
+
+## Inking engine (`src/inking/`)
 
 ```tsx
 import { useRef } from 'react';
@@ -33,9 +100,10 @@ function Page() {
 }
 ```
 
-The component fills its parent, so size the parent (the demo `App` uses the
-whole viewport). `ref` exposes `undo()`, `redo()`, `clear()`, `getStrokes()`
-and `toDataURL()`.
+`InkingCanvas` is the standalone single-surface component (own history and
+toolbar); `InkSurface` is the page-sized, history-free surface the document
+viewer hosts. `InkingCanvas` fills its parent. `ref` exposes `undo()`,
+`redo()`, `clear()`, `getStrokes()` and `toDataURL()`.
 
 | Prop | Default | Purpose |
 | --- | --- | --- |
@@ -174,7 +242,8 @@ Undo inverts, redo re-applies, depth is capped.
 
 ```
 src/inking/
-├── InkingCanvas.tsx        component: layers, sync, imperative handle
+├── InkingCanvas.tsx        standalone component: layers, history, imperative handle
+├── InkSurface.tsx          page-sized surface for the document viewer (zoom-aware)
 ├── InkingToolbar.tsx       tools, colour, width, Touch Draw, undo/redo/clear
 ├── InkingCanvas.module.css
 ├── types.ts                Stroke, StrokeStyle, ToolSettings, HistoryEntry, …
@@ -195,7 +264,8 @@ src/inking/
 │   └── geometry.ts
 └── hooks/
     ├── usePointerInk.ts    pointer state machine, dwell timer, drag shapes, rAF rendering
-    ├── useHiDpiCanvas.ts   DPR-aware sizing
+    ├── useHiDpiCanvas.ts   DPR-aware sizing from a container
+    ├── usePageCanvas.ts    DPR × zoom sizing from page dimensions
     ├── useHistory.ts
     ├── useUndoRedoShortcuts.ts
     └── useLatestRef.ts

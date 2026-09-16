@@ -38,6 +38,13 @@ const CONTEXT_ATTRIBUTES: CanvasRenderingContext2DSettings = {
 const UI_FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const HUD_COLOR = '#2563eb';
 
+/**
+ * Every drawing routine accepts either an on-screen or an OffscreenCanvas
+ * context so the same code renders live pages, thumbnails and worker-side
+ * snapshots.
+ */
+export type InkContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
 export function get2dContext(canvas: HTMLCanvasElement | null): CanvasRenderingContext2D | null {
   return canvas ? canvas.getContext('2d', CONTEXT_ATTRIBUTES) : null;
 }
@@ -182,7 +189,7 @@ function buildShapePlan(shape: Shape, style: StrokeStyle): RenderPlan {
   }
 }
 
-function paintPlan(ctx: CanvasRenderingContext2D, plan: RenderPlan, style: StrokeStyle): void {
+function paintPlan(ctx: InkContext, plan: RenderPlan, style: StrokeStyle): void {
   ctx.save();
   ctx.globalCompositeOperation = style.compositeOperation;
   ctx.globalAlpha = style.opacity;
@@ -203,7 +210,7 @@ function paintPlan(ctx: CanvasRenderingContext2D, plan: RenderPlan, style: Strok
   ctx.restore();
 }
 
-function strokeSegments(ctx: CanvasRenderingContext2D, segments: readonly Segment[], width: number, alpha: number): void {
+function strokeSegments(ctx: InkContext, segments: readonly Segment[], width: number, alpha: number): void {
   if (segments.length === 0) return;
   ctx.globalAlpha = alpha;
   ctx.lineWidth = width;
@@ -215,7 +222,7 @@ function strokeSegments(ctx: CanvasRenderingContext2D, segments: readonly Segmen
   ctx.stroke();
 }
 
-function drawCoordinatePlane(ctx: CanvasRenderingContext2D, shape: CoordinatePlaneShape, style: StrokeStyle): void {
+function drawCoordinatePlane(ctx: InkContext, shape: CoordinatePlaneShape, style: StrokeStyle): void {
   const g = coordinatePlaneGeometry(shape);
   ctx.save();
   ctx.globalCompositeOperation = style.compositeOperation;
@@ -243,7 +250,7 @@ function drawCoordinatePlane(ctx: CanvasRenderingContext2D, shape: CoordinatePla
 }
 
 /** Render a committed stroke (memoised geometry). */
-export function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke): void {
+export function drawStroke(ctx: InkContext, stroke: Stroke): void {
   if (stroke.kind === 'geometric' && stroke.shape.type === 'coordinate-plane') {
     drawCoordinatePlane(ctx, stroke.shape, stroke.style);
     return;
@@ -261,7 +268,7 @@ export function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke): void 
 
 /** Render an in-progress freehand stroke (no end cap, not cached). */
 export function drawLiveStroke(
-  ctx: CanvasRenderingContext2D,
+  ctx: InkContext,
   points: readonly InkPoint[],
   style: StrokeStyle,
 ): void {
@@ -270,19 +277,19 @@ export function drawLiveStroke(
 }
 
 /** Render a shape that is not (yet) a committed stroke. */
-export function drawShape(ctx: CanvasRenderingContext2D, shape: Shape, style: StrokeStyle): void {
+export function drawShape(ctx: InkContext, shape: Shape, style: StrokeStyle): void {
   if (shape.type === 'coordinate-plane') drawCoordinatePlane(ctx, shape, style);
   else paintPlan(ctx, buildShapePlan(shape, style), style);
 }
 
 /** Clear the whole surface. Expects the DPR transform to be set on `ctx`. */
-export function clearSurface(ctx: CanvasRenderingContext2D, cssWidth: number, cssHeight: number): void {
+export function clearSurface(ctx: InkContext, cssWidth: number, cssHeight: number): void {
   ctx.clearRect(0, 0, cssWidth, cssHeight);
 }
 
 /** Full redraw of the committed layer, skipping any ids in `hidden`. */
 export function replayStrokes(
-  ctx: CanvasRenderingContext2D,
+  ctx: InkContext,
   strokes: readonly Stroke[],
   cssWidth: number,
   cssHeight: number,
@@ -297,7 +304,7 @@ export function replayStrokes(
 
 /** Ring that follows the pointer while an eraser tool is active. */
 export function drawEraserCursor(
-  ctx: CanvasRenderingContext2D,
+  ctx: InkContext,
   x: number,
   y: number,
   radius: number,
@@ -317,7 +324,7 @@ export function drawEraserCursor(
 }
 
 /** Non-committed angle overlay: arcs plus haloed degree read-outs. */
-export function drawAngleHud(ctx: CanvasRenderingContext2D, arcs: readonly AngleArc[]): void {
+export function drawAngleHud(ctx: InkContext, arcs: readonly AngleArc[]): void {
   if (arcs.length === 0) return;
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';

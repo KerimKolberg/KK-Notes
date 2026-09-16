@@ -1,4 +1,7 @@
 export { InkingCanvas } from './InkingCanvas';
+export { InkSurface, type InkSurfaceProps } from './InkSurface';
+export { useLatestRef } from './hooks/useLatestRef';
+export { useUndoRedoShortcuts } from './hooks/useUndoRedoShortcuts';
 export { InkingToolbar, type InkingToolbarProps } from './InkingToolbar';
 export * from './types';
 export * from './constants';
@@ -46,4 +49,4 @@ export {
   type RecognitionOptions,
 } from './engine/shapeRecognition';
 export { buildLineHud, geometricSegments, type AngleArc } from './engine/angleHud';
-export { dashArray } from './engine/renderer';
+export { dashArray, drawStroke, replayStrokes, type InkContext } from './engine/renderer';
