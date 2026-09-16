@@ -1,4 +1,4 @@
-import type { ToolSettings } from './types';
+import type { CoordinatePlaneConfig, StrokePattern, ToolSettings } from './types';
 
 /** Pressure substituted when a device reports `0` (mouse, many touch digitisers). */
 export const DEFAULT_PRESSURE = 0.5;
@@ -34,11 +34,61 @@ export const HIGHLIGHTER_OPACITY = 0.35;
 export const MIN_STROKE_SIZE = 1;
 export const MAX_STROKE_SIZE = 24;
 
+// ---- Hold-to-snap ---------------------------------------------------------
+
+/** Dwell required at the end of a stroke before shape recognition runs. */
+export const HOLD_TO_SNAP_MS = 1000;
+/** Movement below this radius counts as "stationary" during the dwell. */
+export const SNAP_JITTER_PX = 5;
+/** Strokes shorter than this are never snapped (taps, dots). */
+export const MIN_SNAP_PATH_LENGTH_PX = 24;
+
+// ---- Angles ---------------------------------------------------------------
+
+export const ANGLE_SNAP_INCREMENT_DEG = 15;
+/** Endpoints closer than this are treated as connected for the angle HUD. */
+export const CONNECT_TOLERANCE_PX = 14;
+
+// ---- Patterns / coordinate plane -----------------------------------------
+
+export const STROKE_PATTERNS: readonly { readonly id: StrokePattern; readonly label: string }[] = [
+  { id: 'solid', label: 'Solid' },
+  { id: 'dashed', label: 'Dashed' },
+  { id: 'dotted', label: 'Dotted' },
+  { id: 'dash-dot', label: 'Dash-dot' },
+  { id: 'long-dash', label: 'Long dash' },
+];
+
+export const DEFAULT_COORDINATE_PLANE: Readonly<CoordinatePlaneConfig> = {
+  mode: 'four-quadrant',
+  divisions: 5,
+  showGrid: true,
+  tickLabels: false,
+  xLabel: 'x',
+  yLabel: 'y',
+};
+
+/** Quick axis-label pairs for common STEM diagrams. */
+export const AXIS_LABEL_PRESETS: readonly { readonly x: string; readonly y: string }[] = [
+  { x: 'x', y: 'y' },
+  { x: 't', y: 'y' },
+  { x: 't', y: 'x(t)' },
+  { x: 'σ', y: 'jω' },
+  { x: 'Re', y: 'Im' },
+  { x: 'Q', y: 'P' },
+  { x: 'f', y: '|H(f)|' },
+];
+
 export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   tool: 'pen',
   color: '#1f1f24',
   size: 4,
   touchDraw: false,
+  pattern: 'solid',
+  arrowheads: 'none',
+  angleSnap: false,
+  holdToSnap: true,
+  coordinatePlane: DEFAULT_COORDINATE_PLANE,
 };
 
 /** Quick-pick swatches shown in the toolbar. */

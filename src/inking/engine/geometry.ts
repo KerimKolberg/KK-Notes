@@ -1,4 +1,4 @@
-import type { BBox, InkPoint } from '../types';
+import type { BBox, Point } from '../types';
 
 export const EMPTY_BBOX: BBox = {
   minX: Number.POSITIVE_INFINITY,
@@ -7,7 +7,7 @@ export const EMPTY_BBOX: BBox = {
   maxY: Number.NEGATIVE_INFINITY,
 };
 
-export function bboxFromPoints(points: readonly InkPoint[], pad = 0): BBox {
+export function bboxFromPoints(points: readonly Point[], pad = 0): BBox {
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
@@ -112,4 +112,41 @@ export function segmentToSegmentDistanceSq(
     pointToSegmentDistanceSq(cx, cy, ax, ay, bx, by),
     pointToSegmentDistanceSq(dx, dy, ax, ay, bx, by),
   );
+}
+
+export function bboxUnion(a: BBox, b: BBox): BBox {
+  return {
+    minX: Math.min(a.minX, b.minX),
+    minY: Math.min(a.minY, b.minY),
+    maxX: Math.max(a.maxX, b.maxX),
+    maxY: Math.max(a.maxY, b.maxY),
+  };
+}
+
+export function distance(a: Point, b: Point): number {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+export interface SegmentIntersection {
+  readonly point: Point;
+  /** Parameter along AB in [0, 1]. */
+  readonly t: number;
+  /** Parameter along CD in [0, 1]. */
+  readonly u: number;
+}
+
+/** Proper intersection of segments AB and CD, or `null` when parallel / disjoint. */
+export function segmentIntersection(a: Point, b: Point, c: Point, d: Point): SegmentIntersection | null {
+  const rx = b.x - a.x;
+  const ry = b.y - a.y;
+  const sx = d.x - c.x;
+  const sy = d.y - c.y;
+  const denom = rx * sy - ry * sx;
+  if (Math.abs(denom) < 1e-9) return null;
+  const qpx = c.x - a.x;
+  const qpy = c.y - a.y;
+  const t = (qpx * sy - qpy * sx) / denom;
+  const u = (qpx * ry - qpy * rx) / denom;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return { point: { x: a.x + rx * t, y: a.y + ry * t }, t, u };
 }

@@ -7,7 +7,13 @@
  */
 
 /** Every tool the user can select in the UI. */
-export type ToolType = 'pen' | 'highlighter' | 'eraser-stroke' | 'eraser-pixel';
+export type ToolType =
+  | 'pen'
+  | 'highlighter'
+  | 'line'
+  | 'coordinate-plane'
+  | 'eraser-stroke'
+  | 'eraser-pixel';
 
 /**
  * Tools that produce a persisted stroke record. The stroke eraser removes
@@ -15,13 +21,31 @@ export type ToolType = 'pen' | 'highlighter' | 'eraser-stroke' | 'eraser-pixel';
  */
 export type InkTool = Exclude<ToolType, 'eraser-stroke'>;
 
+/** Tools whose raw samples become a perfect-freehand polygon. */
+export type FreehandTool = 'pen' | 'highlighter' | 'eraser-pixel';
+
+/** Tools that create a geometric primitive by click-and-drag. */
+export type ShapeTool = 'line' | 'coordinate-plane';
+
+/** Tools that may own a geometric stroke (drag tools plus snapped freehand). */
+export type GeometricTool = Exclude<InkTool, 'eraser-pixel'>;
+
 /** Pointer classes we distinguish between. Unknown types are treated as mouse. */
 export type InkPointerType = 'pen' | 'touch' | 'mouse';
 
-/** A single normalized input sample. */
-export interface InkPoint {
+/** Line dash pattern, scaled by the stroke width at render time. */
+export type StrokePattern = 'solid' | 'dashed' | 'dotted' | 'dash-dot' | 'long-dash';
+
+/** Which ends of an open stroke receive an arrowhead. */
+export type ArrowheadMode = 'none' | 'end' | 'both';
+
+export interface Point {
   readonly x: number;
   readonly y: number;
+}
+
+/** A single normalized input sample. */
+export interface InkPoint extends Point {
   /** Normalized pressure in (0, 1]. A raw `0` from the device is mapped to `DEFAULT_PRESSURE`. */
   readonly pressure: number;
 }
@@ -41,11 +65,11 @@ export interface BBox {
 export interface StrokeStyle {
   /** Any CSS colour. Ignored for `destination-out` (pixel eraser). */
   readonly color: string;
-  /** Base diameter in CSS pixels, before pressure thinning. */
+  /** Base diameter / line width in CSS pixels, before pressure thinning. */
   readonly size: number;
-  /** Layer opacity applied to the whole stroke polygon (0..1). */
+  /** Layer opacity applied to the whole stroke (0..1). */
   readonly opacity: number;
-  /** Canvas composite / blend operation used when filling the polygon. */
+  /** Canvas composite / blend operation. */
   readonly compositeOperation: GlobalCompositeOperation;
   /** perfect-freehand `thinning` (-1..1): how strongly pressure modulates width. */
   readonly thinning: number;
@@ -59,30 +83,144 @@ export interface StrokeStyle {
   readonly taperStart: number;
   /** Taper length (px) at the end of the stroke. */
   readonly taperEnd: number;
+  /** Dash pattern. Anything but `solid` renders the centreline with `ctx.stroke()`. */
+  readonly pattern: StrokePattern;
+  /** Terminal decorators for open strokes. */
+  readonly arrowheads: ArrowheadMode;
 }
 
-/** An immutable, committed stroke. */
-export interface Stroke {
+// ---------------------------------------------------------------------------
+// Geometric primitives
+// ---------------------------------------------------------------------------
+
+export type CoordinatePlaneMode = 'quadrant-1' | 'four-quadrant';
+
+export interface CoordinatePlaneConfig {
+  readonly mode: CoordinatePlaneMode;
+  /** Grid cells per positive half-axis. */
+  readonly divisions: number;
+  readonly showGrid: boolean;
+  /** Number the tick marks. */
+  readonly tickLabels: boolean;
+  readonly xLabel: string;
+  readonly yLabel: string;
+}
+
+export interface LineShape {
+  readonly type: 'line';
+  readonly from: Point;
+  readonly to: Point;
+}
+
+/** Open chain of straight segments. */
+export interface PolylineShape {
+  readonly type: 'polyline';
+  readonly points: readonly Point[];
+}
+
+/** Closed chain of straight segments (triangle, quadrilateral, pentagon…). */
+export interface PolygonShape {
+  readonly type: 'polygon';
+  readonly points: readonly Point[];
+}
+
+export interface RectangleShape {
+  readonly type: 'rectangle';
+  readonly center: Point;
+  readonly width: number;
+  readonly height: number;
+  /** Radians, canvas orientation (clockwise positive). */
+  readonly rotation: number;
+}
+
+/** A circle is an ellipse with equal radii. */
+export interface EllipseShape {
+  readonly type: 'ellipse';
+  readonly center: Point;
+  readonly radiusX: number;
+  readonly radiusY: number;
+  readonly rotation: number;
+}
+
+export interface HeartShape {
+  readonly type: 'heart';
+  readonly center: Point;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface CoordinatePlaneShape {
+  readonly type: 'coordinate-plane';
+  readonly origin: Point;
+  /** Length of the positive x half-axis in px (mirrored for four quadrants). */
+  readonly extentX: number;
+  /** Length of the positive y half-axis in px. */
+  readonly extentY: number;
+  readonly config: CoordinatePlaneConfig;
+}
+
+export type Shape =
+  | LineShape
+  | PolylineShape
+  | PolygonShape
+  | RectangleShape
+  | EllipseShape
+  | HeartShape
+  | CoordinatePlaneShape;
+
+export type ShapeType = Shape['type'];
+
+// ---------------------------------------------------------------------------
+// Strokes
+// ---------------------------------------------------------------------------
+
+interface StrokeBase {
   readonly id: string;
-  readonly tool: InkTool;
-  readonly points: readonly InkPoint[];
   readonly style: StrokeStyle;
-  /** Bounding box of `points`, padded by the maximum half-width. Used for hit-test culling. */
+  /** Bounding box padded by the maximum half-width (and arrowheads). Used for culling. */
   readonly bbox: BBox;
   readonly pointerType: InkPointerType;
   /** `performance.now()`-style timestamp at stroke start. */
   readonly createdAt: number;
 }
 
+/** Raw pointer samples rendered through perfect-freehand (or a dashed centreline). */
+export interface FreehandStroke extends StrokeBase {
+  readonly kind: 'freehand';
+  readonly tool: FreehandTool;
+  readonly points: readonly InkPoint[];
+}
+
+/** An idealised primitive rendered with stroked paths. */
+export interface GeometricStroke extends StrokeBase {
+  readonly kind: 'geometric';
+  readonly tool: GeometricTool;
+  readonly shape: Shape;
+}
+
+/** An immutable, committed stroke. */
+export type Stroke = FreehandStroke | GeometricStroke;
+
+// ---------------------------------------------------------------------------
+// Settings / history / component API
+// ---------------------------------------------------------------------------
+
 /** User-adjustable tool state surfaced by the toolbar. */
 export interface ToolSettings {
   tool: ToolType;
-  /** CSS colour used by pen and highlighter. */
+  /** CSS colour used by everything except the pixel eraser. */
   color: string;
   /** Base stroke width in CSS pixels. */
   size: number;
   /** When false, only pen (and optionally mouse) input draws. */
   touchDraw: boolean;
+  pattern: StrokePattern;
+  arrowheads: ArrowheadMode;
+  /** Snap straight lines / vectors to 15° increments. */
+  angleSnap: boolean;
+  /** Hold the pointer still at the end of a stroke to convert it to a shape. */
+  holdToSnap: boolean;
+  coordinatePlane: CoordinatePlaneConfig;
 }
 
 /** A stroke together with the index it occupied before removal. */

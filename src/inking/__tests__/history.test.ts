@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createHistoryState, historyReducer, type HistoryState } from '../engine/history';
-import { makeStroke } from './testUtils';
+import { makeLine, makeStroke } from './testUtils';
 
 const MAX = 10;
 const reduce = (state: HistoryState, ...actions: Parameters<typeof historyReducer>[1][]): HistoryState =>
@@ -81,6 +81,29 @@ describe('historyReducer', () => {
     for (let i = 0; i < MAX + 5; i++) state = reduce(state, { type: 'undo' });
     // Only MAX undos were possible; the first 5 strokes are permanent.
     expect(state.strokes).toHaveLength(5);
+  });
+
+  it('treats geometric and freehand strokes uniformly through undo/redo', () => {
+    const ink = makeStroke([[0, 0], [10, 10]]);
+    const line = makeLine({ x: 0, y: 0 }, { x: 100, y: 0 });
+    const axes = makeLine({ x: 0, y: 0 }, { x: 0, y: 100 });
+    let state = reduce(
+      createHistoryState(),
+      { type: 'add', stroke: ink },
+      { type: 'add', stroke: line },
+      { type: 'add', stroke: axes },
+    );
+    expect(state.strokes.map((s) => s.kind)).toEqual(['freehand', 'geometric', 'geometric']);
+
+    state = reduce(state, { type: 'remove', ids: new Set([line.id]) });
+    expect(state.strokes).toEqual([ink, axes]);
+    state = reduce(state, { type: 'undo' });
+    expect(state.strokes).toEqual([ink, line, axes]);
+    state = reduce(state, { type: 'undo' }, { type: 'undo' });
+    expect(state.strokes).toEqual([ink]);
+    state = reduce(state, { type: 'redo' }, { type: 'redo' });
+    expect(state.strokes).toEqual([ink, line, axes]);
+    expect(state.strokes[1]).toBe(line);
   });
 
   it('seeds from initial strokes without history', () => {

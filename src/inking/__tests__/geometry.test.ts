@@ -35,8 +35,8 @@ describe('geometry', () => {
   it('builds and intersects bounding boxes', () => {
     const b = bboxFromPoints(
       [
-        { x: 1, y: 2, pressure: 1 },
-        { x: 5, y: -1, pressure: 1 },
+        { x: 1, y: 2 },
+        { x: 5, y: -1 },
       ],
       1,
     );

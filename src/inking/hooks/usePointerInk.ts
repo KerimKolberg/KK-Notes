@@ -1,4 +1,11 @@
 import { useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
+import {
+  ANGLE_SNAP_INCREMENT_DEG,
+  HOLD_TO_SNAP_MS,
+  MIN_SNAP_PATH_LENGTH_PX,
+  SNAP_JITTER_PX,
+} from '../constants';
+import { buildLineHud, geometricSegments, type AngleArc } from '../engine/angleHud';
 import { strokeHitBySegment } from '../engine/hitTest';
 import {
   isPointerAccepted,
@@ -8,13 +15,29 @@ import {
 } from '../engine/pointerPolicy';
 import {
   clearSurface,
+  drawAngleHud,
   drawEraserCursor,
   drawLiveStroke,
+  drawShape,
   get2dContext,
 } from '../engine/renderer';
+import { recognizeShape } from '../engine/shapeRecognition';
+import { coordinatePlaneFromDrag, createGeometricStroke, lineFromDrag } from '../engine/shapes';
+import { polylineLength } from '../engine/simplify';
 import { StrokeBuilder } from '../engine/strokeBuilder';
 import { strokeEraserRadius, styleForTool } from '../engine/toolStyles';
-import type { CanvasSize, InkPoint, InkPointerType, Stroke, ToolSettings } from '../types';
+import type {
+  CanvasSize,
+  CoordinatePlaneConfig,
+  InkPoint,
+  InkPointerType,
+  Point,
+  Shape,
+  ShapeTool,
+  Stroke,
+  StrokeStyle,
+  ToolSettings,
+} from '../types';
 import { useLatestRef } from './useLatestRef';
 
 export interface UsePointerInkOptions {
@@ -22,7 +45,7 @@ export interface UsePointerInkOptions {
   committedCanvasRef: RefObject<HTMLCanvasElement | null>;
   sizeRef: RefObject<CanvasSize>;
   settingsRef: RefObject<ToolSettings>;
-  /** Latest committed strokes, for stroke-eraser hit testing. */
+  /** Latest committed strokes, for stroke-eraser hit testing and the angle HUD. */
   strokesRef: RefObject<readonly Stroke[]>;
   /** Strokes temporarily hidden while the stroke eraser drags over them. */
   hiddenIdsRef: RefObject<Set<string>>;
@@ -45,12 +68,42 @@ export interface PointerInkHandlers {
   onLostPointerCapture: CanvasPointerHandler;
 }
 
+/** Hold-to-snap bookkeeping for a freehand stroke. */
+interface SnapState {
+  /** Where the pointer came to rest. */
+  anchor: Point;
+  /** When it came to rest. */
+  since: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  /** Recognised shape currently replacing the raw preview, if any. */
+  shape: Shape | null;
+  hud: readonly AngleArc[];
+}
+
 interface InkSession {
   readonly kind: 'ink';
   readonly pointerId: number;
   readonly pointerType: InkPointerType;
   readonly builder: StrokeBuilder;
   readonly rect: DOMRect;
+  readonly snap: SnapState | null;
+}
+
+/** Click-and-drag primitive (line, coordinate plane). */
+interface ShapeSession {
+  readonly kind: 'shape';
+  readonly pointerId: number;
+  readonly pointerType: InkPointerType;
+  readonly tool: ShapeTool;
+  readonly style: StrokeStyle;
+  readonly rect: DOMRect;
+  readonly start: Point;
+  readonly planeConfig: CoordinatePlaneConfig;
+  readonly angleSnapDeg: number | undefined;
+  readonly createdAt: number;
+  current: Point;
+  shape: Shape;
+  hud: readonly AngleArc[];
 }
 
 interface EraseSession {
@@ -63,7 +116,7 @@ interface EraseSession {
   last: InkPoint;
 }
 
-type Session = InkSession | EraseSession;
+type Session = InkSession | ShapeSession | EraseSession;
 
 interface PenState {
   inProximity: boolean;
@@ -90,10 +143,29 @@ function expandSamples(e: PointerEvent): PointerEvent[] {
   return [e];
 }
 
+function buildDragShape(
+  tool: ShapeTool,
+  start: Point,
+  current: Point,
+  angleSnapDeg: number | undefined,
+  planeConfig: CoordinatePlaneConfig,
+): Shape {
+  return tool === 'line'
+    ? lineFromDrag(start, current, angleSnapDeg)
+    : coordinatePlaneFromDrag(start, current, planeConfig);
+}
+
+function isDegenerateShape(shape: Shape): boolean {
+  if (shape.type === 'line') return Math.hypot(shape.to.x - shape.from.x, shape.to.y - shape.from.y) < 2;
+  if (shape.type === 'coordinate-plane') return shape.extentX < 8 || shape.extentY < 8;
+  return false;
+}
+
 /**
  * Pointer-event state machine for the canvas: palm rejection, pointer capture,
- * coalesced sampling, rAF-batched rendering of the live stroke, and hand-off of
- * finished strokes / erasures to the history layer.
+ * coalesced sampling, rAF-batched rendering of the live stroke, hold-to-snap
+ * recognition, drag-to-draw primitives, and hand-off of finished strokes /
+ * erasures to the history layer.
  *
  * All configuration is read through refs so the returned handlers are created
  * once and never go stale.
@@ -144,6 +216,16 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       }
     };
 
+    const angleSnapFor = (settings: ToolSettings): number | undefined =>
+      settings.angleSnap ? ANGLE_SNAP_INCREMENT_DEG : undefined;
+
+    /** Angle overlay for a straight line against the committed segments. */
+    const hudFor = (shape: Shape): AngleArc[] => {
+      if (shape.type !== 'line') return [];
+      const { strokesRef, hiddenIdsRef } = optionsRef.current;
+      return buildLineHud(shape, geometricSegments(strokesRef.current, hiddenIdsRef.current));
+    };
+
     const renderFrame = (): void => {
       frameRef.current = 0;
       const session = sessionRef.current;
@@ -158,7 +240,13 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         return;
       }
 
-      const { builder } = session;
+      if (session.kind === 'shape') {
+        drawShape(live, session.shape, session.style);
+        drawAngleHud(live, session.hud);
+        return;
+      }
+
+      const { builder, snap } = session;
       if (builder.tool === 'eraser-pixel') {
         // destination-out on a transparent preview layer is invisible, so the
         // pixel eraser paints straight onto the committed layer. Re-applying
@@ -171,12 +259,68 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         return;
       }
 
+      if (snap?.shape) {
+        // Hold-to-snap: the idealised primitive replaces the raw preview.
+        drawShape(live, snap.shape, builder.style);
+        drawAngleHud(live, snap.hud);
+        return;
+      }
+
       drawLiveStroke(live, builder.points, builder.style);
     };
 
     const scheduleFrame = (): void => {
       if (frameRef.current === 0) frameRef.current = requestAnimationFrame(renderFrame);
     };
+
+    // ---- hold-to-snap -----------------------------------------------------
+
+    const clearSnapTimer = (snap: SnapState | null): void => {
+      if (snap?.timer) {
+        clearTimeout(snap.timer);
+        snap.timer = null;
+      }
+    };
+
+    /**
+     * (Re)start the dwell timer. Runs recognition once the pointer has been
+     * still for `HOLD_TO_SNAP_MS`; a timer (rather than the rAF loop) is
+     * required because a perfectly still pen produces no events at all.
+     */
+    const armSnapTimer = (session: InkSession): void => {
+      const { snap } = session;
+      if (!snap) return;
+      clearSnapTimer(snap);
+      snap.timer = setTimeout(() => {
+        snap.timer = null;
+        if (sessionRef.current !== session) return;
+        const points = session.builder.points;
+        if (polylineLength(points) < MIN_SNAP_PATH_LENGTH_PX) return;
+        const settings = optionsRef.current.settingsRef.current;
+        const snapDeg = angleSnapFor(settings);
+        const shape = recognizeShape(points, snapDeg === undefined ? {} : { angleSnapDeg: snapDeg });
+        if (!shape) return;
+        snap.shape = shape;
+        snap.hud = hudFor(shape);
+        scheduleFrame();
+      }, HOLD_TO_SNAP_MS);
+    };
+
+    /** Movement beyond the jitter radius restarts the dwell and drops any snap. */
+    const noteDwell = (session: InkSession, point: Point, now: number): void => {
+      const { snap } = session;
+      if (!snap) return;
+      if (Math.hypot(point.x - snap.anchor.x, point.y - snap.anchor.y) <= SNAP_JITTER_PX) return;
+      snap.anchor = point;
+      snap.since = now;
+      if (snap.shape) {
+        snap.shape = null;
+        snap.hud = [];
+      }
+      armSnapTimer(session);
+    };
+
+    // ---- erasing ------------------------------------------------------------
 
     /** Hit-test one eraser sweep; returns true when new strokes were hidden. */
     const eraseSweep = (session: EraseSession, from: InkPoint, to: InkPoint): boolean => {
@@ -194,6 +338,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       return dirty;
     };
 
+    // ---- session lifecycle ----------------------------------------------------
+
     const finishSession = (): void => {
       const session = sessionRef.current;
       if (!session) return;
@@ -203,7 +349,34 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
 
       const opts = optionsRef.current;
       if (session.kind === 'ink') {
-        opts.onCommitStroke(session.builder.build());
+        clearSnapTimer(session.snap);
+        const { builder } = session;
+        const snapped = session.snap?.shape ?? null;
+        if (snapped && builder.tool !== 'eraser-pixel') {
+          opts.onCommitStroke(
+            createGeometricStroke({
+              tool: builder.tool,
+              shape: snapped,
+              style: builder.style,
+              pointerType: builder.pointerType,
+              createdAt: builder.createdAt,
+            }),
+          );
+        } else {
+          opts.onCommitStroke(builder.build());
+        }
+      } else if (session.kind === 'shape') {
+        if (!isDegenerateShape(session.shape)) {
+          opts.onCommitStroke(
+            createGeometricStroke({
+              tool: session.tool,
+              shape: session.shape,
+              style: session.style,
+              pointerType: session.pointerType,
+              createdAt: session.createdAt,
+            }),
+          );
+        }
       } else {
         opts.hiddenIdsRef.current.clear();
         if (session.hits.size > 0) opts.onEraseStrokes(session.hits);
@@ -222,8 +395,9 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       const opts = optionsRef.current;
       let needsRedraw = false;
       if (session.kind === 'ink') {
+        clearSnapTimer(session.snap);
         needsRedraw = session.builder.tool === 'eraser-pixel';
-      } else {
+      } else if (session.kind === 'erase') {
         needsRedraw = session.hits.size > 0;
         opts.hiddenIdsRef.current.clear();
       }
@@ -244,6 +418,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       if (session && session.pointerType === 'touch') cancelSession();
     };
 
+    // ---- handlers ---------------------------------------------------------------
+
     const onPointerDown: CanvasPointerHandler = (e) => {
       const pointerType = normalizePointerType(e.pointerType);
       notePen(pointerType);
@@ -251,12 +427,13 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       const opts = optionsRef.current;
       const settings = opts.settingsRef.current;
       const pen = penRef.current;
+      const now = performance.now();
       const accepted = isPointerAccepted({
         pointerType,
         touchDraw: settings.touchDraw,
         allowMouse: opts.allowMouse,
         penInProximity: pen.inProximity,
-        msSincePen: performance.now() - pen.lastSeen,
+        msSincePen: now - pen.lastSeen,
       });
       if (!accepted) return;
 
@@ -279,6 +456,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       }
 
       const point = toInkPoint(e.nativeEvent, rect);
+
       if (tool === 'eraser-stroke') {
         const session: EraseSession = {
           kind: 'erase',
@@ -291,10 +469,39 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         };
         sessionRef.current = session;
         if (eraseSweep(session, point, point)) opts.redrawCommitted();
+      } else if (tool === 'line' || tool === 'coordinate-plane') {
+        const angleSnapDeg = angleSnapFor(settings);
+        const planeConfig = settings.coordinatePlane;
+        const shape = buildDragShape(tool, point, point, angleSnapDeg, planeConfig);
+        sessionRef.current = {
+          kind: 'shape',
+          pointerId: e.pointerId,
+          pointerType,
+          tool,
+          style: styleForTool(tool, settings, pointerType),
+          rect,
+          start: point,
+          planeConfig,
+          angleSnapDeg,
+          createdAt: now,
+          current: point,
+          shape,
+          hud: [],
+        };
       } else {
         const builder = new StrokeBuilder(tool, styleForTool(tool, settings, pointerType), pointerType);
         builder.add(point);
-        sessionRef.current = { kind: 'ink', pointerId: e.pointerId, pointerType, builder, rect };
+        const canSnap = settings.holdToSnap && tool !== 'eraser-pixel';
+        const session: InkSession = {
+          kind: 'ink',
+          pointerId: e.pointerId,
+          pointerType,
+          builder,
+          rect,
+          snap: canSnap ? { anchor: point, since: now, timer: null, shape: null, hud: [] } : null,
+        };
+        sessionRef.current = session;
+        armSnapTimer(session);
         setLiveBlend(tool === 'highlighter' ? 'multiply' : 'normal');
       }
       scheduleFrame();
@@ -309,7 +516,25 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
 
       const samples = expandSamples(e.nativeEvent);
       if (session.kind === 'ink') {
-        for (const sample of samples) session.builder.add(toInkPoint(sample, session.rect));
+        const now = performance.now();
+        for (const sample of samples) {
+          const point = toInkPoint(sample, session.rect);
+          session.builder.add(point);
+          noteDwell(session, point, now);
+        }
+      } else if (session.kind === 'shape') {
+        const sample = samples[samples.length - 1];
+        if (sample) {
+          session.current = toInkPoint(sample, session.rect);
+          session.shape = buildDragShape(
+            session.tool,
+            session.start,
+            session.current,
+            session.angleSnapDeg,
+            session.planeConfig,
+          );
+          session.hud = hudFor(session.shape);
+        }
       } else {
         let dirty = false;
         for (const sample of samples) {
@@ -361,11 +586,13 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
     };
   }, [optionsRef]);
 
-  // Drop any in-flight frame if the component unmounts mid-stroke.
+  // Drop any in-flight frame or dwell timer if the component unmounts mid-stroke.
   useEffect(
     () => () => {
       if (frameRef.current !== 0) cancelAnimationFrame(frameRef.current);
       frameRef.current = 0;
+      const session = sessionRef.current;
+      if (session?.kind === 'ink' && session.snap?.timer) clearTimeout(session.snap.timer);
       sessionRef.current = null;
     },
     [],

@@ -10,7 +10,8 @@ import type { InkPointerType, InkTool, StrokeStyle, ToolSettings } from '../type
  *
  * Pen strokes thin with pressure; when the pointer cannot report pressure
  * (mouse / most touch) we let perfect-freehand simulate it from velocity so
- * the line still has some life. Highlighter and eraser are constant-width.
+ * the line still has some life. Highlighter, eraser and geometric tools are
+ * constant-width.
  */
 export function styleForTool(
   tool: InkTool,
@@ -30,6 +31,8 @@ export function styleForTool(
         simulatePressure: pointerType !== 'pen',
         taperStart: 0,
         taperEnd: 0,
+        pattern: settings.pattern,
+        arrowheads: settings.arrowheads,
       };
     case 'highlighter':
       return {
@@ -43,6 +46,38 @@ export function styleForTool(
         simulatePressure: false,
         taperStart: 0,
         taperEnd: 0,
+        pattern: settings.pattern,
+        arrowheads: settings.arrowheads,
+      };
+    case 'line':
+      return {
+        color: settings.color,
+        size: settings.size,
+        opacity: 1,
+        compositeOperation: 'source-over',
+        thinning: 0,
+        smoothing: 0.5,
+        streamline: 0.5,
+        simulatePressure: false,
+        taperStart: 0,
+        taperEnd: 0,
+        pattern: settings.pattern,
+        arrowheads: settings.arrowheads,
+      };
+    case 'coordinate-plane':
+      return {
+        color: settings.color,
+        size: Math.max(1, Math.min(settings.size, 3)),
+        opacity: 1,
+        compositeOperation: 'source-over',
+        thinning: 0,
+        smoothing: 0.5,
+        streamline: 0.5,
+        simulatePressure: false,
+        taperStart: 0,
+        taperEnd: 0,
+        pattern: 'solid',
+        arrowheads: 'none',
       };
     case 'eraser-pixel':
       return {
@@ -56,6 +91,8 @@ export function styleForTool(
         simulatePressure: false,
         taperStart: 0,
         taperEnd: 0,
+        pattern: 'solid',
+        arrowheads: 'none',
       };
   }
 }

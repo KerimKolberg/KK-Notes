@@ -40,10 +40,9 @@
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  gap: 4px;
   max-width: calc(100% - 24px);
   padding: 6px 8px;
   border-radius: 14px;
@@ -59,10 +58,42 @@
   z-index: 2;
 }
 
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 .group {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.select,
+.numberInput,
+.textInput {
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
+.select:disabled {
+  opacity: 0.35;
+}
+
+.numberInput {
+  width: 56px;
+}
+
+.textInput {
+  width: 64px;
 }
 
 .divider {
@@ -99,6 +130,10 @@
 .button:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+.button[aria-pressed='true']:disabled {
+  background: rgba(31, 31, 36, 0.35);
 }
 
 .button[aria-pressed='true'] {

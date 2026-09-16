@@ -1,9 +1,11 @@
-import type { InkPoint, InkPointerType, InkTool, Stroke, StrokeStyle } from '../types';
+import type { FreehandStroke, FreehandTool, InkPoint, InkPointerType, StrokeStyle } from '../types';
 import { createStrokeId } from './ids';
+import { arrowheadLength } from './shapes';
 
 /**
- * Accumulates samples for the stroke currently being drawn and tracks its
- * bounding box incrementally, so `build()` is O(1) apart from freezing.
+ * Accumulates samples for the freehand stroke currently being drawn and
+ * tracks its bounding box incrementally, so `build()` is O(1) apart from
+ * freezing.
  */
 export class StrokeBuilder {
   readonly id: string = createStrokeId();
@@ -15,7 +17,7 @@ export class StrokeBuilder {
   private maxY = Number.NEGATIVE_INFINITY;
 
   constructor(
-    readonly tool: InkTool,
+    readonly tool: FreehandTool,
     readonly style: StrokeStyle,
     readonly pointerType: InkPointerType,
   ) {}
@@ -39,10 +41,12 @@ export class StrokeBuilder {
     if (point.y > this.maxY) this.maxY = point.y;
   }
 
-  build(): Stroke {
-    // Pad by the widest possible half-width plus anti-aliasing slop.
-    const pad = this.style.size * 0.5 * (1 + Math.max(0, this.style.thinning)) + 2;
+  build(): FreehandStroke {
+    // Pad by the widest possible half-width, arrowheads and anti-aliasing slop.
+    const arrow = this.style.arrowheads !== 'none' ? arrowheadLength(this.style.size) : 0;
+    const pad = this.style.size * 0.5 * (1 + Math.max(0, this.style.thinning)) + arrow + 2;
     return {
+      kind: 'freehand',
       id: this.id,
       tool: this.tool,
       points: this.samples,
