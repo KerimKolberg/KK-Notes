@@ -410,9 +410,18 @@ missing before anything long-running starts.
 ```bash
 ./build-android.sh                     # debug APK, signed with the debug key — installs directly
 ./build-android.sh --release           # unsigned release APK
+./build-android.sh --abi aarch64       # …for one architecture only (see below)
 npm run tauri android build -- --apk   # the same release build, straight from the CLI
 adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
 ```
+
+By default the APK carries all four Android ABIs, which is what you want for
+something handed to unknown devices. It also means four Rust cross-compiles
+and, for a debug build with unstripped binaries, about 135 MB. `--abi aarch64`
+builds just the one architecture every phone and tablet of the last several
+years actually uses, which is roughly a third of the size and a quarter of the
+compiling — the CI workflow uses it for exactly that reason. The APK then
+lands under `apk/arm64/` rather than `apk/universal/`.
 
 A release APK is **unsigned**: `zipalign` and `apksigner` it with your own
 keystore before installing it anywhere.

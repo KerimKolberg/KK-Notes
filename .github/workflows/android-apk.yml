@@ -25,9 +25,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # arm64 only: every phone and tablet this is meant to be tested on is
+      # aarch64, and a universal debug APK carrying all four ABIs of unstripped
+      # Rust came to 135 MB — three cross-compiles and ~100 MB of upload spent
+      # on architectures nothing here will ever run on.
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+          targets: aarch64-linux-android
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -54,7 +58,7 @@ jobs:
       - run: npm ci
 
       - name: Build debug APK
-        run: ./build-android.sh --debug
+        run: ./build-android.sh --debug --abi aarch64
 
       - name: Locate the APK
         id: apk
@@ -69,18 +73,36 @@ jobs:
           name: notex-debug-apk
           path: ${{ steps.apk.outputs.path }}
 
+      # Attached to a release rather than left as a build artifact, because an
+      # artifact only downloads as a zip and a phone is a bad place to unpack
+      # one. Uploaded with `gh` (preinstalled on the runner) instead of an
+      # action so the upload can be retried: a release asset this size fails
+      # intermittently with a bare "Error saving asset", which has already cost
+      # one otherwise-green build.
       - name: Publish as a release asset (plain .apk, no zip to extract)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: android-debug-${{ github.run_number }}
-          name: Android debug APK (run ${{ github.run_number }})
-          prerelease: true
-          body: |
-            Unsigned-for-you debug build (auto-signed with Gradle's debug key —
-            installs directly, no signing step needed). Built from
-            ${{ github.sha }}.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: android-debug-${{ github.run_number }}
+          APK: ${{ steps.apk.outputs.path }}
+        run: |
+          cat > notes.md <<'EOF'
+          Debug build, auto-signed with Gradle's debug key — it installs
+          directly, with no signing step needed. arm64 only.
 
-            Download the `.apk` below on your phone and open it to install.
-            You may need to allow "install unknown apps" for whichever app you
-            use to open it (Chrome, Files, etc.) the first time.
-          files: ${{ steps.apk.outputs.path }}
+          Download the `.apk` below on your phone and open it to install.
+          You may need to allow "install unknown apps" for whichever app you
+          use to open it (Chrome, Files, etc.) the first time.
+          EOF
+          echo "Built from ${{ github.sha }}." >> notes.md
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --prerelease --title "Android debug APK (run ${{ github.run_number }})" --notes-file notes.md
+          for attempt in 1 2 3; do
+            if gh release upload "$TAG" "$APK" --clobber; then
+              echo "Attached $(basename "$APK") ($(du -h "$APK" | cut -f1)) on attempt $attempt"
+              exit 0
+            fi
+            echo "::warning::Upload attempt $attempt failed; retrying"
+            sleep $((attempt * 15))
+          done
+          echo "::error::Could not attach the APK to $TAG after 3 attempts"
+          exit 1
