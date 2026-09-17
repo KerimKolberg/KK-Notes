@@ -1,0 +1,86 @@
+name: Android APK
+
+# Manual trigger (works from the GitHub mobile app / mobile web too:
+# Actions tab → Android APK → Run workflow) so an APK can be built and
+# tested without a desktop at all.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # to attach the APK to a release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+            src-tauri/gen/android/app/.cxx
+          key: cargo-android-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: cargo-android-${{ runner.os }}-
+
+      - name: Point NDK_HOME at the runner's preinstalled NDK
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
+            # Fallback: pick the newest ndk/* directory under the SDK root.
+            NDK="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/ndk" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)"
+          fi
+          [ -d "$NDK" ] || { echo "::error::No Android NDK found on this runner"; exit 1; }
+          echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "Using NDK at $NDK"
+
+      - run: npm ci
+
+      - name: Build debug APK
+        run: ./build-android.sh --debug
+
+      - name: Locate the APK
+        id: apk
+        run: |
+          APK="$(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' | head -1)"
+          [ -n "$APK" ] || { echo "::error::No APK produced"; exit 1; }
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          echo "Built: $APK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notex-debug-apk
+          path: ${{ steps.apk.outputs.path }}
+
+      - name: Publish as a release asset (plain .apk, no zip to extract)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-debug-${{ github.run_number }}
+          name: Android debug APK (run ${{ github.run_number }})
+          prerelease: true
+          body: |
+            Unsigned-for-you debug build (auto-signed with Gradle's debug key —
+            installs directly, no signing step needed). Built from
+            ${{ github.sha }}.
+
+            Download the `.apk` below on your phone and open it to install.
+            You may need to allow "install unknown apps" for whichever app you
+            use to open it (Chrome, Files, etc.) the first time.
+          files: ${{ steps.apk.outputs.path }}
