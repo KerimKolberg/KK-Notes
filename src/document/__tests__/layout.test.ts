@@ -4,6 +4,8 @@ import {
   currentPageIndex,
   inRange,
   layoutPages,
+  pageAtViewportPoint,
+  pageHandoffOffset,
   pageToContent,
   projectToPage,
   scrollOffsetForPage,
@@ -86,5 +88,45 @@ describe('coordinate projection', () => {
     if (!zoomed) throw new Error('layout');
     const p = projectToPage(203, 120, frame, zoomed, 2);
     expect(pageToContent(p, zoomed, 2)).toEqual({ x: 193, y: 1600 });
+  });
+});
+
+describe('dropping a dragged selection', () => {
+  /** Two sheets stacked vertically on screen, with a gap between them. */
+  const first = { pageId: 'a', left: 100, top: 0, right: 400, bottom: 200 };
+  const second = { pageId: 'b', left: 100, top: 240, right: 400, bottom: 440 };
+  const rects = [first, second];
+
+  it('lands on the page under the pointer', () => {
+    expect(pageAtViewportPoint(rects, 200, 100)?.pageId).toBe('a');
+    expect(pageAtViewportPoint(rects, 200, 300)?.pageId).toBe('b');
+  });
+
+  it('falls back to the nearest page when released over the gap or the margin', () => {
+    expect(pageAtViewportPoint(rects, 200, 210)?.pageId).toBe('a');
+    expect(pageAtViewportPoint(rects, 200, 230)?.pageId).toBe('b');
+    // Beside the sheets entirely, and past the end of the last one.
+    expect(pageAtViewportPoint(rects, 900, 100)?.pageId).toBe('a');
+    expect(pageAtViewportPoint(rects, 200, 9999)?.pageId).toBe('b');
+    expect(pageAtViewportPoint([], 0, 0)).toBeUndefined();
+  });
+
+  it('offsets handed-over strokes so they stay where they were dropped', () => {
+    // b sits 240px lower on screen, so in b's own units the ink moves up by that.
+    expect(pageHandoffOffset(first, second, 1)).toEqual({ x: 0, y: -240 });
+    expect(pageHandoffOffset(second, first, 1)).toEqual({ x: 0, y: 240 });
+    // Zoom is undone, because page units are what the store keeps.
+    expect(pageHandoffOffset(first, second, 2)).toEqual({ x: 0, y: -120 });
+  });
+
+  it('round-trips a drop: the ink keeps its place on screen', () => {
+    const zoom = 1.5;
+    // A stroke at (50, 180) on `first`, dragged 300px down the screen.
+    const dragged = { x: 50, y: 180 + 300 / zoom };
+    const offset = pageHandoffOffset(first, second, zoom);
+    const onSecond = { x: dragged.x + offset.x, y: dragged.y + offset.y };
+    // Same viewport position, whichever page's frame it is expressed in.
+    expect(first.top + dragged.y * zoom).toBeCloseTo(second.top + onSecond.y * zoom);
+    expect(first.left + dragged.x * zoom).toBeCloseTo(second.left + onSecond.x * zoom);
   });
 });

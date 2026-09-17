@@ -95,4 +95,45 @@ describe('lasso selection in the document store', () => {
     store.getState().newDocument();
     expect(store.getState().lassoSelection).toBeNull();
   });
+
+  it('moveSelectionToPage hands the strokes to another page, transformed and still selected', () => {
+    store.getState().addPage('after');
+    const [from, to] = store.getState().document.pages;
+    const [a, b, c] = from!.strokes;
+    const ids = [a!.id, b!.id];
+    store.getState().setLassoSelection({ pageId: from!.id, strokeIds: ids });
+
+    store.getState().moveSelectionToPage(from!.id, to!.id, ids, { kind: 'translate', dx: 0, dy: -700 });
+
+    const [source, target] = store.getState().document.pages;
+    expect(source!.strokes.map((s) => s.id)).toEqual([c!.id]);
+    expect(target!.strokes.map((s) => s.id)).toEqual(ids);
+    // Moved, not copied — and the offset was applied on the way over.
+    expect(target!.strokes[0]!.bbox.minY).toBeCloseTo(a!.bbox.minY - 700);
+    // The selection follows the ink, so the box stays up on the new page.
+    expect(store.getState().lassoSelection).toEqual({ pageId: to!.id, strokeIds: ids });
+  });
+
+  it('moveSelectionToPage is undoable on both pages, and refuses a no-op', () => {
+    store.getState().addPage('after');
+    const [from, to] = store.getState().document.pages;
+    const ids = [from!.strokes[0]!.id];
+    const sourceDepth = from!.undoStack.length;
+    const targetDepth = to!.undoStack.length;
+
+    store.getState().moveSelectionToPage(from!.id, to!.id, ids, { kind: 'translate', dx: 5, dy: 5 });
+
+    const after = store.getState().document.pages;
+    expect(after[0]!.undoStack.length).toBe(sourceDepth + 1);
+    expect(after[1]!.undoStack.length).toBe(targetDepth + 1);
+    store.getState().undo(after[1]!.id);
+    store.getState().undo(after[0]!.id);
+    expect(store.getState().document.pages[0]!.strokes.map((s) => s.id)).toEqual(from!.strokes.map((s) => s.id));
+    expect(store.getState().document.pages[1]!.strokes).toHaveLength(0);
+
+    // Dropping a selection back on the page it came from changes nothing.
+    const before = store.getState().document;
+    store.getState().moveSelectionToPage(from!.id, from!.id, ids, { kind: 'translate', dx: 5, dy: 5 });
+    expect(store.getState().document).toBe(before);
+  });
 });

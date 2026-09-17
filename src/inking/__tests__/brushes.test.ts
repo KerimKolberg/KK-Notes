@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_TOOL_SETTINGS } from '../constants';
+import {
+  DEFAULT_TOOL_SETTINGS,
+  HIGHLIGHTER_OPACITY,
+  MAX_HIGHLIGHTER_OPACITY,
+  MIN_HIGHLIGHTER_OPACITY,
+} from '../constants';
 import {
   BRUSHES,
   DEFAULT_BRUSH,
@@ -23,7 +28,7 @@ import {
   tiltMagnitude,
 } from '../engine/brushes';
 import { freehandSamples, toFreehandOptions } from '../engine/strokeOutline';
-import { styleForTool } from '../engine/toolStyles';
+import { clampHighlighterOpacity, styleForTool } from '../engine/toolStyles';
 import type { BrushId, InkPoint } from '../types';
 
 const ALL: readonly BrushId[] = ['ballpoint', 'fountain', 'pencil', 'marker', 'brush'];
@@ -64,9 +69,23 @@ describe('brush catalogue', () => {
 
     const brush = brushById('brush');
     expect(brush.smoothing).toBeGreaterThan(0.8);
-    expect(brush.thinning).toBeGreaterThan(0.8);
     expect(brush.cap).toBe('round');
-    expect(brush.bleed).toBeGreaterThan(0);
+  });
+
+  it('gives the wet brush a velocity-driven width and a soft edge', () => {
+    const brush = brushById('brush');
+    // Width comes from the speed of the sweep, and covers nearly the full range.
+    expect(brush.velocityWidth).toBe(true);
+    expect(brush.thinning).toBeGreaterThan(0.9);
+    // A translucent body under a wide, blurred halo: water, not a second outline.
+    expect(brush.opacity).toBeLessThan(0.85);
+    expect(brush.softness).toBeGreaterThan(0);
+    expect(brush.bleed).toBeGreaterThan(brushById('marker').bleed);
+    // Nothing else blurs, so an ordinary pen pays nothing for this.
+    for (const id of ALL) {
+      if (id !== 'brush') expect(brushById(id).softness).toBe(0);
+      if (id !== 'brush') expect(brushById(id).velocityWidth).toBe(false);
+    }
   });
 
   it('eases the pressure response per brush', () => {
@@ -108,11 +127,28 @@ describe('brush styles', () => {
     expect(brushStyle('fountain', settings, 'mouse').simulatePressure).toBe(true);
     expect(brushStyle('marker', settings, 'mouse').simulatePressure).toBe(false);
     expect(brushStyle('fountain', settings, 'pen').simulatePressure).toBe(false);
+    // …except the wet brush, whose width is meant to follow the sweep even
+    // when the device has real pressure to offer.
+    expect(brushStyle('brush', settings, 'pen').simulatePressure).toBe(true);
   });
 
-  it('pads the bounding box for brushes that bleed', () => {
+  it('pads the bounding box for brushes that bleed, and again for a blurred one', () => {
     expect(brushPadding(brushStyle('ballpoint', settings, 'pen'))).toBe(0);
     expect(brushPadding(brushStyle('marker', settings, 'pen'))).toBeGreaterThan(0);
+    // The blur spreads past the halo it is applied to, so the box must too.
+    const wet = brushStyle('brush', settings, 'pen');
+    expect(brushPadding(wet)).toBeGreaterThan(wet.size * brushById('brush').bleed);
+  });
+
+  it('takes the highlighter opacity from the toolbar, within a usable range', () => {
+    expect(styleForTool('highlighter', { ...settings, highlighterOpacity: 0.5 }, 'pen').opacity).toBe(0.5);
+    expect(styleForTool('highlighter', { ...settings, highlighterOpacity: 0.8 }, 'pen').opacity).toBe(0.8);
+    expect(styleForTool('highlighter', settings, 'pen').compositeOperation).toBe('multiply');
+    // Out of range or missing entirely (an older document), it stays usable.
+    expect(clampHighlighterOpacity(0)).toBe(MIN_HIGHLIGHTER_OPACITY);
+    expect(clampHighlighterOpacity(5)).toBe(MAX_HIGHLIGHTER_OPACITY);
+    expect(clampHighlighterOpacity(Number.NaN)).toBe(HIGHLIGHTER_OPACITY);
+    expect(clampHighlighterOpacity(0.42)).toBe(0.42);
   });
 });
 

@@ -266,10 +266,26 @@ export function removeStrokesById(strokes: readonly Stroke[], ids: ReadonlySet<s
 // Selection-box geometry
 // ---------------------------------------------------------------------------
 
-export type ScaleHandle = 'nw' | 'ne' | 'se' | 'sw';
-export const SCALE_HANDLES: readonly ScaleHandle[] = ['nw', 'ne', 'se', 'sw'];
+/**
+ * Corners scale both axes at once; edges scale the one they face and leave
+ * the other alone, which is how a selection gets stretched or squashed.
+ */
+export type ScaleHandle = 'nw' | 'ne' | 'se' | 'sw' | 'n' | 'e' | 's' | 'w';
+export const SCALE_HANDLES: readonly ScaleHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
-/** Corner opposite to a handle: the fixed point of the scale. */
+/** Axes a handle is free to scale. */
+export function handleAxes(handle: ScaleHandle): { x: boolean; y: boolean } {
+  return {
+    x: handle.includes('w') || handle.includes('e'),
+    y: handle.includes('n') || handle.includes('s'),
+  };
+}
+
+/**
+ * The fixed point of the scale: the corner or edge opposite the handle. On the
+ * axis a handle does not scale the coordinate is arbitrary, because a factor
+ * of 1 leaves every point on that axis where it is.
+ */
 export function scaleAnchor(bounds: BBox, handle: ScaleHandle): Point {
   return {
     x: handle.includes('w') ? bounds.maxX : bounds.minX,
@@ -278,19 +294,21 @@ export function scaleAnchor(bounds: BBox, handle: ScaleHandle): Point {
 }
 
 /**
- * Scale transform for dragging `handle` to `pointer`. Uniform by default
- * (dominant axis wins); `free` allows independent axes. Never collapses
- * below `minSize` px on either axis.
+ * Scale transform for dragging `handle` to `pointer`. A corner is uniform by
+ * default (the dominant axis wins) unless `free`; an edge is always a pure 1D
+ * scale, which is the point of having it. Never collapses below `minSize` px
+ * on either axis.
  */
 export function scaleFromHandle(bounds: BBox, handle: ScaleHandle, pointer: Point, free: boolean, minSize = 8): StrokeTransform {
   const origin = scaleAnchor(bounds, handle);
+  const axes = handleAxes(handle);
   const width = bounds.maxX - bounds.minX;
   const height = bounds.maxY - bounds.minY;
   const signX = handle.includes('w') ? -1 : 1;
   const signY = handle.includes('n') ? -1 : 1;
-  let sx = width > 0 ? Math.max(minSize, signX * (pointer.x - origin.x)) / width : 1;
-  let sy = height > 0 ? Math.max(minSize, signY * (pointer.y - origin.y)) / height : 1;
-  if (!free) {
+  let sx = axes.x && width > 0 ? Math.max(minSize, signX * (pointer.x - origin.x)) / width : 1;
+  let sy = axes.y && height > 0 ? Math.max(minSize, signY * (pointer.y - origin.y)) / height : 1;
+  if (!free && axes.x && axes.y) {
     const uniform = Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy;
     sx = uniform;
     sy = uniform;

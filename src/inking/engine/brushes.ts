@@ -42,6 +42,13 @@ export interface BrushDefinition {
   readonly smoothing: number;
   readonly streamline: number;
   readonly easing: BrushEasing;
+  /**
+   * Drive the width from how fast the stroke is moving rather than from the
+   * reported pressure, even on a pen. A loaded brush is dragged, not pressed:
+   * sweeping it fast starves the mark and lays down a thin, broken line, while
+   * moving slowly lets it pool.
+   */
+  readonly velocityWidth: boolean;
   /** Fixed taper in px at each end (before any velocity term). */
   readonly taperStart: number;
   readonly taperEnd: number;
@@ -57,6 +64,13 @@ export interface BrushDefinition {
   readonly bleed: number;
   /** Alpha of that soft edge, relative to the stroke opacity. */
   readonly bleedAlpha: number;
+  /**
+   * Blur applied to the bleed passes, as a fraction of the stroke width. It
+   * turns the halo from a band with an edge of its own into a gradient, which
+   * is the difference between ink sitting on paper and water spreading into
+   * it. The body itself is never blurred, so the mark keeps a definite core.
+   */
+  readonly softness: number;
   /** Outline drawn with smooth quadratic curves (false = hard polygon edges). */
   readonly smoothOutline: boolean;
   /** How strongly pen tilt widens and lightens the mark (0 = ignore tilt). */
@@ -78,6 +92,7 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
     // stroke the length the user drew it.
     streamline: 0.5,
     easing: 'linear',
+    velocityWidth: false,
     taperStart: 0,
     taperEnd: 0,
     velocityTaper: 0,
@@ -85,6 +100,7 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
     cap: 'round',
     texture: 'none',
     bleed: 0,
+    softness: 0,
     bleedAlpha: 0,
     smoothOutline: false,
     tiltResponse: 0,
@@ -100,6 +116,7 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
     smoothing: 0.62,
     streamline: 0.45,
     easing: 'ease-in-out',
+    velocityWidth: false,
     taperStart: 2,
     taperEnd: 4,
     velocityTaper: 8,
@@ -107,6 +124,7 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
     cap: 'round',
     texture: 'none',
     bleed: 0,
+    softness: 0,
     bleedAlpha: 0,
     smoothOutline: true,
     tiltResponse: 0.15,
@@ -122,6 +140,7 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
     smoothing: 0.35,
     streamline: 0.4,
     easing: 'ease-out',
+    velocityWidth: false,
     taperStart: 0,
     taperEnd: 0,
     velocityTaper: 0,
@@ -129,6 +148,7 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
     cap: 'round',
     texture: 'pencil',
     bleed: 0,
+    softness: 0,
     bleedAlpha: 0,
     smoothOutline: true,
     tiltResponse: 1,
@@ -144,6 +164,7 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
     smoothing: 0.5,
     streamline: 0.5,
     easing: 'linear',
+    velocityWidth: false,
     taperStart: 0,
     taperEnd: 0,
     velocityTaper: 0,
@@ -151,6 +172,7 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
     cap: 'flat',
     texture: 'none',
     bleed: 0.22,
+    softness: 0,
     bleedAlpha: 0.45,
     smoothOutline: true,
     tiltResponse: 0,
@@ -158,24 +180,32 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
   brush: {
     id: 'brush',
     label: 'Brush',
-    hint: 'Wet brush: very smooth, very pressure-sensitive, spreads at the edges',
-    sizeScale: 1.8,
-    opacity: 0.92,
+    hint: 'Wet brush: width follows the speed of the sweep, and the ink spreads into the paper',
+    sizeScale: 2.1,
+    // Lower than the other brushes on purpose: the body is translucent enough
+    // that the blurred bleed passes read as water carrying pigment outwards
+    // rather than as a second, darker outline drawn around the mark.
+    opacity: 0.78,
     composite: 'source-over',
-    thinning: 0.86,
-    smoothing: 0.85,
-    streamline: 0.62,
+    // Nearly the full range, so a fast sweep starves to a hairline and a slow
+    // one pools at full width. `velocityWidth` is what makes that speed and
+    // not pressure, which is the whole difference from the fountain pen.
+    thinning: 0.95,
+    velocityWidth: true,
+    smoothing: 0.92,
+    streamline: 0.72,
     easing: 'ease-in',
-    taperStart: 6,
-    taperEnd: 18,
-    velocityTaper: 6,
-    velocityTaperMax: 24,
+    taperStart: 8,
+    taperEnd: 26,
+    velocityTaper: 10,
+    velocityTaperMax: 36,
     cap: 'round',
     texture: 'none',
-    bleed: 0.26,
-    bleedAlpha: 0.32,
+    bleed: 0.45,
+    bleedAlpha: 0.3,
+    softness: 0.2,
     smoothOutline: true,
-    tiltResponse: 0.2,
+    tiltResponse: 0.25,
   },
 };
 
@@ -236,8 +266,9 @@ export function brushStyle(
     smoothing: brush.smoothing,
     streamline: brush.streamline,
     // A device that reports no pressure still gets life from velocity, except
-    // for brushes that are meant to be even-width.
-    simulatePressure: pointerType !== 'pen' && brush.thinning > 0.2,
+    // for brushes that are meant to be even-width — and a brush that works by
+    // velocity wants it whatever the device reports.
+    simulatePressure: brush.velocityWidth || (pointerType !== 'pen' && brush.thinning > 0.2),
     taperStart: brush.taperStart,
     taperEnd: brush.taperEnd,
     pattern: settings.pattern,
@@ -398,7 +429,9 @@ export function brushPadding(style: StrokeStyle): number {
   const brush = strokeBrush(style);
   if (!brush) return 0;
   const tiltWidening = brush.tiltResponse > 0 ? (style.size * (pencilWidthScale(1, brush.tiltResponse) - 1)) / 2 : 0;
-  return style.size * brush.bleed + tiltWidening;
+  // A Gaussian blur is visually spent by about three radii, and the box is a
+  // bound, so reserve that much beyond the halo it is applied to.
+  return style.size * (brush.bleed + brush.softness * 3) + tiltWidening;
 }
 
 // ---------------------------------------------------------------------------

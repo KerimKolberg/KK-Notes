@@ -9,6 +9,7 @@ import {
   duplicateStrokes,
   removeStrokesById,
   restyleStrokes,
+  transformStroke,
   transformStrokes,
   type StrokeTransform,
   type StyleChange,
@@ -136,6 +137,11 @@ export interface DocumentStore {
   /** Appends offset copies and moves the selection onto them. */
   duplicateSelection: (pageId: string, ids: readonly string[]) => void;
   deleteSelection: (pageId: string, ids: readonly string[]) => void;
+  /**
+   * Hand the selection to another page, transformed into its coordinates.
+   * The strokes keep their ids, so the selection survives the move.
+   */
+  moveSelectionToPage: (fromPageId: string, toPageId: string, ids: readonly string[], transform: StrokeTransform) => void;
 
   /** Replace the document; `path` is the native file it came from. Marks it clean. */
   loadDocument: (doc: Document, path?: string | null) => void;
@@ -450,6 +456,25 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
           return next.length === page.strokes.length ? page : withStrokes(page, next);
         }),
         lassoSelection: s.lassoSelection?.pageId === pageId ? null : s.lassoSelection,
+      };
+    })),
+
+  moveSelectionToPage: (fromPageId, toPageId, ids, transform) =>
+    set(edit((s) => {
+      if (fromPageId === toPageId) return s;
+      const idSet = new Set(ids);
+      const source = s.document.pages.find((p) => p.id === fromPageId);
+      const target = s.document.pages.find((p) => p.id === toPageId);
+      if (!source || !target) return s;
+      const moved = source.strokes.filter((stroke) => idSet.has(stroke.id)).map((stroke) => transformStroke(stroke, transform));
+      if (moved.length === 0) return s;
+      // Two pages change, so this is two undo entries — history is per page.
+      const withoutThem = updatePageById(s.document, fromPageId, (page) =>
+        withStrokes(page, removeStrokesById(page.strokes, idSet)),
+      );
+      return {
+        document: updatePageById(withoutThem, toPageId, (page) => withStrokes(page, [...page.strokes, ...moved])),
+        lassoSelection: { pageId: toPageId, strokeIds: moved.map((stroke) => stroke.id) },
       };
     })),
 

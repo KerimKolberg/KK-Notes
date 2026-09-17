@@ -56,6 +56,13 @@ export const PageFrame = memo(function PageFrame({
   const pageRef = useLatestRef(page);
   /** Strokes the selection layer is previewing; the ink layer leaves them out meanwhile. */
   const [hiddenStrokeIds, setHiddenStrokeIds] = useState<ReadonlySet<string> | null>(null);
+  /**
+   * A lasso selection being dragged. The frame normally clips to the sheet, so
+   * a selection carried towards the next page would be cut off at the edge;
+   * while a drag is in flight it stops clipping and rises above its neighbours
+   * instead, and the preview travels across the gap intact.
+   */
+  const [draggingSelection, setDraggingSelection] = useState(false);
 
   const backgroundImage = useMemo(
     () => templateSvgDataUrl(page),
@@ -85,7 +92,7 @@ export const PageFrame = memo(function PageFrame({
 
   return (
     <div
-      className={`absolute isolate overflow-hidden rounded-sm shadow-lg ring-1 ${
+      className={`absolute isolate rounded-sm shadow-lg ring-1 ${draggingSelection ? 'overflow-visible' : 'overflow-hidden'} ${
         isCurrent ? 'ring-blue-500/60 dark:ring-blue-400/60' : 'ring-black/10 dark:ring-white/10'
       }`}
       style={{
@@ -93,6 +100,7 @@ export const PageFrame = memo(function PageFrame({
         left: layout.left,
         width: layout.width,
         height: layout.height,
+        ...(draggingSelection ? { zIndex: 40 } : {}),
         backgroundColor: page.backgroundColor,
         backgroundImage,
         backgroundSize: '100% 100%',
@@ -127,7 +135,15 @@ export const PageFrame = memo(function PageFrame({
               ariaLabel={`Page ${page.pageNumber} drawing surface`}
             />
           </div>
-          {showSelection && <SelectionLayer page={page} zoom={zoom} strokeIds={lassoIds} onPreviewHidden={setHiddenStrokeIds} />}
+          {showSelection && (
+            <SelectionLayer
+              page={page}
+              zoom={zoom}
+              strokeIds={lassoIds}
+              onPreviewHidden={setHiddenStrokeIds}
+              onDraggingChange={setDraggingSelection}
+            />
+          )}
           <FormOverlay page={page} zoom={zoom} tool={currentTool} readOnly={readOnly} />
         </>
       ) : (

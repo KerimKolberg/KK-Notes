@@ -258,6 +258,8 @@ export interface ToolSettings {
   touchDraw: boolean;
   /** Pen preset used by the pen tool. */
   brush: BrushId;
+  /** Layer opacity of the highlighter's `multiply` ink (0..1). */
+  highlighterOpacity: number;
   /** Laser pointer colour, kept separate from the ink colour. */
   laserColor: string;
   /** Laser pointer: cycle the hue along the trail instead of using `laserColor`. */

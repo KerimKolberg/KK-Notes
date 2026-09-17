@@ -7,6 +7,8 @@ import {
   polygonBBox,
   removeStrokesById,
   restyleStrokes,
+  SCALE_HANDLES,
+  handleAxes,
   scaleAnchor,
   scaleFromHandle,
   selectStrokesInLasso,
@@ -344,5 +346,37 @@ describe('selection-box geometry', () => {
     // Dragging the NW corner up-left grows the box.
     const nw = scaleFromHandle(bounds, 'nw', { x: -90, y: 20 }, true);
     expect(nw).toMatchObject({ origin: { x: 110, y: 70 }, sx: 2, sy: 1 });
+  });
+
+  it('offers four corners and four edges', () => {
+    expect([...SCALE_HANDLES].sort()).toEqual(['e', 'n', 'ne', 'nw', 's', 'se', 'sw', 'w']);
+    expect(handleAxes('se')).toEqual({ x: true, y: true });
+    expect(handleAxes('n')).toEqual({ x: false, y: true });
+    expect(handleAxes('s')).toEqual({ x: false, y: true });
+    expect(handleAxes('e')).toEqual({ x: true, y: false });
+    expect(handleAxes('w')).toEqual({ x: true, y: false });
+  });
+
+  it('anchors an edge handle on the edge opposite it', () => {
+    expect(scaleAnchor(bounds, 'n').y).toBe(70); // bottom edge stays put
+    expect(scaleAnchor(bounds, 's').y).toBe(20); // top edge stays put
+    expect(scaleAnchor(bounds, 'e').x).toBe(10); // left edge stays put
+    expect(scaleAnchor(bounds, 'w').x).toBe(110); // right edge stays put
+  });
+
+  it('stretches one axis only from an edge handle, uniform mode or not', () => {
+    // 100 × 50 box. Drag the east edge out to 200 wide; the height must not move.
+    for (const free of [false, true]) {
+      expect(scaleFromHandle(bounds, 'e', { x: 210, y: 45 }, free)).toMatchObject({ sx: 2, sy: 1 });
+      expect(scaleFromHandle(bounds, 's', { x: 60, y: 120 }, free)).toMatchObject({ sx: 1, sy: 2 });
+    }
+    // Squashing works the same way, and towards the anchor the sign flips.
+    expect(scaleFromHandle(bounds, 'w', { x: 60, y: 45 }, false)).toMatchObject({ origin: { x: 110, y: 20 }, sx: 0.5, sy: 1 });
+    expect(scaleFromHandle(bounds, 'n', { x: 60, y: 45 }, false)).toMatchObject({ origin: { x: 10, y: 70 }, sx: 1, sy: 0.5 });
+  });
+
+  it('never collapses an edge-scaled selection to nothing', () => {
+    const squashed = scaleFromHandle(bounds, 'e', { x: -500, y: 45 }, false, 8);
+    expect(squashed).toMatchObject({ sx: 0.08, sy: 1 });
   });
 });

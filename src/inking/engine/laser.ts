@@ -1,26 +1,25 @@
 /**
  * Laser pointer: a disappearing trail that is never part of the document.
  *
- * The trail is a list of timestamped points. Every point carries the colour
- * and width it was drawn with, so a fading trail keeps its appearance even
- * after the toolbar changes, and fades on its own clock: a point's alpha
- * decays linearly from 1 to 0 over `LASER_FADE_MS` and the point is dropped
- * once it reaches zero.
+ * The trail is one mark with one clock, not a crowd of independently fading
+ * samples. Every pointer event refreshes its activity timestamp; the whole
+ * trail then stays at full strength for `LASER_HOLD_MS` after the last one,
+ * and only then fades out together over `LASER_FADE_OUT_MS` and is dropped.
  *
- * That single rule produces both behaviours the tool needs — while the pen
- * keeps moving, the tail dissolves `LASER_FADE_MS` behind the tip, and after
- * `pointerup` the newest point (drawn at the moment of release) takes exactly
- * `LASER_FADE_MS` to vanish.
+ * That is what a presenter wants: a diagram drawn in half a dozen strokes
+ * stays on screen while it is being talked through, instead of dissolving
+ * behind the pen, and clears itself the moment attention moves on.
+ *
+ * Each point still carries the colour and width it was drawn with, so a trail
+ * keeps its appearance even after the toolbar changes underneath it.
  */
-import { LASER_FADE_MS, LASER_RAINBOW_PERIOD_MS } from '../constants';
+import { LASER_FADE_OUT_MS, LASER_HOLD_MS, LASER_RAINBOW_PERIOD_MS } from '../constants';
 import type { InkPoint, Point } from '../types';
 
 /** How far a point must move before it is recorded (drawing units). */
 const MIN_SAMPLE_DISTANCE = 0.6;
-/** Hard cap on retained samples (a 240 Hz pen fills ~650 in a fade window). */
+/** Hard cap on retained samples; the oldest are dropped past it. */
 export const MAX_LASER_POINTS = 2000;
-/** Width at the faded tail, as a fraction of the drawn width. */
-const TAIL_WIDTH_FRACTION = 0.55;
 
 export interface LaserStyle {
   /** Base colour, used when `rainbow` is off. */
@@ -32,22 +31,20 @@ export interface LaserStyle {
 }
 
 export interface LaserPoint extends Point {
-  /** `performance.now()` timestamp of the sample. */
-  readonly t: number;
   readonly color: string;
   readonly width: number;
   /** True for the first point of a stroke: no segment is drawn into it. */
   readonly startsStroke: boolean;
 }
 
-export interface LaserSegment {
-  readonly from: Point;
-  readonly to: Point;
-  readonly width: number;
-  /** 0..1 opacity for this segment (the older endpoint decides). */
-  readonly alpha: number;
-  readonly color: string;
+/** The whole live trail: its samples and when it was last drawn on. */
+export interface LaserTrail {
+  readonly points: readonly LaserPoint[];
+  /** `performance.now()` of the most recent pointer event. */
+  readonly activeAt: number;
 }
+
+export const EMPTY_LASER_TRAIL: LaserTrail = { points: [], activeAt: 0 };
 
 /** Hue cycles with wall-clock time, so a rainbow gradient travels along the stroke. */
 export function rainbowColor(t: number, periodMs = LASER_RAINBOW_PERIOD_MS): string {
@@ -65,7 +62,6 @@ export function laserPointFrom(sample: InkPoint, t: number, style: LaserStyle, s
   return {
     x: sample.x,
     y: sample.y,
-    t,
     color: style.rainbow ? rainbowColor(t) : style.color,
     width: laserWidth(sample.pressure, style.size),
     startsStroke,
@@ -73,73 +69,55 @@ export function laserPointFrom(sample: InkPoint, t: number, style: LaserStyle, s
 }
 
 /**
- * Append a sample, skipping ones too close to the previous point (except the
- * first of a stroke) and trimming the trail to `MAX_LASER_POINTS`.
+ * Append a sample and mark the trail active at `t`. Samples too close to the
+ * previous point are skipped (except the first of a stroke), but they still
+ * count as activity: holding the pen still on one spot is pointing at it, and
+ * must not let the trail start fading.
  */
 export function appendLaserPoint(
-  trail: readonly LaserPoint[],
+  trail: LaserTrail,
   sample: InkPoint,
   t: number,
   style: LaserStyle,
   startsStroke = false,
-): LaserPoint[] {
-  const last = trail[trail.length - 1];
+): LaserTrail {
+  const last = trail.points[trail.points.length - 1];
   if (!startsStroke && last && Math.hypot(sample.x - last.x, sample.y - last.y) < MIN_SAMPLE_DISTANCE) {
-    return trail as LaserPoint[];
+    return { points: trail.points, activeAt: t };
   }
-  const next = [...trail, laserPointFrom(sample, t, style, startsStroke)];
-  return next.length > MAX_LASER_POINTS ? next.slice(next.length - MAX_LASER_POINTS) : next;
-}
-
-/** Remaining opacity of a sample of the given age (1 → 0 across the fade window). */
-export function laserAlpha(age: number, fadeMs = LASER_FADE_MS): number {
-  if (!(fadeMs > 0)) return 0;
-  if (age <= 0) return 1;
-  if (age >= fadeMs) return 0;
-  return 1 - age / fadeMs;
-}
-
-/** Drop fully faded samples. Returns the same array when nothing expired. */
-export function pruneLaserTrail(trail: readonly LaserPoint[], now: number, fadeMs = LASER_FADE_MS): LaserPoint[] {
-  let first = 0;
-  while (first < trail.length && now - (trail[first]?.t ?? 0) >= fadeMs) first++;
-  if (first === 0) return trail as LaserPoint[];
-  const kept = trail.slice(first);
-  // The first survivor now begins a stroke: its predecessor is gone.
-  const head = kept[0];
-  if (head && !head.startsStroke) kept[0] = { ...head, startsStroke: true };
-  return kept;
-}
-
-/** True once every sample has faded out. */
-export function laserTrailIsEmpty(trail: readonly LaserPoint[], now: number, fadeMs = LASER_FADE_MS): boolean {
-  const last = trail[trail.length - 1];
-  return last === undefined || now - last.t >= fadeMs;
+  const next = [...trail.points, laserPointFrom(sample, t, style, startsStroke)];
+  if (next.length > MAX_LASER_POINTS) {
+    const kept = next.slice(next.length - MAX_LASER_POINTS);
+    // The first survivor now begins a stroke: its predecessor is gone.
+    const head = kept[0];
+    if (head && !head.startsStroke) kept[0] = { ...head, startsStroke: true };
+    return { points: kept, activeAt: t };
+  }
+  return { points: next, activeAt: t };
 }
 
 /**
- * Renderable segments for the current instant. Each segment takes the older
- * endpoint's alpha and colour, so the trail darkens and thins towards its
- * tail, and segments into a stroke start are skipped.
+ * Opacity of the whole trail for a given idle time: full until the hold
+ * expires, then linear to nothing across the fade-out.
  */
-export function laserSegments(trail: readonly LaserPoint[], now: number, fadeMs = LASER_FADE_MS): LaserSegment[] {
-  const segments: LaserSegment[] = [];
-  for (let i = 1; i < trail.length; i++) {
-    const from = trail[i - 1];
-    const to = trail[i];
-    if (!from || !to || to.startsStroke) continue;
-    const alpha = laserAlpha(now - from.t, fadeMs);
-    if (alpha <= 0) continue;
-    const width = ((from.width + to.width) / 2) * (TAIL_WIDTH_FRACTION + (1 - TAIL_WIDTH_FRACTION) * alpha);
-    segments.push({ from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y }, width, alpha, color: from.color });
-  }
-  return segments;
+export function laserAlpha(idle: number, holdMs = LASER_HOLD_MS, fadeOutMs = LASER_FADE_OUT_MS): number {
+  if (idle <= holdMs) return 1;
+  if (!(fadeOutMs > 0)) return 0;
+  const faded = (idle - holdMs) / fadeOutMs;
+  return faded >= 1 ? 0 : 1 - faded;
 }
 
-/** Quantisation of the fade when segments are batched into polylines. */
-export const LASER_ALPHA_STEPS = 24;
+/** Opacity of `trail` at `now`. Zero once it has faded out completely. */
+export function laserTrailAlpha(trail: LaserTrail, now: number, holdMs = LASER_HOLD_MS, fadeOutMs = LASER_FADE_OUT_MS): number {
+  return trail.points.length === 0 ? 0 : laserAlpha(now - trail.activeAt, holdMs, fadeOutMs);
+}
 
-/** A run of consecutive segments that share a quantised alpha and a colour. */
+/** True once the trail has finished fading and can be dropped. */
+export function laserTrailExpired(trail: LaserTrail, now: number, holdMs = LASER_HOLD_MS, fadeOutMs = LASER_FADE_OUT_MS): boolean {
+  return laserTrailAlpha(trail, now, holdMs, fadeOutMs) <= 0;
+}
+
+/** A run of consecutive segments sharing a colour, drawn as one polyline. */
 export interface LaserRun {
   readonly points: readonly Point[];
   readonly alpha: number;
@@ -148,45 +126,41 @@ export interface LaserRun {
 }
 
 /**
- * Batch the trail into polylines so a frame costs a few dozen `stroke()`
- * calls instead of one per sample. Alpha and hue both vary monotonically
- * along the trail, so consecutive segments group naturally.
+ * Batch the trail into polylines so a frame costs a few `stroke()` calls
+ * instead of one per sample. The trail has a single opacity now, so a run
+ * only ends where a stroke ends or where the rainbow hue moves on.
  */
-export function laserRuns(
-  trail: readonly LaserPoint[],
-  now: number,
-  fadeMs = LASER_FADE_MS,
-  alphaSteps = LASER_ALPHA_STEPS,
-): LaserRun[] {
+export function laserRuns(trail: LaserTrail, now: number, holdMs = LASER_HOLD_MS, fadeOutMs = LASER_FADE_OUT_MS): LaserRun[] {
+  const alpha = laserTrailAlpha(trail, now, holdMs, fadeOutMs);
+  if (alpha <= 0) return [];
+
   const runs: LaserRun[] = [];
   let points: Point[] = [];
   let color = '';
-  let bucket = -1;
   let widthSum = 0;
-  let alphaSum = 0;
 
   const flush = (): void => {
-    if (points.length >= 2) {
-      runs.push({ points, alpha: alphaSum / (points.length - 1), color, width: widthSum / (points.length - 1) });
-    }
+    if (points.length >= 2) runs.push({ points, alpha, color, width: widthSum / points.length });
     points = [];
     widthSum = 0;
-    alphaSum = 0;
   };
 
-  for (const segment of laserSegments(trail, now, fadeMs)) {
-    const segBucket = Math.max(0, Math.min(alphaSteps - 1, Math.floor(segment.alpha * alphaSteps)));
-    const last = points[points.length - 1];
-    const continues = last !== undefined && last.x === segment.from.x && last.y === segment.from.y;
-    if (!continues || segBucket !== bucket || segment.color !== color) {
+  let previous: LaserPoint | null = null;
+  for (const point of trail.points) {
+    // A new stroke is not joined to the one before it, and a hue change ends
+    // the run because a polyline is stroked in a single colour.
+    if (previous === null || point.startsStroke || point.color !== previous.color) {
       flush();
-      points = [segment.from];
-      bucket = segBucket;
-      color = segment.color;
+      color = point.color;
+      // Same stroke, new hue: repeat the shared vertex so no gap opens up.
+      if (previous && !point.startsStroke) {
+        points.push({ x: previous.x, y: previous.y });
+        widthSum += previous.width;
+      }
     }
-    points.push(segment.to);
-    widthSum += segment.width;
-    alphaSum += segment.alpha;
+    points.push({ x: point.x, y: point.y });
+    widthSum += point.width;
+    previous = point;
   }
   flush();
   return runs;

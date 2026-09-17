@@ -2,6 +2,8 @@ import {
   ERASER_SIZE_MULTIPLIER,
   HIGHLIGHTER_OPACITY,
   HIGHLIGHTER_SIZE_MULTIPLIER,
+  MAX_HIGHLIGHTER_OPACITY,
+  MIN_HIGHLIGHTER_OPACITY,
 } from '../constants';
 import { brushStyle } from './brushes';
 import type { LaserStyle } from './laser';
@@ -15,6 +17,16 @@ import type { InkPointerType, InkTool, StrokeStyle, ToolSettings } from '../type
  * Highlighter, eraser and geometric tools are constant-width presets defined
  * here.
  */
+/**
+ * The highlighter's `globalAlpha`, kept inside the slider's range. Documents
+ * saved before the slider existed carry no value at all, so an unusable 0 (or
+ * a NaN from a hand-edited file) falls back to the middle of the range.
+ */
+export function clampHighlighterOpacity(opacity: number): number {
+  if (!Number.isFinite(opacity)) return HIGHLIGHTER_OPACITY;
+  return Math.min(MAX_HIGHLIGHTER_OPACITY, Math.max(MIN_HIGHLIGHTER_OPACITY, opacity));
+}
+
 export function styleForTool(
   tool: InkTool,
   settings: Readonly<ToolSettings>,
@@ -28,7 +40,7 @@ export function styleForTool(
       return {
         color: settings.color,
         size: settings.size * HIGHLIGHTER_SIZE_MULTIPLIER,
-        opacity: HIGHLIGHTER_OPACITY,
+        opacity: clampHighlighterOpacity(settings.highlighterOpacity),
         compositeOperation: 'multiply',
         thinning: 0,
         smoothing: 0.6,

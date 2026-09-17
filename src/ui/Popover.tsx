@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
+import { useViewportShift } from './useViewportShift';
 
 export type PopoverSide = 'top' | 'bottom';
 
@@ -18,9 +19,14 @@ const SIDE: Record<PopoverSide, string> = {
   bottom: 'top-full mt-2',
 };
 
+/**
+ * Alignment is positioning only: the centring translate lives in the inline
+ * transform instead, so the viewport correction can be added to it rather
+ * than overriding it.
+ */
 const ALIGN = {
   start: 'left-0',
-  center: 'left-1/2 -translate-x-1/2',
+  center: 'left-1/2',
   end: 'right-0',
 };
 
@@ -30,7 +36,8 @@ const ALIGN = {
  * trigger + popover in a `relative` element.
  */
 export function Popover({ open, onClose, label, side = 'top', align = 'center', children }: PopoverProps) {
-  const ref = useRef<HTMLDivElement>(null);
+  // On a phone a flyout centred on a button near the edge would hang off it.
+  const { ref, shift } = useViewportShift<HTMLDivElement>(open);
 
   useEffect(() => {
     if (!open) return;
@@ -62,7 +69,8 @@ export function Popover({ open, onClose, label, side = 'top', align = 'center', 
       role="group"
       aria-label={label}
       data-popover={label}
-      className={`absolute z-40 min-w-max rounded-2xl border border-zinc-200 bg-white/95 p-2 shadow-2xl backdrop-blur-md dark:border-zinc-700 dark:bg-zinc-900/95 ${SIDE[side]} ${ALIGN[align]}`}
+      className={`absolute z-40 w-max max-w-[calc(100vw-1rem)] rounded-2xl border border-zinc-200 bg-white/95 p-2 shadow-2xl backdrop-blur-md dark:border-zinc-700 dark:bg-zinc-900/95 ${SIDE[side]} ${ALIGN[align]}`}
+      style={{ transform: align === 'center' ? `translateX(calc(-50% + ${shift}px))` : `translateX(${shift}px)` }}
     >
       {children}
     </div>

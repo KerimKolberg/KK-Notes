@@ -91,6 +91,8 @@ interface PlanPass {
   readonly alpha: number;
   /** `bleed` only: line width in drawing units. */
   readonly width?: number;
+  /** `bleed` only: Gaussian blur radius in drawing units. */
+  readonly blur?: number;
 }
 
 interface RenderPlan {
@@ -223,9 +225,12 @@ function freehandBody(points: readonly InkPoint[], style: StrokeStyle, complete:
   if (brush && brush.bleed > 0) {
     // Two graduated passes under the body: a faint wide halo and a stronger
     // narrow one, so the edge fades out instead of ending in a hard band.
+    // A soft brush blurs them on top of that, which is what turns the halo
+    // from a band into the gradient of ink spreading through wet paper.
     const width = style.size * brush.bleed * 2;
-    passes.push({ path, kind: 'bleed', alpha: brush.bleedAlpha * 0.5, width });
-    passes.push({ path, kind: 'bleed', alpha: brush.bleedAlpha, width: width * 0.5 });
+    const blur = style.size * brush.softness;
+    passes.push({ path, kind: 'bleed', alpha: brush.bleedAlpha * 0.5, width, blur });
+    passes.push({ path, kind: 'bleed', alpha: brush.bleedAlpha, width: width * 0.5, blur: blur * 0.5 });
   }
   passes.push(fillPass(path));
   return passes;
@@ -339,7 +344,13 @@ function paintPlan(ctx: InkContext, plan: RenderPlan, style: StrokeStyle): void 
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.setLineDash([]);
+      // `filter` is resolved in the current transform, so the radius stays the
+      // same fraction of the stroke at any DPR or zoom. Browsers without it
+      // ignore the assignment and just draw the unblurred halo.
+      const blur = pass.blur ?? 0;
+      if (blur > 0) ctx.filter = `blur(${blur}px)`;
       ctx.stroke(pass.path);
+      if (blur > 0) ctx.filter = 'none';
       continue;
     }
     if (pass.kind === 'texture') {

@@ -212,6 +212,49 @@ export function pageToContent(point: Point, item: PageLayout, zoom: number): Poi
   return { x: item.left + point.x * zoom, y: item.top + point.y * zoom };
 }
 
+/** A rendered page and where it currently sits on screen. */
+export interface PageRect {
+  readonly pageId: string;
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+
+/** Distance from a viewport point to a rect; zero when the point is inside. */
+function distanceToRect(rect: PageRect, x: number, y: number): number {
+  const dx = Math.max(rect.left - x, 0, x - rect.right);
+  const dy = Math.max(rect.top - y, 0, y - rect.bottom);
+  return Math.hypot(dx, dy);
+}
+
+/**
+ * The page a drop at a viewport point belongs to: the one under it, or failing
+ * that the nearest, so releasing over the gap between two sheets still lands
+ * somewhere rather than cancelling the move.
+ */
+export function pageAtViewportPoint(pages: readonly PageRect[], x: number, y: number): PageRect | undefined {
+  let best: PageRect | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const page of pages) {
+    const distance = distanceToRect(page, x, y);
+    if (distance === 0) return page;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = page;
+    }
+  }
+  return best;
+}
+
+/**
+ * Where strokes dragged off `from` have to land on `to` to stay under the
+ * pointer: page-local units, from the two sheets' on-screen positions.
+ */
+export function pageHandoffOffset(from: PageRect, to: PageRect, zoom: number): Point {
+  return { x: (from.left - to.left) / zoom, y: (from.top - to.top) / zoom };
+}
+
 /** Zoom rounded to 1% and clamped to the supported range. */
 export function clampZoom(zoom: number, min = MIN_ZOOM, max = MAX_ZOOM): number {
   const z = Math.round(zoom * 100) / 100;

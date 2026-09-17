@@ -23,7 +23,9 @@ import {
 } from '../../inking/engine/lasso';
 import { clearSurface, drawStroke, get2dContext } from '../../inking/engine/renderer';
 import { usePageCanvas } from '../../inking/hooks/usePageCanvas';
+import { useViewportShift } from '../../ui/useViewportShift';
 import type { BBox, CanvasSize, Point, Stroke } from '../../inking/types';
+import { pageAtViewportPoint, pageHandoffOffset, type PageRect } from '../layout';
 import { useDocumentStore } from '../store';
 import type { Page } from '../types';
 
@@ -34,6 +36,11 @@ export interface SelectionLayerProps {
   strokeIds: readonly string[];
   /** Strokes whose committed rendering must be hidden while this layer previews them; `null` when none. */
   onPreviewHidden: (ids: ReadonlySet<string> | null) => void;
+  /**
+   * True while the selection is being dragged. The page frame lifts its clip
+   * for as long as it is, so the preview can be carried onto another page.
+   */
+  onDraggingChange: (dragging: boolean) => void;
 }
 
 /** An uncommitted edit shown on the preview canvas. */
@@ -52,15 +59,30 @@ const HANDLE_CURSORS: Record<ScaleHandle, string> = {
   se: 'nwse-resize',
   ne: 'nesw-resize',
   sw: 'nesw-resize',
+  n: 'ns-resize',
+  s: 'ns-resize',
+  e: 'ew-resize',
+  w: 'ew-resize',
 };
 
 /** Breathing room between the strokes' padded bounds and the dashed box, page units. */
 const BOX_MARGIN = 6;
 const TOOLBAR_GAP = 12;
-/** Approximate toolbar footprint, CSS px, used to keep it inside the page. */
-const TOOLBAR_WIDTH = 560;
+/** Approximate toolbar height, CSS px, used to decide above vs. below. */
 const TOOLBAR_HEIGHT = 40;
 const SWATCHES = COLOR_PALETTE.slice(0, 6);
+
+/** On-screen rects of every mounted page, for deciding where a drag was dropped. */
+function mountedPageRects(): PageRect[] {
+  const rects: PageRect[] = [];
+  for (const el of document.querySelectorAll<HTMLElement>('[data-page-id]')) {
+    const pageId = el.dataset.pageId;
+    if (!pageId) continue;
+    const rect = el.getBoundingClientRect();
+    rects.push({ pageId, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom });
+  }
+  return rects;
+}
 
 function isIdentity(t: StrokeTransform): boolean {
   return t.kind === 'translate' ? t.dx === 0 && t.dy === 0 : t.sx === 1 && t.sy === 1;
@@ -94,16 +116,24 @@ function dominantSize(strokes: readonly Stroke[]): number {
  * canvas — the originals are hidden on the ink layer meanwhile — and
  * committed to the store once, as a single undo step, when the drag ends.
  */
-export const SelectionLayer = memo(function SelectionLayer({ page, zoom, strokeIds, onPreviewHidden }: SelectionLayerProps) {
-  const { clearLassoSelection, transformSelection, restyleSelection, duplicateSelection, deleteSelection } = useDocumentStore(
-    useShallow((s) => ({
-      clearLassoSelection: s.clearLassoSelection,
-      transformSelection: s.transformSelection,
-      restyleSelection: s.restyleSelection,
-      duplicateSelection: s.duplicateSelection,
-      deleteSelection: s.deleteSelection,
-    })),
-  );
+export const SelectionLayer = memo(function SelectionLayer({
+  page,
+  zoom,
+  strokeIds,
+  onPreviewHidden,
+  onDraggingChange,
+}: SelectionLayerProps) {
+  const { clearLassoSelection, transformSelection, restyleSelection, duplicateSelection, deleteSelection, moveSelectionToPage } =
+    useDocumentStore(
+      useShallow((s) => ({
+        clearLassoSelection: s.clearLassoSelection,
+        transformSelection: s.transformSelection,
+        restyleSelection: s.restyleSelection,
+        duplicateSelection: s.duplicateSelection,
+        deleteSelection: s.deleteSelection,
+        moveSelectionToPage: s.moveSelectionToPage,
+      })),
+    );
 
   const idSet = useMemo(() => new Set(strokeIds), [strokeIds]);
   const selected = useMemo(() => page.strokes.filter((s) => idSet.has(s.id)), [page.strokes, idSet]);
@@ -115,7 +145,16 @@ export const SelectionLayer = memo(function SelectionLayer({ page, zoom, strokeI
     setDraftState(next);
   }, []);
   const dragRef = useRef<Drag | null>(null);
+  const [dragging, setDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // The page frame un-clips itself while a drag is in flight, so the preview
+  // can leave the sheet; tell it when, and make sure it hears the end even if
+  // the move carried the selection onto another page and unmounted this.
+  useEffect(() => {
+    onDraggingChange(dragging);
+  }, [dragging, onDraggingChange]);
+  useEffect(() => () => onDraggingChange(false), [onDraggingChange]);
 
   // The selection evaporated (undo past its creation, page cleared…).
   useEffect(() => {
@@ -128,12 +167,23 @@ export const SelectionLayer = memo(function SelectionLayer({ page, zoom, strokeI
       subscribeTouchGesture((active) => {
         if (!active) return;
         dragRef.current = null;
+        setDragging(false);
         setDraft(null);
       }),
     [setDraft],
   );
 
-  const previewStrokes = useMemo(() => (draft ? applyDraft(selected, idSet, draft) : null), [draft, selected, idSet]);
+  /**
+   * A move is previewed by translating the whole layer rather than the strokes
+   * inside it: the preview canvas is only as big as the page, so geometry
+   * carried past the edge would be cut off by the canvas itself — which is
+   * exactly what a drag onto the next page has to survive.
+   */
+  const moveDelta = draft?.kind === 'transform' && draft.transform.kind === 'translate' ? draft.transform : null;
+  const previewStrokes = useMemo(
+    () => (draft === null ? null : moveDelta ? selected : applyDraft(selected, idSet, draft)),
+    [draft, moveDelta, selected, idSet],
+  );
   const shown = previewStrokes ?? selected;
   const bounds = useMemo(() => selectionBounds(shown), [shown]);
 
@@ -189,6 +239,9 @@ export const SelectionLayer = memo(function SelectionLayer({ page, zoom, strokeI
     (e: ReactPointerEvent<HTMLElement>) => {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== e.pointerId) return;
+      // Only a press that actually moves counts as a drag: a tap on the box
+      // must not flicker the handles and the toolbar away.
+      setDragging(true);
       if (drag.mode === 'move') {
         const dx = (e.clientX - drag.start.x) / zoom;
         const dy = (e.clientY - drag.start.y) / zoom;
@@ -205,13 +258,30 @@ export const SelectionLayer = memo(function SelectionLayer({ page, zoom, strokeI
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== e.pointerId) return;
       dragRef.current = null;
+      setDragging(false);
       const current = draftRef.current;
-      if (commit && current?.kind === 'transform' && !isIdentity(current.transform)) {
-        transformSelection(page.id, strokeIds, current.transform);
-      }
       setDraft(null);
+      if (!commit || current?.kind !== 'transform' || isIdentity(current.transform)) return;
+
+      // Dropped over a different sheet: the strokes leave this page's store for
+      // that one, offset so they stay exactly where the pointer left them.
+      if (drag.mode === 'move' && current.transform.kind === 'translate') {
+        const rects = mountedPageRects();
+        const source = rects.find((r) => r.pageId === page.id);
+        const target = pageAtViewportPoint(rects, e.clientX, e.clientY);
+        if (source && target && target.pageId !== page.id) {
+          const offset = pageHandoffOffset(source, target, zoom);
+          moveSelectionToPage(page.id, target.pageId, strokeIds, {
+            kind: 'translate',
+            dx: current.transform.dx + offset.x,
+            dy: current.transform.dy + offset.y,
+          });
+          return;
+        }
+      }
+      transformSelection(page.id, strokeIds, current.transform);
     },
-    [page.id, strokeIds, transformSelection, setDraft],
+    [page.id, strokeIds, zoom, transformSelection, moveSelectionToPage, setDraft],
   );
 
   // Width slider: preview while dragging, one undo step on release.
@@ -226,6 +296,8 @@ export const SelectionLayer = memo(function SelectionLayer({ page, zoom, strokeI
     },
     [setDraft],
   );
+  // The toolbar is wider than a phone; centring it on the box is only a start.
+  const { ref: toolbarRef, shift: toolbarShift } = useViewportShift<HTMLDivElement>(!dragging);
   const commitSize = useCallback(() => {
     const current = draftRef.current;
     if (current?.kind !== 'size') return;
@@ -241,14 +313,18 @@ export const SelectionLayer = memo(function SelectionLayer({ page, zoom, strokeI
     width: bounds.maxX - bounds.minX + BOX_MARGIN * 2,
     height: bounds.maxY - bounds.minY + BOX_MARGIN * 2,
   };
-  const handleSize = 12 / zoom;
-  // Toolbar above the box, or below it when that would leave the page; centred, but kept inside the page edges.
+  // Touch wants a bigger target than a mouse, and the handles are drawn in page
+  // units, so the on-screen size has to be divided back out of the zoom.
+  const handleSize = 14 / zoom;
+  // Toolbar above the box, or below it when that would leave the page. It is
+  // centred on the box and then nudged by `toolbarShift`, measured against the
+  // real viewport — a page edge says nothing about where the screen ends.
   const toolbarBelow = box.top - (TOOLBAR_GAP + TOOLBAR_HEIGHT) / zoom < 0;
-  const toolbarHalf = TOOLBAR_WIDTH / 2 / zoom;
-  const toolbarX = Math.min(Math.max(box.left + box.width / 2, toolbarHalf), Math.max(toolbarHalf, page.dimensions.width - toolbarHalf));
+  const toolbarX = box.left + box.width / 2;
+  /** Corners sit on their corner; an edge handle sits at the middle of it. */
   const handlePoint = (h: ScaleHandle): Point => ({
-    x: h.includes('w') ? box.left : box.left + box.width,
-    y: h.includes('n') ? box.top : box.top + box.height,
+    x: h.includes('w') ? box.left : h.includes('e') ? box.left + box.width : box.left + box.width / 2,
+    y: h.includes('n') ? box.top : h.includes('s') ? box.top + box.height : box.top + box.height / 2,
   });
   const dragHandlers = {
     onPointerMove: onDragMove,
@@ -276,7 +352,15 @@ export const SelectionLayer = memo(function SelectionLayer({ page, zoom, strokeI
     'inline-flex h-7 items-center rounded-md px-2 text-xs font-medium text-white hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-blue-300';
 
   return (
-    <div className="pointer-events-none absolute inset-0" data-selection-layer={page.id} style={{ zIndex: 25 }}>
+    <div
+      className="pointer-events-none absolute inset-0"
+      data-selection-layer={page.id}
+      data-selection-dragging={dragging ? 'true' : undefined}
+      style={{
+        zIndex: 25,
+        ...(moveDelta ? { transform: `translate(${moveDelta.dx * zoom}px, ${moveDelta.dy * zoom}px)` } : {}),
+      }}
+    >
       <canvas
         ref={canvasRef}
         className="absolute left-0 top-0"
@@ -319,31 +403,38 @@ export const SelectionLayer = memo(function SelectionLayer({ page, zoom, strokeI
           {...dragHandlers}
           onContextMenu={(e) => e.preventDefault()}
         />
-        {SCALE_HANDLES.map((h) => (
-          <div
-            key={h}
-            role="presentation"
-            data-selection-handle={h}
-            style={handleStyle(h)}
-            onPointerDown={(e) => begin(e, 'scale', h)}
-            {...dragHandlers}
-          />
-        ))}
+        {!dragging &&
+          SCALE_HANDLES.map((h) => (
+            <div
+              key={h}
+              role="presentation"
+              data-selection-handle={h}
+              style={handleStyle(h)}
+              onPointerDown={(e) => begin(e, 'scale', h)}
+              {...dragHandlers}
+            />
+          ))}
         <div
+          ref={toolbarRef}
           role="toolbar"
           aria-label="Selection actions"
           data-selection-toolbar
           data-selection-toolbar-placement={toolbarBelow ? 'below' : 'above'}
+          hidden={dragging}
           style={{
             position: 'absolute',
             left: toolbarX,
             top: toolbarBelow ? box.top + box.height + TOOLBAR_GAP / zoom : box.top - TOOLBAR_GAP / zoom,
-            transform: `translate(-50%, ${toolbarBelow ? '0' : '-100%'}) scale(${1 / zoom})`,
+            // The inverse scale keeps the toolbar a constant size on screen, so
+            // its own box is already in screen px — but the shift is applied
+            // before it, in page units, hence dividing it back out.
+            transform: `translate(calc(-50% + ${toolbarShift / zoom}px), ${toolbarBelow ? '0' : '-100%'}) scale(${1 / zoom})`,
             transformOrigin: toolbarBelow ? 'top center' : 'bottom center',
+            maxWidth: 'calc(100vw - 1rem)',
             pointerEvents: 'auto',
             touchAction: 'none',
           }}
-          className="flex items-center gap-1 rounded-lg bg-zinc-900/90 p-1 shadow-lg backdrop-blur"
+          className="flex flex-wrap items-center justify-center gap-1 rounded-lg bg-zinc-900/90 p-1 shadow-lg backdrop-blur"
           onPointerDown={(e) => e.stopPropagation()}
         >
           <button

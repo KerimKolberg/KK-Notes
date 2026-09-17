@@ -29,8 +29,16 @@ export const HIGHLIGHTER_SIZE_MULTIPLIER = 4;
 /** Eraser (both kinds) diameter relative to the base stroke width. */
 export const ERASER_SIZE_MULTIPLIER = 4;
 
-/** Highlighter layer opacity (rendered with `multiply`). */
+/** Default highlighter layer opacity (rendered with `multiply`). */
 export const HIGHLIGHTER_OPACITY = 0.35;
+
+/**
+ * Range the highlighter's opacity slider covers. The floor keeps a stroke
+ * visible at all; the ceiling keeps it a highlighter rather than a marker
+ * that buries the text underneath.
+ */
+export const MIN_HIGHLIGHTER_OPACITY = 0.1;
+export const MAX_HIGHLIGHTER_OPACITY = 0.9;
 
 export const MIN_STROKE_SIZE = 1;
 export const MAX_STROKE_SIZE = 24;
@@ -86,10 +94,14 @@ export const DEFAULT_STYLUS_SETTINGS: Readonly<StylusSettings> = {
 };
 
 /**
- * How long a laser pointer sample stays visible. The tail dissolves this far
- * behind a moving tip, and a released stroke is gone this long after pointerup.
+ * How long the laser trail stays at full strength after the last pointer
+ * event. Any movement restarts it, so a trail drawn in several strokes
+ * survives as long as the presenter keeps working on it.
  */
-export const LASER_FADE_MS = 2700;
+export const LASER_HOLD_MS = 2700;
+
+/** How long the whole trail then takes to fade out, all at once. */
+export const LASER_FADE_OUT_MS = 450;
 
 /** Full hue cycle of the rainbow laser, in milliseconds of drawing. */
 export const LASER_RAINBOW_PERIOD_MS = 1800;
@@ -103,6 +115,7 @@ export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   size: 4,
   touchDraw: false,
   brush: DEFAULT_BRUSH,
+  highlighterOpacity: HIGHLIGHTER_OPACITY,
   laserColor: LASER_DEFAULT_COLOR,
   laserRainbow: false,
   pattern: 'solid',

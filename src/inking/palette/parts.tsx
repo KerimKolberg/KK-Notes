@@ -1,6 +1,16 @@
-import type { ReactNode } from 'react';
-import { Brush, Pen, PenLine, PenTool, Pencil, type LucideIcon } from 'lucide-react';
-import { AXIS_LABEL_PRESETS, STROKE_PATTERNS } from '../constants';
+import { useRef, type ReactNode } from 'react';
+import { Brush, Pen, PenLine, PenTool, Pencil, Pipette, type LucideIcon } from 'lucide-react';
+import { IconButton } from '../../ui/IconButton';
+import { Tooltip } from '../../ui/Tooltip';
+import {
+  AXIS_LABEL_PRESETS,
+  COLOR_PALETTE,
+  MAX_HIGHLIGHTER_OPACITY,
+  MAX_STROKE_SIZE,
+  MIN_HIGHLIGHTER_OPACITY,
+  MIN_STROKE_SIZE,
+  STROKE_PATTERNS,
+} from '../constants';
 import { BRUSHES } from '../engine/brushes';
 import type {
   ArrowheadMode,
@@ -10,6 +20,7 @@ import type {
   EraserEndAction,
   StrokePattern,
   ToolSettings,
+  ToolType,
 } from '../types';
 
 /** Icon for each pen preset; the palette shows the active one on the pen button. */
@@ -92,6 +103,125 @@ export interface PanelProps {
   onSettingsChange: (patch: Partial<ToolSettings>) => void;
 }
 
+/** Tools that paint with the shared colour. */
+export function usesColor(tool: ToolType): boolean {
+  return tool !== 'eraser-stroke' && tool !== 'eraser-pixel' && tool !== 'select' && tool !== 'lasso';
+}
+
+/**
+ * Colour, thickness and the settings that belong to the current tool alone.
+ *
+ * Lives outside the palette because a locked document still shows it: the
+ * laser pointer marks nothing, so presenting with it stays available — and
+ * useless without its colour and width.
+ */
+export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
+  const colorInputRef = useRef<HTMLInputElement>(null);
+  const laser = settings.tool === 'laser-pointer';
+  const highlighter = settings.tool === 'highlighter';
+  const activeColor = laser ? settings.laserColor : settings.color;
+  const colorDisabled = !usesColor(settings.tool) || (laser && settings.laserRainbow);
+  const setColor = (color: string): void => onSettingsChange(laser ? { laserColor: color } : { color });
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl bg-zinc-100/70 px-2 py-1.5 dark:bg-zinc-800/60" data-tool-config>
+      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Stroke colour">
+        {COLOR_PALETTE.map((color) => {
+          const selected = activeColor.toLowerCase() === color.toLowerCase();
+          return (
+            <Tooltip key={color} label={`Colour ${color}`} side="top">
+              <button
+                type="button"
+                aria-label={`Colour ${color}`}
+                aria-pressed={selected}
+                disabled={colorDisabled}
+                data-swatch={color}
+                className={`h-6 w-6 rounded-full ring-1 ring-black/15 transition-transform disabled:opacity-30 dark:ring-white/25 ${
+                  selected ? 'scale-110 outline-2 outline-offset-2 outline-blue-500' : 'hover:scale-105'
+                }`}
+                style={{ background: color }}
+                onClick={() => setColor(color)}
+              />
+            </Tooltip>
+          );
+        })}
+        <IconButton
+          icon={Pipette}
+          label="Custom colour"
+          size="sm"
+          disabled={colorDisabled}
+          onClick={() => colorInputRef.current?.click()}
+          data-custom-color
+        />
+        <input
+          ref={colorInputRef}
+          type="color"
+          className="sr-only"
+          aria-label="Custom colour value"
+          value={activeColor.length === 7 ? activeColor : '#000000'}
+          disabled={colorDisabled}
+          onChange={(e) => setColor(e.target.value)}
+        />
+      </div>
+
+      <span className="mx-0.5 h-6 w-px bg-zinc-300 dark:bg-zinc-600" aria-hidden="true" />
+
+      <label className="flex min-w-0 flex-1 items-center gap-2" title="Stroke thickness">
+        <span className="sr-only">Stroke thickness</span>
+        <span
+          className="shrink-0 rounded-full bg-current"
+          aria-hidden="true"
+          style={{
+            width: Math.max(3, Math.min(14, settings.size)),
+            height: Math.max(3, Math.min(14, settings.size)),
+            color: colorDisabled ? '#a1a1aa' : activeColor,
+          }}
+        />
+        <input
+          type="range"
+          className="h-1 min-w-16 flex-1 accent-blue-600"
+          min={MIN_STROKE_SIZE}
+          max={MAX_STROKE_SIZE}
+          step={0.5}
+          value={settings.size}
+          aria-label="Stroke thickness"
+          onChange={(e) => onSettingsChange({ size: Number(e.target.value) })}
+          data-thickness
+        />
+        <span className="w-9 shrink-0 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-thickness-value>
+          {settings.size}px
+        </span>
+      </label>
+
+      {highlighter && (
+        <label className="flex min-w-0 flex-1 items-center gap-2" title="Highlighter heaviness">
+          <span className="shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400">Ink</span>
+          <input
+            type="range"
+            className="h-1 min-w-16 flex-1 accent-blue-600"
+            min={MIN_HIGHLIGHTER_OPACITY}
+            max={MAX_HIGHLIGHTER_OPACITY}
+            step={0.05}
+            value={settings.highlighterOpacity}
+            aria-label="Highlighter heaviness"
+            onChange={(e) => onSettingsChange({ highlighterOpacity: Number(e.target.value) })}
+            data-highlighter-opacity
+          />
+          <span className="w-9 shrink-0 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-highlighter-opacity-value>
+            {Math.round(settings.highlighterOpacity * 100)}%
+          </span>
+        </label>
+      )}
+
+      {laser && (
+        <Chip active={settings.laserRainbow} onClick={() => onSettingsChange({ laserRainbow: !settings.laserRainbow })} label="Rainbow laser">
+          <span data-laser-rainbow>Rainbow</span>
+        </Chip>
+      )}
+    </div>
+  );
+}
+
 /** The five pen presets, shown as a flyout from the pen button. */
 export function BrushFlyout({ settings, onSettingsChange, onPick }: PanelProps & { onPick: () => void }) {
   return (
@@ -133,7 +263,7 @@ const ARROW_LABEL: Record<ArrowheadMode, string> = { none: 'No arrowheads', end:
 export function StrokeOptions({ settings, onSettingsChange }: PanelProps) {
   const patterned = settings.tool === 'pen' || settings.tool === 'highlighter' || settings.tool === 'line';
   return (
-    <div className="flex w-64 flex-col gap-1" data-stroke-options>
+    <div className="flex w-[min(16rem,calc(100vw-2.5rem))] flex-col gap-1" data-stroke-options>
       <Row label="Line pattern">
         <select
           className={SELECT}
@@ -187,7 +317,7 @@ export function PlaneOptions({ settings, onSettingsChange }: PanelProps) {
   const patch = (next: Partial<CoordinatePlaneConfig>): void =>
     onSettingsChange({ coordinatePlane: { ...plane, ...next } });
   return (
-    <div className="flex w-72 flex-col gap-1" data-plane-options>
+    <div className="flex w-[min(18rem,calc(100vw-2.5rem))] flex-col gap-1" data-plane-options>
       <Row label="Quadrants">
         <Chip active={plane.mode === 'quadrant-1'} onClick={() => patch({ mode: 'quadrant-1' })}>
           Quadrant I
@@ -266,7 +396,7 @@ export function PaletteSettings({
   onClear,
 }: PanelProps & { onClear: () => void }) {
   return (
-    <div className="flex w-72 flex-col gap-1" data-palette-settings>
+    <div className="flex w-[min(18rem,calc(100vw-2.5rem))] flex-col gap-1" data-palette-settings>
       <Row label="Finger input">
         <Switch checked={settings.touchDraw} onChange={(v) => onSettingsChange({ touchDraw: v })}>
           Touch Draw

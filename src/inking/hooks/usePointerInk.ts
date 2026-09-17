@@ -16,11 +16,12 @@ import {
 import { tiltMagnitude } from '../engine/brushes';
 import { strokeHitBySegment } from '../engine/hitTest';
 import {
+  EMPTY_LASER_TRAIL,
   appendLaserPoint,
   laserRuns,
-  pruneLaserTrail,
-  type LaserPoint,
+  laserTrailExpired,
   type LaserStyle,
+  type LaserTrail,
 } from '../engine/laser';
 import {
   isBarrelPress,
@@ -240,8 +241,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
   const frameRef = useRef(0);
 
   const controller = useMemo<PointerInkHandlers & { cancelTouchSession: () => void; dropLaserTrail: () => void }>(() => {
-    /** Fading laser samples; outlives the session that drew them. */
-    let laserTrail: LaserPoint[] = [];
+    /** The laser trail; outlives the session that drew it. */
+    let laserTrail: LaserTrail = EMPTY_LASER_TRAIL;
 
     const liveContext = (): CanvasRenderingContext2D | null =>
       get2dContext(optionsRef.current.liveCanvasRef.current);
@@ -300,12 +301,14 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       const { cssWidth, cssHeight } = optionsRef.current.sizeRef.current;
       clearSurface(live, cssWidth, cssHeight);
 
-      // The laser trail is independent of the session: it fades on its own
-      // clock and keeps the loop alive until the last sample expires.
-      if (laserTrail.length > 0) {
+      // The laser trail is independent of the session: it holds for as long
+      // as the pointer keeps refreshing it, then fades out as a whole, and
+      // keeps the loop alive until it has.
+      if (laserTrail.points.length > 0) {
         const now = performance.now();
-        laserTrail = pruneLaserTrail(laserTrail, now);
-        if (laserTrail.length > 0) {
+        if (laserTrailExpired(laserTrail, now)) {
+          laserTrail = EMPTY_LASER_TRAIL;
+        } else {
           drawLaserTrail(live, laserRuns(laserTrail, now));
           scheduleFrame();
         }
@@ -424,9 +427,9 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
 
     // ---- session lifecycle ----------------------------------------------------
 
-    /** Clear the preview layer, unless a laser trail still has to fade out. */
+    /** Clear the preview layer, unless a laser trail is still on screen. */
     const endLiveFrame = (): void => {
-      if (laserTrail.length > 0) scheduleFrame();
+      if (laserTrail.points.length > 0) scheduleFrame();
       else clearLive();
     };
 
@@ -722,7 +725,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       onLostPointerCapture,
       cancelTouchSession,
       dropLaserTrail: () => {
-        laserTrail = [];
+        laserTrail = EMPTY_LASER_TRAIL;
       },
     };
   }, [optionsRef]);

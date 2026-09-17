@@ -4,6 +4,7 @@ import { Zap } from 'lucide-react';
 import { useLatestRef } from '../../inking/hooks/useLatestRef';
 import { useUndoRedoShortcuts } from '../../inking/hooks/useUndoRedoShortcuts';
 import { ToolPalette } from '../../inking/palette/ToolPalette';
+import { ToolConfigRow } from '../../inking/palette/parts';
 import { useDesktopIntegration } from '../../desktop/useDesktopIntegration';
 import { useMediaInput } from '../hooks/useMediaInput';
 
@@ -104,6 +105,17 @@ export function DocumentApp() {
           onInsertImage={pickImage}
           hidden={readOnly}
         />
+        {/* …and the laser still needs its colour and width, so the config row
+            survives the lock even though the rest of the palette does not. */}
+        {readOnly && settings.tool === 'laser-pointer' && (
+          <div
+            className="absolute left-1/2 z-30 w-[min(30rem,calc(100vw-1.5rem-var(--safe-left)-var(--safe-right)))] -translate-x-1/2 rounded-2xl border border-zinc-200/80 bg-white/90 p-1.5 shadow-2xl backdrop-blur-md dark:border-zinc-700/80 dark:bg-zinc-900/90"
+            style={{ bottom: 'calc(4.25rem + var(--safe-bottom))' }}
+            data-locked-tool-config
+          >
+            <ToolConfigRow settings={settings} onSettingsChange={updateSettings} />
+          </div>
+        )}
         {readOnly && (
           <div
             className="absolute left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900/85 py-1.5 pl-4 pr-1.5 text-sm font-medium text-white shadow-lg backdrop-blur dark:bg-zinc-100/90 dark:text-zinc-900"
