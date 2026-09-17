@@ -302,6 +302,22 @@ if (compileSdk < TARGET_SDK) problems.push(`compileSdk (${compileSdk}) must be a
 const activity = join(ANDROID, `app/src/main/java/${IDENTIFIER.split('.').join('/')}/MainActivity.kt`);
 if (!existsSync(activity)) problems.push(`MainActivity.kt is not under the ${IDENTIFIER} package`);
 
+// Regression guard: `tauri android init` generates buildSrc's Gradle plugin
+// classes (BuildTask.kt, RustPlugin.kt) fresh under buildSrc/src/main/java/,
+// package-named per this project's identifier, on every machine that
+// doesn't already have them. A second copy at the legacy buildSrc/src/main/kotlin/
+// path (committed by mistake once already — see git history) declares the
+// same root-package symbols and breaks the Kotlin compile with
+// "Redeclaration" errors, so make sure it can never come back.
+const staleBuildSrc = ['BuildTask.kt', 'RustPlugin.kt']
+  .map((f) => `buildSrc/src/main/kotlin/${f}`)
+  .filter((relative) => existsSync(join(ANDROID, relative)));
+if (staleBuildSrc.length > 0) {
+  problems.push(
+    `stale buildSrc Kotlin source(s) present (duplicate the ones 'tauri android init' generates under buildSrc/src/main/java/): ${staleBuildSrc.join(', ')}`,
+  );
+}
+
 if (ANDROID_CONFIG.identifier && ANDROID_CONFIG.identifier !== IDENTIFIER) {
   problems.push(`tauri.android.conf.json identifier (${ANDROID_CONFIG.identifier}) does not match ${IDENTIFIER}`);
 }

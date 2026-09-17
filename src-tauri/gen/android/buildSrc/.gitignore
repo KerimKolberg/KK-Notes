@@ -1,0 +1,5 @@
+# `tauri android init` generates the buildSrc plugin classes (BuildTask.kt,
+# RustPlugin.kt) fresh under a package-named folder here on every machine
+# that doesn't already have them (see build-android.sh). They must never be
+# committed: a second, stale copy causes duplicate-declaration Gradle errors.
+/src/main/java/
