@@ -16,7 +16,13 @@
     "icons": "node scripts/make-icons.mjs",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build",
+    "android:init": "tauri android init && node scripts/android-customize.mjs",
+    "android:dev": "tauri android dev",
+    "android:build": "npm run tauri android build -- --apk",
+    "android:build:debug": "npm run tauri android build -- --apk --debug",
+    "android:apk": "./build-android.sh",
+    "check:android": "node scripts/android-customize.mjs --check"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

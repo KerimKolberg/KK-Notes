@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { clampPanelPosition, defaultPanelPosition, PANEL_MARGIN, type Position, type Size } from './dragBounds';
+import { NO_INSETS, type Insets } from './safeArea';
 
 export interface UseDraggablePanelOptions {
   /** The panel itself; measured so it can never leave its container. */
@@ -7,6 +8,8 @@ export interface UseDraggablePanelOptions {
   /** The element the panel is positioned inside (its offset parent). */
   containerRef: RefObject<HTMLElement | null>;
   enabled?: boolean;
+  /** Safe-area insets to stay clear of (Android status bar / gesture pill). */
+  insets?: Insets;
 }
 
 export interface DraggablePanel {
@@ -37,12 +40,14 @@ interface Drag {
  * whenever the container or the panel changes size, so rotating a tablet or
  * opening the arranger can never strand the palette off-screen.
  */
-export function useDraggablePanel({ panelRef, containerRef, enabled = true }: UseDraggablePanelOptions): DraggablePanel {
+export function useDraggablePanel({ panelRef, containerRef, enabled = true, insets = NO_INSETS }: UseDraggablePanelOptions): DraggablePanel {
   const [position, setPosition] = useState<Position | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<Drag | null>(null);
   const positionRef = useRef<Position | null>(null);
   positionRef.current = position;
+  const insetsRef = useRef<Insets>(insets);
+  insetsRef.current = insets;
 
   /**
    * The element the panel is positioned against. React attaches child refs
@@ -76,8 +81,8 @@ export function useDraggablePanel({ panelRef, containerRef, enabled = true }: Us
       if (!sizes || sizes.container.width === 0) return;
       setPosition((current) =>
         current === null
-          ? defaultPanelPosition(sizes.panel, sizes.container)
-          : clampPanelPosition(current, sizes.panel, sizes.container),
+          ? defaultPanelPosition(sizes.panel, sizes.container, PANEL_MARGIN, insetsRef.current)
+          : clampPanelPosition(current, sizes.panel, sizes.container, PANEL_MARGIN, insetsRef.current),
       );
     };
     fit();
@@ -85,7 +90,8 @@ export function useDraggablePanel({ panelRef, containerRef, enabled = true }: Us
     observer.observe(container);
     observer.observe(panel);
     return () => observer.disconnect();
-  }, [panelRef, resolveContainer, measure]);
+    // Re-fit when the system bars change (rotation, keyboard, immersive mode).
+  }, [panelRef, resolveContainer, measure, insets]);
 
   const onPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLElement>) => {
@@ -119,6 +125,8 @@ export function useDraggablePanel({ panelRef, containerRef, enabled = true }: Us
           { x: e.clientX - rect.left - drag.grabX, y: e.clientY - rect.top - drag.grabY },
           sizes.panel,
           sizes.container,
+          PANEL_MARGIN,
+          insetsRef.current,
         ),
       );
     },
@@ -134,7 +142,7 @@ export function useDraggablePanel({ panelRef, containerRef, enabled = true }: Us
 
   const reset = useCallback(() => {
     const sizes = measure();
-    if (sizes) setPosition(defaultPanelPosition(sizes.panel, sizes.container));
+    if (sizes) setPosition(defaultPanelPosition(sizes.panel, sizes.container, PANEL_MARGIN, insetsRef.current));
   }, [measure]);
 
   useEffect(() => {

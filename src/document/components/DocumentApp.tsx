@@ -106,7 +106,8 @@ export function DocumentApp() {
         />
         {readOnly && (
           <div
-            className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900/85 py-1.5 pl-4 pr-1.5 text-sm font-medium text-white shadow-lg backdrop-blur dark:bg-zinc-100/90 dark:text-zinc-900"
+            className="absolute left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900/85 py-1.5 pl-4 pr-1.5 text-sm font-medium text-white shadow-lg backdrop-blur dark:bg-zinc-100/90 dark:text-zinc-900"
+            style={{ bottom: 'calc(1rem + var(--safe-bottom))' }}
             data-read-only-banner
           >
             <span role="status">Read-only</span>

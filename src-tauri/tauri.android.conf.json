@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "com.notex.app",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Notes",
+        "dragDropEnabled": false,
+        "zoomHotkeysEnabled": false
+      }
+    ]
+  },
+  "bundle": {
+    "targets": ["app"],
+    "android": {
+      "minSdkVersion": 26,
+      "versionCode": 1
+    }
+  }
+}

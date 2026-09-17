@@ -21,8 +21,11 @@ npm run typecheck      # strict tsc
 npm run build          # typecheck + production bundle + bundle guard
 npm run check:bundle   # assert pdf.js / pdf-lib are lazy chunks
 npm run check:rust     # cargo check of the Tauri shell (Windows MSVC target)
+npm run check:android  # assert the Android project carries this repo's customizations
 npm run desktop:dev    # Tauri v2 desktop shell, hot reloading
 npm run desktop:build  # NSIS / MSI installers (run on Windows)
+npm run android:dev    # run on a connected Android device / emulator
+npm run android:apk    # ./build-android.sh — checks the toolchain, then builds a debug APK
 ```
 
 ## Desktop shell (Tauri v2, `src-tauri/`, `src/ui/
@@ -208,8 +211,14 @@ src/desktop/
 └── FileMenu.tsx  desktopStore.ts
 
 src-tauri/
-├── Cargo.toml  build.rs  tauri.conf.json  capabilities/default.json  icons/
-└── src/  main.rs  lib.rs  commands.rs
+├── Cargo.toml  build.rs  tauri.conf.json  tauri.android.conf.json
+├── capabilities/default.json  icons/
+├── src/  main.rs  lib.rs  commands.rs
+└── gen/android/            Gradle project (committed; see the Android section)
+    ├── app/build.gradle.kts            minSdk 26, targetSdk 34, applicationId
+    ├── app/src/main/AndroidManifest.xml  permissions, adjustResize
+    ├── app/src/main/java/com/notex/app/MainActivity.kt  WebView + window insets
+    └── buildSrc/  gradle/  settings.gradle
 
 src/pdf/
 ├── pdfjs.ts            PDF.js bootstrap (legacy build, worker URL, asset paths)
@@ -370,6 +379,108 @@ integrity); a headless Chromium suite exercises lasso selection, drag
 translation with preview, undo / redo, duplicate, recolour, width, corner
 scaling, delete, and the two-finger gestures including the Touch Draw and
 resting-palm cases.
+
+## Android (`src-tauri/gen/android/`, `build-android.sh`)
+
+The same web build runs on an Android tablet through Tauri v2's mobile
+target. The package is **`com.notex.app`**, **minSdk 26** (Android 8.0) and
+**targetSdk 34** (Android 14); it compiles against SDK 36 because the
+AndroidX libraries Tauri's template pulls in require it, which is allowed as
+long as `compileSdk >= targetSdk`.
+
+### Prerequisites
+
+The APK cannot be built from a checkout alone — Google's SDK and NDK have to
+be on the machine:
+
+| Requirement | How |
+| --- | --- |
+| JDK 17+ | Android Studio ships one (`/opt/android-studio/jbr`), or install OpenJDK and set `JAVA_HOME` |
+| Android SDK | Android Studio → **SDK Manager** → SDK Platforms: *Android 14 (API 34)*; SDK Tools: *Android SDK Build-Tools*, *Platform-Tools*, *Command-line Tools* |
+| `ANDROID_HOME` | `export ANDROID_HOME="$HOME/Android/Sdk"` (macOS: `~/Library/Android/sdk`) |
+| Android NDK | SDK Manager → SDK Tools → **NDK (Side by side)** |
+| `NDK_HOME` | `export NDK_HOME="$ANDROID_HOME/ndk/<version>"` |
+| Rust targets | `rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android` |
+
+`./build-android.sh --check` verifies all of that and says exactly what is
+missing before anything long-running starts.
+
+### Building
+
+```bash
+./build-android.sh                     # debug APK, signed with the debug key — installs directly
+./build-android.sh --release           # unsigned release APK
+npm run tauri android build -- --apk   # the same release build, straight from the CLI
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+```
+
+A release APK is **unsigned**: `zipalign` and `apksigner` it with your own
+keystore before installing it anywhere.
+
+### What is committed, and what is generated
+
+`src-tauri/gen/android/` is in the repository so the Android project can be
+reviewed and diffed. Three kinds of files live there:
+
+- **Tauri's template** — Gradle wrapper, `buildSrc` (the Rust plugin that
+  cross-compiles the shell into `jniLibs`), resources.
+- **This project's customizations** — the manifest permissions, the SDK
+  levels, and `MainActivity.kt`. `tauri android init` regenerates the
+  template and would overwrite them, so they are applied by
+  `scripts/android-customize.mjs`, which is idempotent, runs from
+  `build-android.sh` after an init, and doubles as a checker
+  (`npm run check:android`) that also scans every Android resource for
+  malformed XML.
+- **Machine-specific files** (`tauri.settings.gradle`, `tauri.build.gradle.kts`,
+  `tauri.properties`, `jniLibs/`, the bundled `tauri.conf.json`) — generated
+  by the CLI, and git-ignored, because they contain absolute paths into the
+  local Cargo registry.
+
+`src-tauri/tauri.android.conf.json` holds the Android-only configuration
+overrides; Tauri merges it on top of `tauri.conf.json` automatically for
+mobile builds.
+
+### Permissions and storage
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+```
+
+Saving a `.notex` file and exporting a PDF go through the **Storage Access
+Framework**: `plugin-dialog` opens the system picker and `plugin-fs` writes to
+the URI it hands back, which grants access to that one file and needs no
+permission on any Android version. `READ_MEDIA_IMAGES` is what the image
+picker behind *Insert image* needs on Android 13+, and the two legacy storage
+permissions cover the same ground on Android 12 and older — capped with
+`maxSdkVersion` so a modern device never sees a broad storage prompt. (There
+is no `READ_MEDIA_DOCUMENTS` permission in Android; documents are reached
+through the Storage Access Framework, which is exactly what the file plugins
+use.)
+
+### Tablet and stylus accommodations
+
+- **Viewport**: `interactive-widget=resizes-content` makes the Android
+  keyboard resize the content instead of shrinking the visual viewport, so
+  tapping an AcroForm field cannot silently rescale the canvas under the pen.
+  `viewport-fit=cover` is what makes `env(safe-area-inset-*)` report anything.
+- **Safe areas**: `--safe-top` / `--safe-right` / `--safe-bottom` /
+  `--safe-left` resolve to `max(env(safe-area-inset-*), var(--android-inset-*))`.
+  `env()` only covers display cutouts on Android, so `MainActivity` reads the
+  real `WindowInsetsCompat` and writes `--android-inset-*` onto the document
+  element. The top bar pads itself with `--safe-top`, the arranger and the
+  read-only pill with the others, and the floating palette measures them
+  through a hidden probe element so it can never be dragged under the status
+  bar or the gesture pill.
+- **Stylus**: the WebView already delivers `TOOL_TYPE_STYLUS` MotionEvents as
+  pointer events with `pointerType === 'pen'`, pressure and tilt, so the
+  inking engine needs no Android-specific code. `MainActivity` only switches
+  off the things that would *intercept* them: Android 14's system handwriting
+  (which captures pen strokes starting on a focusable element), the overscroll
+  glow, and the WebView's built-in pinch zoom, which would fight the app's own
+  two-finger gestures.
 
 ## Presenting: read-only lock and laser pointer
 

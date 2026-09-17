@@ -94,6 +94,7 @@ export function PageArranger() {
       role="dialog"
       aria-label="Page arranger"
       className="fixed inset-y-0 right-0 z-30 flex w-full max-w-[440px] flex-col border-l border-zinc-200 bg-white/95 shadow-2xl backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/95"
+      style={{ paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)', paddingRight: 'var(--safe-right)' }}
     >
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-200 px-4 dark:border-zinc-800">
         <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">

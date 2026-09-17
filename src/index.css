@@ -4,6 +4,18 @@
   color-scheme: light dark;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   -webkit-text-size-adjust: 100%;
+
+  /*
+   * Safe areas. `env(safe-area-inset-*)` covers notches and rounded corners on
+   * every platform, but an Android WebView reports 0 for the status bar and the
+   * gesture pill even when the activity draws edge to edge, so MainActivity
+   * feeds the real window insets into `--android-inset-*`. Taking the larger of
+   * the two is right on both.
+   */
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--android-inset-top, 0px));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--android-inset-right, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--android-inset-bottom, 0px));
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--android-inset-left, 0px));
 }
 
 html,

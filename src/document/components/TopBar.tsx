@@ -101,7 +101,16 @@ export function TopBar() {
   const nextMode = VIEW_MODES[(VIEW_MODES.indexOf(mode) + 1) % VIEW_MODES.length]!;
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-1 border-b border-zinc-200 bg-white/85 px-2 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/85">
+    <header
+      className="flex h-14 min-h-14 shrink-0 items-center gap-1 border-b border-zinc-200 bg-white/85 px-2 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/85"
+      style={{
+        // Android draws the app edge to edge, so the bar owns the status-bar strip.
+        height: 'calc(3.5rem + var(--safe-top))',
+        paddingTop: 'var(--safe-top)',
+        paddingLeft: 'max(0.5rem, var(--safe-left))',
+        paddingRight: 'max(0.5rem, var(--safe-right))',
+      }}
+    >
       {/* Group 1: document and history. */}
       <div className="flex items-center gap-0.5" role="group" aria-label="Document and history">
         <FileMenu />

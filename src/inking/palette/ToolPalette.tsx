@@ -20,6 +20,7 @@ import { IconButton } from '../../ui/IconButton';
 import { Popover } from '../../ui/Popover';
 import { Tooltip } from '../../ui/Tooltip';
 import { useDraggablePanel } from '../../ui/useDraggablePanel';
+import { useSafeAreaInsets } from '../../ui/useSafeAreaInsets';
 import type { ToolSettings, ToolType } from '../types';
 import { BRUSH_ICONS, BrushFlyout, Chip, PaletteSettings, PlaneOptions, StrokeOptions, brushLabel } from './parts';
 
@@ -71,7 +72,14 @@ export const ToolPalette = memo(function ToolPalette({
   const colorInputRef = useRef<HTMLInputElement>(null);
   const [flyout, setFlyout] = useState<Flyout>(null);
   const [lastEraser, setLastEraser] = useState<ToolType>('eraser-stroke');
-  const { position, dragging, handleProps, reset } = useDraggablePanel({ panelRef, containerRef, enabled: draggable && !hidden });
+  // On a tablet the palette must stay clear of the status bar and the gesture pill.
+  const insets = useSafeAreaInsets();
+  const { position, dragging, handleProps, reset } = useDraggablePanel({
+    panelRef,
+    containerRef,
+    enabled: draggable && !hidden,
+    insets,
+  });
 
   const close = useCallback(() => setFlyout(null), []);
   const toggle = useCallback((next: Exclude<Flyout, null>) => setFlyout((current) => (current === next ? null : next)), []);

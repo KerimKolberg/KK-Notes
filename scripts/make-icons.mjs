@@ -4,7 +4,7 @@
  * designer replaces them (`npx tauri icon path/to/icon.png` regenerates all).
  */
 import { deflateSync } from 'node:zlib';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const OUT = new URL('../src-tauri/icons/', import.meta.url).pathname;
@@ -27,7 +27,7 @@ const chunk = (type, data) => {
   return Buffer.concat([len, body, crc]);
 };
 
-function paint(size) {
+function paint(size, { transparent = false, inset = 0 } = {}) {
   const px = Buffer.alloc(size * size * 4);
   const r = size * 0.22; // corner radius
   for (let y = 0; y < size; y++) {
@@ -48,14 +48,18 @@ function paint(size) {
       // Nib dot
       const nx = x - size * 0.8, ny = y - size * 0.2;
       if (nx * nx + ny * ny < (size * 0.07) ** 2) [R, G, B] = [0xf8, 0xfa, 0xfc];
+      // Adaptive-icon foregrounds sit on a separate background layer and are
+      // masked by the launcher, so they drop the slate and keep a safe margin.
+      const safe = inset > 0 && (x < size * inset || y < size * inset || x > size * (1 - inset) || y > size * (1 - inset));
+      if (transparent && (R === 0x27 || safe)) continue;
       px[i] = R; px[i + 1] = G; px[i + 2] = B; px[i + 3] = 255;
     }
   }
   return px;
 }
 
-function png(size) {
-  const px = paint(size);
+function png(size, options) {
+  const px = paint(size, options);
   const raw = Buffer.alloc((size * 4 + 1) * size);
   for (let y = 0; y < size; y++) {
     raw[y * (size * 4 + 1)] = 0;
@@ -88,9 +92,37 @@ function ico(sizes) {
   return Buffer.concat([header, ...entries, ...images.map((i) => i.data)]);
 }
 
+/**
+ * Android launcher icons. minSdk 26 means every device supports adaptive
+ * icons, so the foreground layer is what the launcher masks and animates; the
+ * square PNGs stay for anything that asks for the legacy icon.
+ */
+const ANDROID_OUT = new URL('../src-tauri/gen/android/app/src/main/res/', import.meta.url).pathname;
+const DENSITIES = [
+  ['mdpi', 48],
+  ['hdpi', 72],
+  ['xhdpi', 96],
+  ['xxhdpi', 144],
+  ['xxxhdpi', 192],
+];
+
+function writeAndroidIcons() {
+  if (!existsSync(ANDROID_OUT)) return;
+  for (const [density, size] of DENSITIES) {
+    const dir = join(ANDROID_OUT, `mipmap-${density}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'ic_launcher.png'), png(size));
+    writeFileSync(join(dir, 'ic_launcher_round.png'), png(size));
+    // The foreground layer is drawn at 108dp for a 72dp visible area.
+    writeFileSync(join(dir, 'ic_launcher_foreground.png'), png(Math.round(size * 1.5), { transparent: true, inset: 0.18 }));
+  }
+  console.log('android launcher icons written to', ANDROID_OUT);
+}
+
 writeFileSync(join(OUT, '32x32.png'), png(32));
 writeFileSync(join(OUT, '128x128.png'), png(128));
 writeFileSync(join(OUT, '128x128@2x.png'), png(256));
 writeFileSync(join(OUT, 'icon.png'), png(512));
 writeFileSync(join(OUT, 'icon.ico'), ico([16, 32, 48, 256]));
+writeAndroidIcons();
 console.log('icons written to', OUT);

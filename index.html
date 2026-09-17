@@ -3,13 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <!--
-      user-scalable=no + maximum-scale=1 suppress pinch-zoom on the inking surface.
-      viewport-fit=cover lets the canvas extend under notches / rounded corners.
+      user-scalable=no + maximum-scale=1 suppress pinch-zoom on the inking surface
+      (the app handles two-finger pan / zoom itself).
+      interactive-widget=resizes-content makes Android's virtual keyboard resize
+      the content instead of shrinking the visual viewport, so opening an AcroForm
+      field cannot silently rescale the canvas under the pen.
+      viewport-fit=cover lets the canvas extend under notches / rounded corners and
+      is what makes env(safe-area-inset-*) report anything at all.
     -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content, viewport-fit=cover"
     />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="theme-color" content="#f4f4f5" />
     <title>Inking Canvas</title>
   </head>

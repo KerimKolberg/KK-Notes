@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Notes",
   "version": "0.1.0",
-  "identifier": "app.notes.inking",
+  "identifier": "com.notex.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
@@ -33,14 +33,25 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": [
+      "nsis",
+      "msi"
+    ],
     "category": "Productivity",
     "shortDescription": "Pen-first multi-page notes",
     "longDescription": "Low-latency inking, STEM shape tools, PDF import and annotation, vector PDF export.",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png", "icons/icon.ico"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
     "fileAssociations": [
       {
-        "ext": ["notex"],
+        "ext": [
+          "notex"
+        ],
         "name": "Notes Document",
         "description": "Notes inking document",
         "mimeType": "application/x-notex+json",
@@ -48,7 +59,13 @@
       }
     ],
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" }
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
+    "android": {
+      "minSdkVersion": 26,
+      "versionCode": 1
     }
   },
   "plugins": {}
