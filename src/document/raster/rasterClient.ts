@@ -2,9 +2,17 @@
  * Front door for rasterisation: a module Worker when the platform allows it,
  * otherwise a serial main-thread queue that yields between jobs.
  */
+import { renderPdfPageBitmap } from '../../pdf/pdfRenderer';
 import type { PageVisual } from '../types';
 import type { RasterWorkerRequest, RasterWorkerResponse } from './protocol';
 import { rasterizePage } from './rasterize';
+
+/** The worker never needs PDF bytes; strip them so the message stays small. */
+function forWorker(page: PageVisual): PageVisual {
+  if (!page.pdf) return page;
+  const { pdf: _pdf, ...rest } = page;
+  return rest;
+}
 
 interface Pending {
   readonly resolve: (bitmap: ImageBitmap) => void;
@@ -26,13 +34,25 @@ export class RasterClient {
   }
 
   request(page: PageVisual, targetWidth: number): Promise<ImageBitmap> {
+    if (page.pdf) return this.requestPdfPage(page, targetWidth);
     if (this.worker) {
-      return this.requestFromWorker(this.worker, page, targetWidth).catch(() =>
+      return this.requestFromWorker(this.worker, forWorker(page), targetWidth).catch(() =>
         // The worker died or rejected: fall back for this and future requests.
         this.requestOnMainThread(page, targetWidth),
       );
     }
     return this.requestOnMainThread(page, targetWidth);
+  }
+
+  /** PDF.js renders the background here; strokes and images are composed on top. */
+  private requestPdfPage(page: PageVisual, targetWidth: number): Promise<ImageBitmap> {
+    const ref = page.pdf;
+    if (!ref) return this.requestOnMainThread(page, targetWidth);
+    const job = this.queue
+      .then(() => renderPdfPageBitmap(ref, targetWidth))
+      .then((background) => rasterizePage(page, targetWidth, background));
+    this.queue = job.catch(() => undefined);
+    return job;
   }
 
   dispose(): void {

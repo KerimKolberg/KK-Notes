@@ -77,6 +77,35 @@ describe('document serialization', () => {
     expect(JSON.parse(json)).not.toHaveProperty('pages.0.undoStack');
   });
 
+  it('round-trips PDF-backed pages, storing the bytes once per source', () => {
+    const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]); // "%PDF-1.7"
+    const data = bytes.buffer;
+    const ref = { sourceId: 'src1', sourceName: 'form.pdf', data, pageCount: 2, pageIndex: 0, viewBox: [0, 0, 612, 792] as const, rotation: 0, scale: 96 / 72 };
+    let doc = createDocument(1, 'Forms');
+    const first = doc.pages[0];
+    if (!first) throw new Error('page');
+    const pdfPage1 = { ...first, template: 'pdf' as const, pdf: ref, formFields: [{ id: '1R', name: 'fullName', kind: 'text' as const, box: { x: 1, y: 2, width: 3, height: 4 }, readOnly: false }], formValues: { fullName: 'Ada', agree: true } };
+    const pdfPage2 = { ...first, id: 'p2', template: 'pdf' as const, pdf: { ...ref, pageIndex: 1 }, images: [{ id: 'img1', src: 'data:image/png;base64,AAAA', mime: 'image/png', x: 10, y: 20, width: 30, height: 40, rotation: 15, zIndex: 1, naturalWidth: 60, naturalHeight: 80 }] };
+    doc = { ...doc, pages: [pdfPage1, pdfPage2] };
+
+    const serialized = toSerializable(doc);
+    expect(Object.keys(serialized.pdfSources ?? {})).toEqual(['src1']);
+    expect(serialized.pdfSources?.src1?.data).toBe(btoa('%PDF-1.7'));
+
+    const back = deserializeDocument(serializeDocument(doc));
+    const b1 = back.pages[0];
+    const b2 = back.pages[1];
+    if (!b1?.pdf || !b2?.pdf) throw new Error('pdf refs');
+    expect(new Uint8Array(b1.pdf.data)).toEqual(bytes);
+    expect(b1.pdf).toMatchObject({ sourceId: 'src1', sourceName: 'form.pdf', pageCount: 2, pageIndex: 0, rotation: 0 });
+    expect(b2.pdf.pageIndex).toBe(1);
+    expect(b2.pdf.data).toBe(b1.pdf.data); // shared buffer
+    expect(b1.formFields).toEqual(pdfPage1.formFields);
+    expect(b1.formValues).toEqual({ fullName: 'Ada', agree: true });
+    expect(b2.images).toEqual(pdfPage2.images);
+    expect(b1.images).toEqual([]);
+  });
+
   it('serializes to a stable, history-free shape', () => {
     const doc = createDocument(1);
     const data = toSerializable(doc);

@@ -4,8 +4,9 @@ A React + TypeScript notes app for 2-in-1 pen/touch laptops: a low-latency
 inking engine (`src/inking/`) with palm rejection, pressure-sensitive strokes
 via [perfect-freehand], STEM shape tools and hold-to-snap, hosted in a
 multi-page document system (`src/document/`) with procedural page templates,
-canvas virtualisation and a Samsung Notes-style page arranger. Styled with
-Tailwind CSS and follows the system light/dark theme.
+canvas virtualisation, a Samsung Notes-style page arranger, an image layer,
+and PDF import / fillable AcroForms / vector PDF export (`src/pdf/`). Styled
+with Tailwind CSS and follows the system light/dark theme.
 
 ```bash
 npm install
@@ -74,11 +75,86 @@ src/document/
 ├── templates.ts        line generator → SVG background / canvas painter
 ├── serialization.ts    JSON round trip
 ├── store.ts            Zustand document store   toolStore.ts  shared tool settings
+├── media.ts            image placement, anchored resize, rotation, z-order
 ├── raster/             rasterize.ts, rasterWorker.ts, rasterClient.ts, rasterCache.ts
-├── hooks/              useRasterBitmap, usePointerReorder
+├── hooks/              useRasterBitmap, usePointerReorder, useMediaInput
 └── components/         DocumentApp, TopBar, DocumentViewer, PageFrame, PageSnapshot,
-                        PageArranger, PageThumbnail
+                        PageArranger, PageThumbnail, MediaLayer
+
+src/pdf/
+├── pdfjs.ts            PDF.js bootstrap (legacy build, worker URL, asset paths)
+├── pdfCoords.ts        PDF ↔ page projection, import geometry
+├── forms.ts            AcroForm extraction and value sync
+├── import.ts           load, describe and build pages from a PDF
+├── pdfRenderer.ts      cached page backgrounds
+├── pdfOps.ts           strokes → pdf-lib drawing ops (pure)
+├── export.ts           pdf-lib assembly: copy, fill, embed, burn
+├── FormOverlay.tsx  PdfBackground.tsx  ImportPdfDialog.tsx
+└── download.ts
 ```
+
+## PDF, forms and media (`src/pdf/`, `src/document/media.ts`)
+
+**Page layer stack.** Every page frame is an isolated stacking context with,
+in page-local coordinates: `z-0` background (template SVG or the PDF.js
+raster), `z-10` media (placed images with transform boxes), `z-20` the ink
+surface (live + committed canvases), `z-30` the AcroForm overlay (HTML
+controls). The **Select** tool makes the ink surface transparent to pointer
+events so images and widgets can be manipulated; with a drawing tool active,
+mouse and touch still operate the form controls, while a stylus landing on a
+widget is forwarded to the ink canvas (which captures the pointer), so the pen
+draws over the whole page.
+
+**Import** (`import.ts`, `ImportPdfDialog.tsx`). PDF.js parses the file
+(worker via a Vite `?url` import; the *legacy* build is used because the
+modern build needs `Map.prototype.getOrInsertComputed`, which browsers only a
+few releases old lack). The dialog offers *Import all* or a visual /
+range selection with PDF.js thumbnails, keeps the original page size
+(72 → 96 DPI) or fits pages uniformly into A4, and inserts at the end or after
+the current page. Each imported page stores a `PdfPageRef` (shared source
+bytes, page index, view box, rotation, scale), `template: 'pdf'`, the
+extracted `formFields` and their initial `formValues`. Page backgrounds render
+through `pdfRenderer.ts` (per-source document cache, per-width bitmap LRU) and
+feed the same raster pipeline as templates for snapshots and thumbnails.
+PDF.js runtime assets (standard fonts, CMaps, wasm codecs, ICC profiles) are
+staged into `public/pdfjs/` by a small Vite plugin.
+
+**Coordinates** (`pdfCoords.ts`). PDF user space is bottom-left, points;
+pages are top-left, CSS px. For an unrotated page
+`scale = pageWidth / viewBoxWidth`, `x = (rect[0] − x0)·scale`,
+`y = (y1 − rect[3])·scale`; rotated pages (90/180/270) map every corner
+through the same rotation-aware projection, and `pagePointToPdf` is its exact
+inverse (used by the exporter).
+
+**Forms** (`forms.ts`, `FormOverlay.tsx`). Widget annotations from
+`getAnnotations({ intent: 'display' })` become `text` / `textarea` /
+`checkbox` / `radio` / `select` / `listbox` fields with page-local boxes,
+export values, options, max length and alignment. Values live in
+`page.formValues`: checkboxes are booleans, radio groups store the selected
+export value under the group name, everything else is a string.
+
+**Media** (`media.ts`, `MediaLayer.tsx`, `useMediaInput.ts`). Paste
+(`Ctrl+V`) or drop images onto a page (dropped PDFs import). Images are data
+URLs with `{x, y, width, height, rotation, zIndex}`. The transform box has
+eight resize handles (aspect locked by default, Shift for free transform,
+anchored on the opposite edge so rotated boxes resize predictably), a rotation
+handle (Shift snaps to 15°), body drag, and a contextual toolbar / right-click
+for Delete, Bring to front and Send to back. `Delete` removes the selection.
+
+**Export** (`export.ts`, `pdfOps.ts`). `exportDocumentToPdf(doc)` builds a
+pdf-lib document: PDF-backed pages are `copyPages` copies of the source so
+original vectors, fonts and searchable text survive; the source's AcroForm is
+filled from `formValues` first (appearances regenerated) and an AcroForm is
+rebuilt in the output from the copied widgets so the fields stay interactive.
+Template pages get their background and grid as vector lines. Images embed as
+PNG / JPEG (others re-encoded). Strokes are burned as vectors through the
+pure, unit-tested `strokeToPdfOps`: perfect-freehand outlines become
+`M … L … Z` paths for `drawSvgPath`, dashed centrelines are stroked paths with
+scaled dash arrays, lines / rectangles / ellipses use `drawLine`,
+`drawRectangle`, `drawEllipse` (falling back to paths on rotated source
+pages), highlighter uses the Multiply blend, and coordinate planes become
+lines, arrowheads and text. The pixel eraser cannot be represented as vectors
+and is skipped. *Export PDF* in the top bar downloads the result.
 
 ## Inking engine (`src/inking/`)
 

@@ -64,3 +64,7 @@ export const PAGE_BACKGROUND_SWATCHES: readonly string[] = [
   '#1c1c21',
   '#0f172a',
 ];
+
+/** Placed images default to this fraction of the page width when larger. */
+export const IMAGE_MAX_FRACTION = 0.6;
+export const MIN_IMAGE_SIZE = 16;

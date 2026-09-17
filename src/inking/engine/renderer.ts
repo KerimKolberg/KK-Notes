@@ -111,7 +111,7 @@ function trimEnd(points: readonly Point[], amount: number): Point[] {
 }
 
 /** Shorten arrowed ends so a translucent shaft never shows through the head. */
-function trimForArrowheads(points: readonly Point[], style: StrokeStyle): Point[] {
+export function trimForArrowheads(points: readonly Point[], style: StrokeStyle): Point[] {
   const { start, end } = arrowheadEnds(style.arrowheads);
   const trim = arrowheadLength(style.size) * 0.8;
   let out: Point[] = [...points];
@@ -144,7 +144,7 @@ function arrowheadFills(points: readonly Point[], style: StrokeStyle): Path2D[] 
  * arc-length resampling yields equidistant vertices so the dash pattern is
  * uniform regardless of pen speed.
  */
-function centreline(points: readonly InkPoint[], style: StrokeStyle): Point[] {
+export function freehandCentreline(points: readonly InkPoint[], style: StrokeStyle): Point[] {
   const simplified = simplifyRdp(points, Math.max(1, style.size * 0.35));
   return resamplePolyline(simplified, Math.max(1.5, style.size * 0.5));
 }
@@ -158,7 +158,7 @@ function buildFreehandPlan(points: readonly InkPoint[], style: StrokeStyle, comp
   if (style.pattern === 'solid') {
     return { fills: [outlineToPath2D(getStrokeOutline(points, style, complete)), ...arrows], outline: null };
   }
-  return { fills: arrows, outline: polylinePath(trimForArrowheads(centreline(points, style), style)) };
+  return { fills: arrows, outline: polylinePath(trimForArrowheads(freehandCentreline(points, style), style)) };
 }
 
 function buildShapePlan(shape: Shape, style: StrokeStyle): RenderPlan {

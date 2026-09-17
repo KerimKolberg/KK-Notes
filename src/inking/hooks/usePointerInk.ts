@@ -460,7 +460,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       }
 
       const tool = resolveEffectiveTool(settings.tool, pointerType, e.button, e.buttons);
-      if (tool === null) return;
+      // The select tool leaves the surface to the media / form layers.
+      if (tool === null || tool === 'select') return;
 
       const canvas = e.currentTarget;
       const rect = canvas.getBoundingClientRect();

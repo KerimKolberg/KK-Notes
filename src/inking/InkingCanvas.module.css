@@ -36,6 +36,10 @@
   cursor: crosshair;
 }
 
+.surface[data-tool='select'] .live {
+  cursor: default;
+}
+
 .root[data-tool='eraser-stroke'] .live,
 .root[data-tool='eraser-pixel'] .live,
 .surface[data-tool='eraser-stroke'] .live,
@@ -67,7 +71,8 @@
   color: #1f1f24;
   font-size: 13px;
   line-height: 1;
-  z-index: 2;
+  /* Above page frames (each an isolated stacking context), below dialogs. */
+  z-index: 20;
 }
 
 .row {

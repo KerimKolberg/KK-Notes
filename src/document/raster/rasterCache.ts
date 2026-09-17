@@ -4,19 +4,28 @@
  */
 import type { Stroke } from '../../inking/types';
 import { RASTER_CACHE_SIZE } from '../constants';
-import type { PageVisual } from '../types';
+import type { ImageLayer, PageVisual } from '../types';
 
-const strokeArrayIds = new WeakMap<readonly Stroke[], number>();
-let nextStrokeArrayId = 1;
+const arrayIds = new WeakMap<object, number>();
+let nextArrayId = 1;
+
+/** Cheap identity token for an immutable array. */
+export function arrayToken(array: readonly unknown[]): number {
+  let id = arrayIds.get(array);
+  if (id === undefined) {
+    id = nextArrayId++;
+    arrayIds.set(array, id);
+  }
+  return id;
+}
 
 /** Cheap identity token for an immutable stroke array. */
 export function strokesToken(strokes: readonly Stroke[]): number {
-  let id = strokeArrayIds.get(strokes);
-  if (id === undefined) {
-    id = nextStrokeArrayId++;
-    strokeArrayIds.set(strokes, id);
-  }
-  return id;
+  return arrayToken(strokes);
+}
+
+export function imagesToken(images: readonly ImageLayer[]): number {
+  return images.length === 0 ? 0 : arrayToken(images);
 }
 
 /** Key that changes whenever the page would render differently at `targetWidth`. */
@@ -34,6 +43,8 @@ export function visualKey(pageId: string, page: PageVisual, targetWidth: number)
     c.strokeWidth,
     c.marginOffset ?? '',
     strokesToken(page.strokes),
+    imagesToken(page.images),
+    page.pdf ? `${page.pdf.sourceId}#${page.pdf.pageIndex}@${page.pdf.rotation}` : '',
   ].join('|');
 }
 

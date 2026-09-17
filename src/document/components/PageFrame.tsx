@@ -1,10 +1,13 @@
 import { memo, useCallback, useMemo, type RefObject } from 'react';
 import { InkSurface } from '../../inking/InkSurface';
 import type { Stroke, ToolSettings } from '../../inking/types';
+import { FormOverlay } from '../../pdf/FormOverlay';
+import { PdfBackground } from '../../pdf/PdfBackground';
 import type { PageLayout } from '../layout';
 import { useDocumentStore } from '../store';
 import { templateSvgDataUrl } from '../templates';
 import type { Page } from '../types';
+import { MediaLayer } from './MediaLayer';
 import { PageSnapshot } from './PageSnapshot';
 
 export type PageFrameMode = 'active' | 'snapshot';
@@ -22,8 +25,11 @@ export interface PageFrameProps {
 }
 
 /**
- * One page in the viewer: background colour + SVG template as CSS, then either
- * live ink canvases (near the viewport) or a raster snapshot (farther away).
+ * One page in the viewer. Layer stack, all in page-local coordinates:
+ *   z-0  background — template SVG (CSS) or the PDF.js raster
+ *   z-10 media      — user-placed images with transform boxes
+ *   z-20 ink        — live + committed canvases (or a snapshot when far away)
+ *   z-30 forms      — HTML widgets for AcroForm annotations
  */
 export const PageFrame = memo(function PageFrame({
   page,
@@ -52,7 +58,7 @@ export const PageFrame = memo(function PageFrame({
 
   return (
     <div
-      className={`absolute overflow-hidden rounded-sm shadow-lg ring-1 ${
+      className={`absolute isolate overflow-hidden rounded-sm shadow-lg ring-1 ${
         isCurrent ? 'ring-blue-500/60 dark:ring-blue-400/60' : 'ring-black/10 dark:ring-white/10'
       }`}
       style={{
@@ -70,18 +76,27 @@ export const PageFrame = memo(function PageFrame({
       data-page-mode={mode}
     >
       {mode === 'active' ? (
-        <InkSurface
-          width={page.dimensions.width}
-          height={page.dimensions.height}
-          zoom={zoom}
-          strokes={page.strokes}
-          settingsRef={settingsRef}
-          onCommitStroke={onCommit}
-          onEraseStrokes={onErase}
-          onInteractionStart={onInteractionStart}
-          currentTool={currentTool}
-          ariaLabel={`Page ${page.pageNumber} drawing surface`}
-        />
+        <>
+          {page.pdf && <PdfBackground page={page} cssWidth={layout.width} />}
+          <MediaLayer page={page} zoom={zoom} active={currentTool === 'select'} />
+          {/* The wrapper only provides the z-index; the surface itself decides whether it takes pointer input. */}
+          <div className="pointer-events-none absolute inset-0 z-20">
+            <InkSurface
+              width={page.dimensions.width}
+              height={page.dimensions.height}
+              zoom={zoom}
+              strokes={page.strokes}
+              settingsRef={settingsRef}
+              onCommitStroke={onCommit}
+              onEraseStrokes={onErase}
+              onInteractionStart={onInteractionStart}
+              currentTool={currentTool}
+              interactive={currentTool !== 'select'}
+              ariaLabel={`Page ${page.pageNumber} drawing surface`}
+            />
+          </div>
+          <FormOverlay page={page} zoom={zoom} tool={currentTool} />
+        </>
       ) : (
         <PageSnapshot page={page} cssWidth={layout.width} cssHeight={layout.height} />
       )}

@@ -8,6 +8,13 @@ import { create } from 'zustand';
 import type { Stroke } from '../inking/types';
 import { MAX_ZOOM, MIN_ZOOM, TEMPLATE_DEFAULT_SPACING, ZOOM_STEP } from './constants';
 import {
+  addImage as addImageToList,
+  bringToFront as bringImageToFrontInList,
+  removeImage as removeImageFromList,
+  sendToBack as sendImageToBackInList,
+  updateImage as updateImageInList,
+} from './media';
+import {
   appendStroke,
   clampIndex,
   clearPageStrokes,
@@ -21,14 +28,35 @@ import {
   removeStrokes,
   reorderPages,
   undoPage,
+  withFormValue,
+  withImages,
 } from './operations';
-import type { Document, InsertPosition, Page, PageTarget, PageTemplate, TemplateConfig, ViewMode } from './types';
+import type {
+  Document,
+  FormValue,
+  ImageLayer,
+  InsertPosition,
+  Page,
+  PageTarget,
+  PageTemplate,
+  TemplateConfig,
+  ViewMode,
+} from './types';
+
+export interface ImageSelection {
+  readonly pageId: string;
+  readonly imageId: string;
+}
 
 export interface DocumentStore {
   document: Document;
   /** Incremented whenever the viewer should scroll to `document.activePageIndex`. */
   scrollRequest: number;
   arrangerOpen: boolean;
+  importDialogOpen: boolean;
+  /** True while a PDF export is being assembled. */
+  exporting: boolean;
+  selectedImage: ImageSelection | null;
 
   // navigation / view
   setActivePage: (index: number) => void;
@@ -38,8 +66,12 @@ export interface DocumentStore {
   zoomBy: (steps: number) => void;
   setTitle: (title: string) => void;
   setArrangerOpen: (open: boolean) => void;
+  setImportDialogOpen: (open: boolean) => void;
+  setExporting: (exporting: boolean) => void;
 
   // structure
+  /** Insert ready-made pages (e.g. imported PDF pages); defaults to appending. */
+  appendPages: (pages: readonly Page[], at?: number) => void;
   addPage: (position: InsertPosition, referenceIndex?: number) => void;
   duplicatePage: (index: number) => void;
   deletePage: (index: number) => void;
@@ -53,6 +85,15 @@ export interface DocumentStore {
   clearPage: (pageId: string) => void;
   undo: (pageId: string) => void;
   redo: (pageId: string) => void;
+
+  // forms & media
+  setFormValue: (pageId: string, name: string, value: FormValue) => void;
+  addImage: (pageId: string, image: ImageLayer) => void;
+  updateImage: (pageId: string, imageId: string, patch: Partial<ImageLayer>) => void;
+  removeImage: (pageId: string, imageId: string) => void;
+  bringImageToFront: (pageId: string, imageId: string) => void;
+  sendImageToBack: (pageId: string, imageId: string) => void;
+  selectImage: (selection: ImageSelection | null) => void;
 
   loadDocument: (doc: Document) => void;
 }
@@ -87,6 +128,9 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
   document: createDocument(1),
   scrollRequest: 0,
   arrangerOpen: false,
+  importDialogOpen: false,
+  exporting: false,
+  selectedImage: null,
 
   setActivePage: (index) =>
     set((s) => {
@@ -114,6 +158,20 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
   setTitle: (title) => set((s) => ({ document: { ...s.document, title } })),
 
   setArrangerOpen: (open) => set({ arrangerOpen: open }),
+  setImportDialogOpen: (open) => set({ importDialogOpen: open }),
+  setExporting: (exporting) => set({ exporting }),
+
+  appendPages: (pages, at) =>
+    set((s) => {
+      if (pages.length === 0) return s;
+      const doc = s.document;
+      const index = Math.min(Math.max(0, Math.trunc(at ?? doc.pages.length)), doc.pages.length);
+      let next = doc.pages;
+      pages.forEach((page, i) => {
+        next = insertPage(next, index + i, page);
+      });
+      return { document: { ...doc, pages: next, activePageIndex: index }, scrollRequest: s.scrollRequest + 1 };
+    }),
 
   addPage: (position, referenceIndex) =>
     set((s) => {
@@ -202,7 +260,42 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
 
   redo: (pageId) => set((s) => ({ document: updatePageById(s.document, pageId, redoPage) })),
 
-  loadDocument: (doc) => set({ document: doc, scrollRequest: 0 }),
+  setFormValue: (pageId, name, value) =>
+    set((s) => ({ document: updatePageById(s.document, pageId, (page) => withFormValue(page, name, value)) })),
+
+  addImage: (pageId, image) =>
+    set((s) => ({
+      document: updatePageById(s.document, pageId, (page) => withImages(page, addImageToList(page.images, image))),
+      selectedImage: { pageId, imageId: image.id },
+    })),
+
+  updateImage: (pageId, imageId, patch) =>
+    set((s) => ({
+      document: updatePageById(s.document, pageId, (page) => withImages(page, updateImageInList(page.images, imageId, patch))),
+    })),
+
+  removeImage: (pageId, imageId) =>
+    set((s) => ({
+      document: updatePageById(s.document, pageId, (page) => withImages(page, removeImageFromList(page.images, imageId))),
+      selectedImage: s.selectedImage?.imageId === imageId ? null : s.selectedImage,
+    })),
+
+  bringImageToFront: (pageId, imageId) =>
+    set((s) => ({
+      document: updatePageById(s.document, pageId, (page) => withImages(page, bringImageToFrontInList(page.images, imageId))),
+    })),
+
+  sendImageToBack: (pageId, imageId) =>
+    set((s) => ({
+      document: updatePageById(s.document, pageId, (page) => withImages(page, sendImageToBackInList(page.images, imageId))),
+    })),
+
+  selectImage: (selection) =>
+    set((s) =>
+      (s.selectedImage?.pageId === selection?.pageId && s.selectedImage?.imageId === selection?.imageId) ? s : { selectedImage: selection },
+    ),
+
+  loadDocument: (doc) => set({ document: doc, scrollRequest: 0, selectedImage: null }),
 }));
 
 /** Convenience selector for the active page. */

@@ -26,6 +26,7 @@ interface ToolDescriptor {
 }
 
 const TOOLS: readonly ToolDescriptor[] = [
+  { id: 'select', label: 'Select', hint: 'Select and move images, fill in forms' },
   { id: 'pen', label: 'Pen', hint: 'Pressure-sensitive pen. Hold still at the end to snap to a shape.' },
   { id: 'highlighter', label: 'Highlighter', hint: 'Translucent multiply highlighter' },
   { id: 'line', label: 'Line', hint: 'Drag a straight line or vector' },
@@ -37,7 +38,7 @@ const TOOLS: readonly ToolDescriptor[] = [
 const NEXT_ARROW: Record<ArrowheadMode, ArrowheadMode> = { none: 'end', end: 'both', both: 'none' };
 const ARROW_LABEL: Record<ArrowheadMode, string> = { none: 'Arrow off', end: 'Arrow →', both: 'Arrow ↔' };
 
-const hasColor = (tool: ToolType): boolean => tool !== 'eraser-stroke' && tool !== 'eraser-pixel';
+const hasColor = (tool: ToolType): boolean => tool !== 'eraser-stroke' && tool !== 'eraser-pixel' && tool !== 'select';
 const hasPattern = (tool: ToolType): boolean => tool === 'pen' || tool === 'highlighter' || tool === 'line';
 const hasAngleSnap = (tool: ToolType): boolean => hasPattern(tool);
 const hasHoldToSnap = (tool: ToolType): boolean => tool === 'pen' || tool === 'highlighter';

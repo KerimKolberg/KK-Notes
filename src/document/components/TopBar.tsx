@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { downloadBytes, safeFilename } from '../../pdf/download';
+import { exportDocumentToPdf } from '../../pdf/export';
 import { MAX_ZOOM, MIN_ZOOM } from '../constants';
 import { useDocumentStore } from '../store';
 
@@ -12,7 +14,7 @@ const pressed = 'bg-zinc-900 text-white hover:bg-zinc-900 dark:bg-zinc-100 dark:
 
 /** Title, page indicator, jump-to-page, view mode, zoom and the arranger toggle. */
 export function TopBar() {
-  const { title, pageCount, activePageIndex, viewMode, zoom, arrangerOpen } = useDocumentStore(
+  const { title, pageCount, activePageIndex, viewMode, zoom, arrangerOpen, exporting } = useDocumentStore(
     useShallow((s) => ({
       title: s.document.title,
       pageCount: s.document.pages.length,
@@ -20,18 +22,38 @@ export function TopBar() {
       viewMode: s.document.viewMode,
       zoom: s.document.zoom,
       arrangerOpen: s.arrangerOpen,
+      exporting: s.exporting,
     })),
   );
-  const { setTitle, jumpToPage, setViewMode, zoomBy, setZoom, setArrangerOpen } = useDocumentStore(
-    useShallow((s) => ({
-      setTitle: s.setTitle,
-      jumpToPage: s.jumpToPage,
-      setViewMode: s.setViewMode,
-      zoomBy: s.zoomBy,
-      setZoom: s.setZoom,
-      setArrangerOpen: s.setArrangerOpen,
-    })),
-  );
+  const { setTitle, jumpToPage, setViewMode, zoomBy, setZoom, setArrangerOpen, setImportDialogOpen, setExporting } =
+    useDocumentStore(
+      useShallow((s) => ({
+        setTitle: s.setTitle,
+        jumpToPage: s.jumpToPage,
+        setViewMode: s.setViewMode,
+        zoomBy: s.zoomBy,
+        setZoom: s.setZoom,
+        setArrangerOpen: s.setArrangerOpen,
+        setImportDialogOpen: s.setImportDialogOpen,
+        setExporting: s.setExporting,
+      })),
+    );
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const onExport = useCallback(async () => {
+    if (useDocumentStore.getState().exporting) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const doc = useDocumentStore.getState().document;
+      const bytes = await exportDocumentToPdf(doc);
+      downloadBytes(bytes, safeFilename(doc.title, 'pdf'));
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  }, [setExporting]);
 
   const [jumpDraft, setJumpDraft] = useState(String(activePageIndex + 1));
   useEffect(() => setJumpDraft(String(activePageIndex + 1)), [activePageIndex]);
@@ -99,6 +121,28 @@ export function TopBar() {
         <button type="button" className={button} onClick={() => zoomBy(1)} disabled={zoom >= MAX_ZOOM} title="Zoom in" aria-label="Zoom in">
           +
         </button>
+      </div>
+
+      <div className="flex items-center gap-1" role="group" aria-label="Import and export">
+        <button type="button" className={button} onClick={() => setImportDialogOpen(true)} title="Import pages from a PDF">
+          Import PDF
+        </button>
+        <button
+          type="button"
+          className={button}
+          onClick={() => void onExport()}
+          disabled={exporting}
+          aria-busy={exporting}
+          title="Export the document as a vector PDF"
+          data-export-pdf
+        >
+          {exporting ? 'Exporting…' : 'Export PDF'}
+        </button>
+        {exportError && (
+          <span className="text-xs text-rose-600 dark:text-rose-300" role="alert">
+            {exportError}
+          </span>
+        )}
       </div>
 
       <button

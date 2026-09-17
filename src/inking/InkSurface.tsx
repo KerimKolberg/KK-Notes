@@ -22,6 +22,8 @@ export interface InkSurfaceProps {
   /** An accepted pointer began a stroke / erase / drag on this surface. */
   onInteractionStart?: () => void;
   currentTool: ToolSettings['tool'];
+  /** When false the surface ignores pointer input (e.g. the select tool is active). Default true. */
+  interactive?: boolean;
   ariaLabel?: string;
 }
 
@@ -53,6 +55,7 @@ export const InkSurface = memo(function InkSurface({
   onEraseStrokes,
   onInteractionStart,
   currentTool,
+  interactive = true,
   ariaLabel = 'Drawing surface',
 }: InkSurfaceProps) {
   const committedRef = useRef<HTMLCanvasElement>(null);
@@ -106,7 +109,12 @@ export const InkSurface = memo(function InkSurface({
   });
 
   return (
-    <div className={styles.surface} data-tool={currentTool} data-layer="surface">
+    <div
+      className={styles.surface}
+      data-tool={currentTool}
+      data-layer="surface"
+      style={{ pointerEvents: interactive ? 'auto' : 'none' }}
+    >
       <canvas ref={committedRef} className={`${styles.layer} ${styles.committed}`} data-layer="committed" aria-hidden="true" />
       <canvas
         ref={liveRef}

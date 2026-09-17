@@ -143,6 +143,16 @@ describe('clonePage / cloneStroke', () => {
     expect(copy.redoStack).toEqual([]);
   });
 
+  it('clonePage copies images with fresh ids and form values by value', () => {
+    const image = { id: 'img', src: 'data:,', mime: 'image/png', x: 0, y: 0, width: 10, height: 10, rotation: 0, zIndex: 1, naturalWidth: 10, naturalHeight: 10 };
+    const source = createPage({ images: [image], formValues: { a: 'x' } });
+    const copy = clonePage(source);
+    expect(copy.images[0]?.id).not.toBe('img');
+    expect(copy.images[0]).toMatchObject({ src: 'data:,', width: 10 });
+    expect(copy.formValues).toEqual({ a: 'x' });
+    expect(copy.formValues).not.toBe(source.formValues);
+  });
+
   it('cloneStroke keeps style but never shares nested objects', () => {
     const c = cloneStroke(geometric);
     expect(c.style).toEqual(geometric.style);

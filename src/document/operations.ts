@@ -6,7 +6,7 @@
 import { createStrokeId } from '../inking/engine/ids';
 import type { Stroke } from '../inking/types';
 import { A4_DIMENSIONS, DEFAULT_TEMPLATE_CONFIG, DEFAULT_ZOOM, LIGHT_PAGE_BACKGROUND, PAGE_HISTORY_DEPTH } from './constants';
-import type { Document, Page, PageTemplate, TemplateConfig } from './types';
+import type { Document, FormValue, FormValues, ImageLayer, Page, PageTemplate, PdfPageRef, TemplateConfig, FormField } from './types';
 
 export function createPageId(): string {
   return `page_${createStrokeId()}`;
@@ -23,6 +23,10 @@ export interface PageInit {
   readonly backgroundColor?: string;
   readonly dimensions?: Page['dimensions'];
   readonly strokes?: readonly Stroke[];
+  readonly pdf?: PdfPageRef;
+  readonly formFields?: readonly FormField[];
+  readonly formValues?: FormValues;
+  readonly images?: readonly ImageLayer[];
 }
 
 export function createPage(init: PageInit = {}, pageNumber = 1): Page {
@@ -36,6 +40,10 @@ export function createPage(init: PageInit = {}, pageNumber = 1): Page {
     strokes: init.strokes ?? [],
     undoStack: [],
     redoStack: [],
+    ...(init.pdf ? { pdf: init.pdf } : {}),
+    formFields: init.formFields ?? [],
+    formValues: init.formValues ?? {},
+    images: init.images ?? [],
   };
 }
 
@@ -98,7 +106,7 @@ export function cloneStroke(stroke: Stroke): Stroke {
   };
 }
 
-/** Duplicate a page: new id, cloned strokes and template settings, empty history. */
+/** Duplicate a page: new id, cloned strokes / images / form values, shared PDF bytes, empty history. */
 export function clonePage(page: Page): Page {
   return {
     ...page,
@@ -108,7 +116,18 @@ export function clonePage(page: Page): Page {
     strokes: page.strokes.map(cloneStroke),
     undoStack: [],
     redoStack: [],
+    formValues: { ...page.formValues },
+    images: page.images.map((image) => ({ ...image, id: `img_${createStrokeId()}` })),
   };
+}
+
+export function withFormValue(page: Page, name: string, value: FormValue): Page {
+  if (page.formValues[name] === value) return page;
+  return { ...page, formValues: { ...page.formValues, [name]: value } };
+}
+
+export function withImages(page: Page, images: readonly ImageLayer[]): Page {
+  return images === page.images ? page : { ...page, images };
 }
 
 /** Replace a page's strokes, recording the previous list for undo. */
