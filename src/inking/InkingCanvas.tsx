@@ -15,7 +15,7 @@ import { useLatestRef } from './hooks/useLatestRef';
 import { usePointerInk } from './hooks/usePointerInk';
 import { useUndoRedoShortcuts } from './hooks/useUndoRedoShortcuts';
 import styles from './InkingCanvas.module.css';
-import { InkingToolbar } from './InkingToolbar';
+import { ToolPalette } from './palette/ToolPalette';
 import type { CanvasSize, InkingCanvasHandle, InkingCanvasProps, Stroke, ToolSettings } from './types';
 
 const EMPTY_STROKES: readonly Stroke[] = [];
@@ -164,14 +164,12 @@ export const InkingCanvas = forwardRef<InkingCanvasHandle, InkingCanvasProps>(fu
         {...pointerHandlers}
       />
       {showToolbar && (
-        <InkingToolbar
+        <ToolPalette
           settings={settings}
           onSettingsChange={updateSettings}
-          canUndo={history.canUndo}
-          canRedo={history.canRedo}
-          onUndo={history.undo}
-          onRedo={history.redo}
           onClear={history.clear}
+          containerRef={containerRef}
+          history={{ canUndo: history.canUndo, canRedo: history.canRedo, onUndo: history.undo, onRedo: history.redo }}
         />
       )}
     </div>

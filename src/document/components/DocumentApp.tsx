@@ -1,8 +1,9 @@
-import { Suspense, lazy, useCallback, useEffect } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { Zap } from 'lucide-react';
 import { useLatestRef } from '../../inking/hooks/useLatestRef';
 import { useUndoRedoShortcuts } from '../../inking/hooks/useUndoRedoShortcuts';
-import { InkingToolbar } from '../../inking/InkingToolbar';
+import { ToolPalette } from '../../inking/palette/ToolPalette';
 import { useDesktopIntegration } from '../../desktop/useDesktopIntegration';
 import { useMediaInput } from '../hooks/useMediaInput';
 
@@ -25,16 +26,9 @@ export function DocumentApp() {
   const updateSettings = useToolStore((s) => s.update);
   const settingsRef = useLatestRef(settings);
 
-  const { activePageId, canUndo, canRedo } = useDocumentStore(
-    useShallow((s) => {
-      const page = s.document.pages[s.document.activePageIndex];
-      return {
-        activePageId: page?.id ?? '',
-        canUndo: (page?.undoStack.length ?? 0) > 0,
-        canRedo: (page?.redoStack.length ?? 0) > 0,
-      };
-    }),
-  );
+  // Undo / redo live in the top bar now; the app only needs the page id for
+  // the keyboard shortcuts and for clearing.
+  const activePageId = useDocumentStore((s) => s.document.pages[s.document.activePageIndex]?.id ?? '');
   const readOnly = useDocumentStore((s) => s.readOnly);
   const { undo, redo, clearPage } = useDocumentStore(
     useShallow((s) => ({ undo: s.undo, redo: s.redo, clearPage: s.clearPage })),
@@ -58,7 +52,9 @@ export function DocumentApp() {
       useDocumentStore.getState().appendPages(pages);
     })().catch(() => undefined);
   }, []);
-  const { onDragOver, onDrop } = useMediaInput(importDroppedPdf);
+  const { onDragOver, onDrop, pickImage } = useMediaInput(importDroppedPdf);
+  /** The palette floats inside this area and is clamped to it. */
+  const stageRef = useRef<HTMLDivElement>(null);
 
   // A lasso selection only lives while the lasso / select tools are active.
   useEffect(() => {
@@ -96,39 +92,40 @@ export function DocumentApp() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       <TopBar />
-      <div className="relative min-h-0 flex-1" onDragOver={onDragOver} onDrop={onDrop}>
+      <div ref={stageRef} className="relative min-h-0 flex-1" onDragOver={onDragOver} onDrop={onDrop}>
         <DocumentViewer settingsRef={settingsRef} currentTool={settings.tool} />
-        {readOnly ? (
+        {/* Locked: the palette fades away entirely and a slim status pill takes
+            its place, keeping the laser (which marks nothing) within reach. */}
+        <ToolPalette
+          settings={settings}
+          onSettingsChange={updateSettings}
+          onClear={clearActive}
+          containerRef={stageRef}
+          onInsertImage={pickImage}
+          hidden={readOnly}
+        />
+        {readOnly && (
           <div
-            className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900/85 py-2 pl-4 pr-2 text-sm font-medium text-white shadow-lg backdrop-blur dark:bg-zinc-100/90 dark:text-zinc-900"
+            className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900/85 py-1.5 pl-4 pr-1.5 text-sm font-medium text-white shadow-lg backdrop-blur dark:bg-zinc-100/90 dark:text-zinc-900"
             data-read-only-banner
           >
-            <span role="status">Read-only — unlock to edit</span>
+            <span role="status">Read-only</span>
             <button
               type="button"
-              className={`rounded-full px-3 py-1 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-blue-400 ${
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-blue-400 ${
                 settings.tool === 'laser-pointer'
                   ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white'
                   : 'bg-white/15 hover:bg-white/25 dark:bg-zinc-900/10 dark:hover:bg-zinc-900/20'
               }`}
+              aria-label="Laser pointer"
               aria-pressed={settings.tool === 'laser-pointer'}
               onClick={() => updateSettings({ tool: settings.tool === 'laser-pointer' ? 'pen' : 'laser-pointer' })}
-              title="Laser pointer: point at things without marking the page"
               data-laser-toggle
             >
+              <Zap size={15} aria-hidden="true" />
               Laser
             </button>
           </div>
-        ) : (
-          <InkingToolbar
-            settings={settings}
-            onSettingsChange={updateSettings}
-            canUndo={canUndo}
-            canRedo={canRedo}
-            onUndo={undoActive}
-            onRedo={redoActive}
-            onClear={clearActive}
-          />
         )}
       </div>
       <PageArranger />

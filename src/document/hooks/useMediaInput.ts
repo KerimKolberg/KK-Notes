@@ -32,8 +32,9 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * Clipboard paste and drag-and-drop of images (and PDFs) onto pages.
- * Returns drop handlers for the viewer container.
+ * Clipboard paste, drag-and-drop and an explicit picker for placing images on
+ * pages. Returns drop handlers for the viewer container plus `pickImage`,
+ * which opens the file dialog the palette's "Insert image" button needs.
  */
 export function useMediaInput(onPdfDropped?: (file: File) => void) {
   const addImage = useDocumentStore((s) => s.addImage);
@@ -81,6 +82,22 @@ export function useMediaInput(onPdfDropped?: (file: File) => void) {
     return () => window.removeEventListener('paste', onPaste);
   }, [placeImage]);
 
+  /** Open a file picker and place the chosen image on the active page. */
+  const pickImage = useCallback(() => {
+    if (useDocumentStore.getState().readOnly) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.style.display = 'none';
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (file) void placeImage(file, null, null);
+      input.remove();
+    });
+    document.body.append(input);
+    input.click();
+  }, [placeImage]);
+
   const onDragOver = useCallback((e: ReactDragEvent<HTMLElement>) => {
     if (e.dataTransfer.types.includes('Files')) {
       e.preventDefault();
@@ -110,5 +127,5 @@ export function useMediaInput(onPdfDropped?: (file: File) => void) {
     [placeImage, onPdfDropped],
   );
 
-  return { onDragOver, onDrop, placeImage };
+  return { onDragOver, onDrop, placeImage, pickImage };
 }

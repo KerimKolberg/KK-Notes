@@ -2,7 +2,7 @@ export { InkingCanvas } from './InkingCanvas';
 export { InkSurface, type InkSurfaceProps } from './InkSurface';
 export { useLatestRef } from './hooks/useLatestRef';
 export { useUndoRedoShortcuts } from './hooks/useUndoRedoShortcuts';
-export { InkingToolbar, type InkingToolbarProps } from './InkingToolbar';
+export { ToolPalette, type ToolPaletteProps } from './palette/ToolPalette';
 export * from './types';
 export * from './constants';
 export { historyReducer, createHistoryState, type HistoryState, type HistoryAction } from './engine/history';

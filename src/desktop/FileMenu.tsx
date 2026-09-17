@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { Menu } from 'lucide-react';
+import { Tooltip } from '../ui/Tooltip';
 import { selectIsDirty, useDocumentStore } from '../document/store';
 import { useDesktopStore } from './desktopStore';
 import { actionExportPdf, actionNew, actionOpen, actionOpenPath, actionSave, actionSaveAs, actionToggleFullscreen } from './fileActions';
@@ -44,19 +46,22 @@ export function FileMenu() {
 
   return (
     <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        className={`inline-flex h-9 items-center rounded-lg px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-200 dark:text-zinc-200 dark:hover:bg-zinc-800 ${
-          open ? 'bg-zinc-200 dark:bg-zinc-800' : ''
-        } focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-500`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls="file-menu"
-        onClick={() => setOpen((v) => !v)}
-        data-file-menu
-      >
-        File
-      </button>
+      <Tooltip label="File" side="bottom">
+        <button
+          type="button"
+          className={`inline-flex h-11 w-11 items-center justify-center rounded-xl text-zinc-600 transition-colors hover:bg-zinc-200/80 hover:text-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-700/70 dark:hover:text-zinc-50 ${
+            open ? 'bg-zinc-200 text-zinc-900 dark:bg-zinc-700 dark:text-zinc-50' : ''
+          } focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500`}
+          aria-label="File"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-controls="file-menu"
+          onClick={() => setOpen((v) => !v)}
+          data-file-menu
+        >
+          <Menu size={20} strokeWidth={1.9} aria-hidden="true" />
+        </button>
+      </Tooltip>
       {open && (
         <div
           id="file-menu"

@@ -8,7 +8,9 @@ canvas virtualisation, a Samsung Notes-style page arranger, an image layer,
 a lasso selection tool, two-finger pan / pinch-zoom navigation, a read-only
 lock, a disappearing laser pointer, notebook covers, vertical *and*
 horizontal continuous scrolling, and PDF import / fillable AcroForms /
-vector PDF export (`src/pdf/`). Styled
+vector PDF export (`src/pdf/`). The interface is icon-first: a fixed top
+bar for document context and a draggable floating palette for drawing.
+Styled
 with Tailwind CSS and follows the system light/dark theme.
 
 ```bash
@@ -23,7 +25,14 @@ npm run desktop:dev    # Tauri v2 desktop shell, hot reloading
 npm run desktop:build  # NSIS / MSI installers (run on Windows)
 ```
 
-## Desktop shell (Tauri v2, `src-tauri/`, `src/desktop/`)
+## Desktop shell (Tauri v2, `src-tauri/`, `src/ui/
+├── Tooltip.tsx             hover / focus / long-press tooltip
+├── IconButton.tsx          icon + tooltip + loud active state
+├── Popover.tsx             anchored flyout panel
+├── dragBounds.ts           pure clamping for the floating palette
+└── useDraggablePanel.ts    pointer dragging, re-clamped on resize
+
+src/desktop/`)
 
 **Setup (Windows 2-in-1 target).** Install Node 22, Rust via
 [rustup](https://rustup.rs) (the MSVC toolchain, which needs the *Desktop
@@ -87,8 +96,8 @@ title against the last saved snapshot, so scrolling and zooming never count as
 edits.
 
 **Stylus buttons.** `resolveEffectiveTool` maps hardware buttons per the
-*Stylus* settings in the toolbar: the eraser end (`button 5` / `buttons & 32`)
-routes to the stroke or pixel eraser without touching the toolbar, and the
+*Stylus* settings in the palette: the eraser end (`button 5` / `buttons & 32`)
+routes to the stroke or pixel eraser without touching the palette, and the
 barrel button (`buttons & 2` while touching) acts as a stroke eraser, pixel
 eraser, or temporary Select mode that restores the previous tool when the pen
 lifts. A barrel press while merely hovering is ignored.
@@ -214,9 +223,57 @@ src/pdf/
 └── download.ts
 ```
 
+## Interface (`src/ui/`, `src/inking/palette/`)
+
+Tablet-first and icon-only, with [lucide-react] for the icons and a small
+tooltip of our own rather than another dependency.
+
+**Top app bar** — fixed, blurred, three groups:
+
+| Group | Contents |
+| --- | --- |
+| Left | File menu, page arranger, undo, redo |
+| Centre | Previous / next page, the title (click to rename), the dirty dot, a page badge that turns into a jump-to-page field |
+| Right | Zoom, a view-mode button that rotates vertical → horizontal → single, the read-only lock, import and export |
+
+As the window narrows the zoom read-out and the word "Page" drop away and
+the title truncates; the icons stay, so nothing becomes unreachable.
+
+**Floating tool palette** — a draggable panel over the canvas. The first row
+groups the tools (select, lasso, laser, insert image · pen, highlighter ·
+line, coordinate system, stroke options · eraser · settings) and the second
+carries the colour swatches and the thickness slider. Tools that have more
+to say open a flyout when their own button is pressed again: the pen's five
+brushes, the coordinate plane's quadrants and labels. The eraser is one
+button with two modes, the pattern / snapping and the input / stylus
+settings each live behind a popover, and everything the old text toolbar
+could do is still there.
+
+Dragging is handled by `useDraggablePanel` on top of the pure clamping in
+`dragBounds.ts`: the palette is kept fully inside the canvas area with a
+12 px margin, is re-clamped whenever the window or the panel itself
+resizes (so rotating a tablet cannot strand it off-screen), and a
+double-click on its grip returns it to the bottom centre.
+
+**Tooltips and touch** — `Tooltip` opens after 300 ms of mouse hover,
+immediately on keyboard focus, and after a 500 ms long press for touch and
+pen, which have no hover at all. It closes on Escape, and stays out of the
+way while the button's own popover is open. Each trigger keeps its own
+`aria-label`, identical to the tooltip text, so the bubble is purely visual
+(`aria-hidden`). Because a stylus user never sees hover, the selected tool
+is *filled*: a solid blue background plus a ring, not a subtle outline.
+
+**Read-only** — locking fades the whole palette out over 200 ms and makes it
+inert; only the top bar and a slim status pill remain. The pill keeps the
+laser pointer reachable, since that is the one tool a locked document still
+allows.
+
+[lucide-react]: https://lucide.dev
+
 ## Brush engine (`src/inking/engine/brushes.ts`)
 
-The pen tool paints with one of five presets, picked from the toolbar. A
+The pen tool paints with one of five presets, picked from the palette's pen
+flyout. A
 brush decides three things at once: the perfect-freehand parameters baked
 into the stroke when it starts, the pressure→radius easing and end tapers
 applied when the outline is generated, and how that outline is painted.
@@ -333,7 +390,7 @@ the document. What stays available is everything that is not an edit:
 - the page arranger for navigation, with its editing controls (add,
   duplicate, delete, reorder, template, background) disabled.
 
-The floating ink toolbar is replaced by a read-only banner, the ink and
+The floating palette fades out and a read-only pill takes its place, the ink and
 media layers go inert (`pointer-events: none`, so pointer input reaches the
 scroll container), selections are dropped, and undo / redo / delete
 shortcuts are switched off. Locking is view state: it never marks the
@@ -341,7 +398,7 @@ document dirty and is not part of a saved file.
 
 The laser pointer is the one tool that keeps working while locked — it
 writes nothing to the document, so there is nothing to protect it from —
-and the banner carries a toggle for it, since the toolbar is gone. A locked
+and the pill carries a toggle for it, since the palette is gone. A locked
 page takes the laser from a pen or mouse only, so one finger still pans.
 
 **Laser pointer.** A `laser-pointer` tool for pointing at things while
@@ -474,7 +531,7 @@ function Page() {
 ```
 
 `InkingCanvas` is the standalone single-surface component (own history and
-toolbar); `InkSurface` is the page-sized, history-free surface the document
+palette); `InkSurface` is the page-sized, history-free surface the document
 viewer hosts. `InkingCanvas` fills its parent. `ref` exposes `undo()`,
 `redo()`, `clear()`, `getStrokes()` and `toDataURL()`.
 
@@ -483,7 +540,7 @@ viewer hosts. `InkingCanvas` fills its parent. `ref` exposes `undo()`,
 | `initialStrokes` | `[]` | Seed strokes (uncontrolled) |
 | `onStrokesChange` | – | Fired after every committed change |
 | `initialSettings` | pen, 4 px, dark grey | Initial toolbar state |
-| `showToolbar` | `true` | Render the built-in toolbar |
+| `showToolbar` | `true` | Render the built-in tool palette |
 | `allowMouse` | `true` | Let a mouse draw (desktop convenience) |
 | `background` | `#ffffff` | Colour behind the ink, also used by `toDataURL` |
 | `maxHistory` | `200` | Undo depth |
@@ -506,7 +563,7 @@ marker and wet brush (see the brush engine above).
 | Stroke eraser | sweep | removes whole strokes |
 | Pixel eraser | freehand | `destination-out` stroke |
 
-Every ink tool shares the toolbar's **pattern** (solid, dashed, dotted,
+Every ink tool shares the palette's **pattern** (solid, dashed, dotted,
 dash-dot, long dash) and **arrowhead** mode (off, end, both). **15° snap**
 constrains lines and vectors to 15° increments; **Hold to snap** turns a
 freehand stroke into a primitive when you pause at its end.
@@ -545,7 +602,7 @@ one. Nothing from the HUD is committed.
 
 Pointer-down is the origin; the drag distance sets the half-axis extents.
 *Quadrant I* grows up and right, *4 quadrants* mirrors both axes. The second
-toolbar row configures divisions per half-axis, the faint grid, numbered
+flyout configures divisions per half-axis, the faint grid, numbered
 ticks and the axis labels (with presets such as `t / y`, `σ / jω`, `Re / Im`,
 `Q / P`). Axes, ticks, arrowheads and labels are drawn as vectors and text
 directly on the canvas.
@@ -622,7 +679,9 @@ Undo inverts, redo re-applies, depth is capped.
 src/inking/
 ├── InkingCanvas.tsx        standalone component: layers, history, imperative handle
 ├── InkSurface.tsx          page-sized surface for the document viewer (zoom-aware)
-├── InkingToolbar.tsx       tools, colour, width, Touch Draw, undo/redo/clear
+├── palette/                floating tool palette
+│   ├── ToolPalette.tsx     icon groups, flyouts, colour and thickness rows
+│   └── parts.tsx           brush flyout, stroke options, plane options, settings
 ├── InkingCanvas.module.css
 ├── types.ts                Stroke, StrokeStyle, ToolSettings, HistoryEntry, …
 ├── constants.ts
