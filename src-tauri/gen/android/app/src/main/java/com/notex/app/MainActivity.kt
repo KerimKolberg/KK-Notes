@@ -47,7 +47,7 @@ class MainActivity : TauriActivity() {
       val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
       val density = view.resources.displayMetrics.density
       fun dp(value: Int) = (value / density).toInt()
-      view.evaluateJavascript(
+      webView.evaluateJavascript(
         """
         (() => {
           const s = document.documentElement.style;
