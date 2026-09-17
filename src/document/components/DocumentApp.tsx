@@ -99,13 +99,26 @@ export function DocumentApp() {
       <div className="relative min-h-0 flex-1" onDragOver={onDragOver} onDrop={onDrop}>
         <DocumentViewer settingsRef={settingsRef} currentTool={settings.tool} />
         {readOnly ? (
-          <p
-            className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-zinc-900/85 px-4 py-2 text-sm font-medium text-white shadow-lg backdrop-blur dark:bg-zinc-100/90 dark:text-zinc-900"
-            role="status"
+          <div
+            className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900/85 py-2 pl-4 pr-2 text-sm font-medium text-white shadow-lg backdrop-blur dark:bg-zinc-100/90 dark:text-zinc-900"
             data-read-only-banner
           >
-            Read-only — unlock to edit
-          </p>
+            <span role="status">Read-only — unlock to edit</span>
+            <button
+              type="button"
+              className={`rounded-full px-3 py-1 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-blue-400 ${
+                settings.tool === 'laser-pointer'
+                  ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white'
+                  : 'bg-white/15 hover:bg-white/25 dark:bg-zinc-900/10 dark:hover:bg-zinc-900/20'
+              }`}
+              aria-pressed={settings.tool === 'laser-pointer'}
+              onClick={() => updateSettings({ tool: settings.tool === 'laser-pointer' ? 'pen' : 'laser-pointer' })}
+              title="Laser pointer: point at things without marking the page"
+              data-laser-toggle
+            >
+              Laser
+            </button>
+          </div>
         ) : (
           <InkingToolbar
             settings={settings}

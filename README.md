@@ -6,7 +6,8 @@ via [perfect-freehand], STEM shape tools and hold-to-snap, hosted in a
 multi-page document system (`src/document/`) with procedural page templates,
 canvas virtualisation, a Samsung Notes-style page arranger, an image layer,
 a lasso selection tool, two-finger pan / pinch-zoom navigation, a read-only
-lock, a disappearing laser pointer, and PDF import / fillable AcroForms /
+lock, a disappearing laser pointer, notebook covers, vertical *and*
+horizontal continuous scrolling, and PDF import / fillable AcroForms /
 vector PDF export (`src/pdf/`). Styled
 with Tailwind CSS and follows the system light/dark theme.
 
@@ -124,6 +125,26 @@ blank/PDF placeholders. Line colours derive from the page background's
 luminance unless `strokeColor` is set explicitly, so dark pages get light
 lines.
 
+**View modes.** `vertical-continuous` and `horizontal-continuous` scroll the
+same page strip along different axes, and `single-page` shows one page at a
+time. `layout.ts` expresses everything scroll-related along a **main axis**,
+so both continuous modes share one code path: `layoutPages` places pages
+down or across and centres them on the other axis, and `visibleRange`,
+`currentPageIndex`, `scrollOffsetForPage` and `itemAtContent` all take the
+axis. Positions stay plain `left`/`top` pairs, so `projectToPage` needs no
+axis at all — a pointer anywhere in the strip lands on the right page's
+local coordinates either way. The touch gestures read the axis from the
+layout, so midpoint panning and pinch anchoring follow the strip.
+
+**Notebook cover.** A document may carry an optional `cover` (`title`,
+`description`, `coverColor`, `textColor`), rendered by `CoverSheet` as the
+first sheet in the viewer, before page 1, in both continuous modes. It is
+not a page: nothing can be drawn on it, and it takes no part in numbering,
+virtualisation or export. In the layout it simply occupies the first slot
+and pushes the pages along. The Page Arranger edits it (add, title,
+subtitle, colours, remove), and it is part of the document's dirty state
+and of the saved file.
+
 **Viewer & virtualisation.** `layout.ts` stacks pages at the current zoom;
 `DocumentViewer` mounts an `InkSurface` (two full-resolution canvases) only
 for pages within 800 px of the viewport, shows a cached `ImageBitmap`
@@ -139,6 +160,12 @@ stroke is stored in page-local CSS px, and the pointer pipeline divides
 viewport offsets by the zoom (`viewportToPagePoint` / `projectToPage` in
 `layout.ts`, unit-tested). Because `getBoundingClientRect()` is already
 viewport-relative, scroll offsets need no separate handling.
+
+**Page styles.** The arranger exposes `templateConfig.spacing`: a slider plus
+5 / 7 / 10 mm presets (page pixels at 96 DPI) that set the ruled line
+distance, the grid and engineering box size, and the isometric triangle
+side. It is disabled for templates that have no spacing (blank, PDF), and
+"Apply to all pages" makes it document-wide.
 
 **Page arranger.** Slide-over dialog with a thumbnail grid. Reordering is
 pointer-based (`usePointerReorder`) so it works with pen, mouse and touch
@@ -161,7 +188,7 @@ src/document/
 ├── raster/             rasterize.ts, rasterWorker.ts, rasterClient.ts, rasterCache.ts
 ├── hooks/              useRasterBitmap, usePointerReorder, useMediaInput, useTouchGestures
 └── components/         DocumentApp, TopBar, DocumentViewer, PageFrame, PageSnapshot,
-                        PageArranger, PageThumbnail, MediaLayer, SelectionLayer
+                        PageArranger, PageThumbnail, MediaLayer, SelectionLayer, CoverSheet
 
 src/desktop/
 ├── notex.ts            .notex envelope encode / decode
@@ -186,6 +213,41 @@ src/pdf/
 ├── FormOverlay.tsx  PdfBackground.tsx  ImportPdfDialog.tsx
 └── download.ts
 ```
+
+## Brush engine (`src/inking/engine/brushes.ts`)
+
+The pen tool paints with one of five presets, picked from the toolbar. A
+brush decides three things at once: the perfect-freehand parameters baked
+into the stroke when it starts, the pressure→radius easing and end tapers
+applied when the outline is generated, and how that outline is painted.
+
+| Brush | Feel | How |
+| --- | --- | --- |
+| Ballpoint | Even width, hard edges | `thinning 0.08`, polygon outline drawn without curve smoothing |
+| Fountain pen | Swells with pressure, flicks to a hairline | `thinning 0.78`, ease-in-out radius, taper that grows with nib speed |
+| Pencil | Grainy graphite that answers to tilt | grain pattern fill, per-chunk opacity, nib widened by lean |
+| Marker | Thick chisel tip, translucent ink | `2.4×` width, `multiply` at 62 %, flat caps, bleeding edge |
+| Brush | Wet, very smooth, very pressure-sensitive | `smoothing 0.85`, `thinning 0.86`, long end taper, spreading edge |
+
+Only the brush *id* is stored on a stroke: everything else is looked up from
+it at paint time, so a brush stays one definition and strokes serialise as
+before plus one short string. Unknown or missing ids fall back to the
+ballpoint, which keeps files written before the brush engine readable.
+
+**Painting.** A stroke's body is a list of passes — a filled outline, a
+grain-textured fill, or a soft wide edge stroked under the body. The marker
+and the wet brush add two graduated bleed passes so their edges fade out
+instead of ending in a band. The pencil is painted in chunks along the
+stroke, each with its own opacity from the pressure and tilt of the samples
+it covers and its own nib width from their lean; the chunks are pre-smoothed
+once and tiled flat end to flat end, so neither seams nor double-painted
+overlaps show. The grain itself is a deterministic two-octave noise tile,
+built once per colour and used as a repeating `createPattern` fill.
+
+**Tilt.** `tiltX`/`tiltY` are folded into a single 0..1 lean and recorded on
+each sample, but only when the digitiser reports one, so strokes from a
+device without tilt stay exactly as small as before. A leaning pencil draws
+broader and lighter, the way graphite spread over more paper does.
 
 ## Lasso selection and touch navigation
 
@@ -277,6 +339,11 @@ scroll container), selections are dropped, and undo / redo / delete
 shortcuts are switched off. Locking is view state: it never marks the
 document dirty and is not part of a saved file.
 
+The laser pointer is the one tool that keeps working while locked — it
+writes nothing to the document, so there is nothing to protect it from —
+and the banner carries a toggle for it, since the toolbar is gone. A locked
+page takes the laser from a pen or mouse only, so one finger still pans.
+
 **Laser pointer.** A `laser-pointer` tool for pointing at things while
 presenting. It is *ephemeral*: `isEphemeralTool()` marks it, `appendStroke`
 refuses it, and `StrokeBuilder` cannot even accumulate one, so its marks
@@ -295,6 +362,21 @@ its own colour (so switching tools never disturbs the ink colour), and
 into a few dozen polylines (`laserRuns`) drawn in three passes — glow,
 beam, bright core — and the surface keeps its own animation frame running
 until the last sample expires.
+
+The brush engine, the cover and horizontal mode are covered by
+`src/inking/__tests__/brushes.test.ts` (presets, easing, tilt, velocity
+taper, chunking, grain), `src/document/__tests__/brushSerialization.test.ts`
+(every brush id, its baked parameters and per-sample tilt survive a save,
+and a pre-brush file still loads) and
+`src/document/__tests__/horizontalLayout.test.ts` (axis-aware layout,
+virtualisation and pointer projection, plus the cover's slot). A headless
+Chromium suite draws with each brush and measures the result: constant width
+for the ballpoint, a swelling stroke for the fountain pen, a grainy fill
+with no solid pixels for the pencil (broader and lighter when tilted),
+multiply darkening where marker strokes cross, and a soft skirt around the
+wet brush's core. The same suite adds a cover, drives the spacing presets
+and checks that a pointer projects onto the right page while the strip is
+scrolled sideways.
 
 Verification: `src/inking/__tests__/laser.test.ts` (fade curve, pruning,
 sampling, rainbow hues, run batching, the ephemeral-tool set),
@@ -416,6 +498,9 @@ Keyboard: `Ctrl/⌘+Z` undo, `Ctrl/⌘+Shift+Z` or `Ctrl+Y` redo.
 | Pen | freehand | pressure-thinned perfect-freehand polygon |
 | Highlighter | freehand | 4× width, `multiply` at 35 % |
 | Laser | freehand | glowing trail that fades out in 2.7 s, never committed |
+
+The pen's **brush** picker chooses between ballpoint, fountain pen, pencil,
+marker and wet brush (see the brush engine above).
 | Line | drag | straight segment / vector |
 | Axes | drag from the origin | coordinate plane |
 | Stroke eraser | sweep | removes whole strokes |
@@ -553,6 +638,7 @@ src/inking/
 │   ├── history.ts          undo/redo reducer
 │   ├── pointerPolicy.ts    palm rejection, pressure, button mapping
 │   ├── lasso.ts            point-in-polygon selection, stroke transforms, handle geometry
+│   ├── brushes.ts          pen presets: perfect-freehand params, tilt, grain, tapers
 │   ├── laser.ts            disappearing pointer trail: fade, rainbow, run batching
 │   ├── gestureState.ts     shared two-finger-gesture flag and pen presence
 │   ├── toolStyles.ts       per-tool StrokeStyle

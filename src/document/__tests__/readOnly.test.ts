@@ -100,8 +100,8 @@ describe('read-only lock', () => {
     expect(doc().activePageIndex).toBe(1);
     store.getState().setActivePage(0);
     expect(doc().activePageIndex).toBe(0);
-    store.getState().setViewMode('single');
-    expect(doc().viewMode).toBe('single');
+    store.getState().setViewMode('single-page');
+    expect(doc().viewMode).toBe('single-page');
     store.getState().setZoom(1.5);
     expect(doc().zoom).toBe(1.5);
     store.getState().zoomBy(1);

@@ -56,7 +56,7 @@ export function createDocument(pageCount = 1, title = 'Untitled note', pageInit:
     title,
     pages,
     activePageIndex: 0,
-    viewMode: 'continuous',
+    viewMode: 'vertical-continuous',
     zoom: DEFAULT_ZOOM,
   };
 }

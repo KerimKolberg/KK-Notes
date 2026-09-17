@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { PAGE_BACKGROUND_SWATCHES, PAGE_TEMPLATES } from '../constants';
+import {
+  COVER_COLOR_SWATCHES,
+  MAX_TEMPLATE_SPACING,
+  MIN_TEMPLATE_SPACING,
+  PAGE_BACKGROUND_SWATCHES,
+  PAGE_TEMPLATES,
+  SPACED_TEMPLATES,
+  SPACING_PRESETS_MM,
+  defaultCover,
+  mmToPx,
+  pxToMm,
+} from '../constants';
 import { usePointerReorder } from '../hooks/usePointerReorder';
 import { useDocumentStore } from '../store';
 import type { PageTemplate } from '../types';
@@ -18,10 +29,28 @@ const opButton =
  */
 export function PageArranger() {
   const open = useDocumentStore((s) => s.arrangerOpen);
-  const { pages, activePageIndex, readOnly } = useDocumentStore(
-    useShallow((s) => ({ pages: s.document.pages, activePageIndex: s.document.activePageIndex, readOnly: s.readOnly })),
+  const { pages, activePageIndex, readOnly, cover, title } = useDocumentStore(
+    useShallow((s) => ({
+      pages: s.document.pages,
+      activePageIndex: s.document.activePageIndex,
+      readOnly: s.readOnly,
+      cover: s.document.cover,
+      title: s.document.title,
+    })),
   );
-  const { setArrangerOpen, jumpToPage, movePage, addPage, duplicatePage, deletePage, setPageTemplate, setPageBackground } =
+  const {
+    setArrangerOpen,
+    jumpToPage,
+    movePage,
+    addPage,
+    duplicatePage,
+    deletePage,
+    setPageTemplate,
+    setPageBackground,
+    setTemplateConfig,
+    setCover,
+    updateCover,
+  } =
     useDocumentStore(
       useShallow((s) => ({
         setArrangerOpen: s.setArrangerOpen,
@@ -32,11 +61,17 @@ export function PageArranger() {
         deletePage: s.deletePage,
         setPageTemplate: s.setPageTemplate,
         setPageBackground: s.setPageBackground,
+        setTemplateConfig: s.setTemplateConfig,
+        setCover: s.setCover,
+        updateCover: s.updateCover,
       })),
     );
   const [applyToAll, setApplyToAll] = useState(false);
   const target = applyToAll ? ('all' as const) : activePageIndex;
   const selected = pages[activePageIndex];
+  const spacing = selected?.templateConfig.spacing ?? 20;
+  const spacingApplies = selected !== undefined && SPACED_TEMPLATES.includes(selected.template);
+  const spacingLabel = selected?.template === 'ruled' ? 'Line spacing' : 'Box size';
 
   const onSelect = useCallback((index: number) => jumpToPage(index), [jumpToPage]);
   // Read-only: thumbnails still navigate, but nothing reorders or edits.
@@ -147,6 +182,45 @@ export function PageArranger() {
             />
           </div>
         </div>
+        <div className="flex items-center gap-2">
+          <label htmlFor="arranger-spacing" className="w-20 shrink-0 text-zinc-600 dark:text-zinc-300">
+            {spacingLabel}
+          </label>
+          <input
+            id="arranger-spacing"
+            type="range"
+            className="h-1 min-w-0 flex-1 accent-blue-600"
+            min={MIN_TEMPLATE_SPACING}
+            max={MAX_TEMPLATE_SPACING}
+            step={0.5}
+            value={spacing}
+            disabled={readOnly || !spacingApplies}
+            aria-label={`${spacingLabel} in page pixels`}
+            onChange={(e) => setTemplateConfig(target, { spacing: Number(e.target.value) })}
+            data-spacing-range
+          />
+          <span className="w-16 shrink-0 text-right tabular-nums text-zinc-600 dark:text-zinc-300" data-spacing-value>
+            {pxToMm(spacing)} mm
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-20 shrink-0" />
+          <div className="flex flex-1 items-center gap-1.5" role="group" aria-label="Spacing presets">
+            {SPACING_PRESETS_MM.map((mm) => (
+              <button
+                key={mm}
+                type="button"
+                className={opButton}
+                aria-pressed={Math.abs(spacing - mmToPx(mm)) < 0.6}
+                disabled={readOnly || !spacingApplies}
+                onClick={() => setTemplateConfig(target, { spacing: mmToPx(mm) })}
+                data-spacing-preset={mm}
+              >
+                {mm} mm
+              </button>
+            ))}
+          </div>
+        </div>
         <label className="flex items-center gap-2 text-zinc-700 dark:text-zinc-200">
           <input
             type="checkbox"
@@ -157,6 +231,104 @@ export function PageArranger() {
           />
           Apply to all pages
         </label>
+      </div>
+
+      <div className="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800" role="group" aria-label="Notebook cover">
+        <div className="flex items-center justify-between">
+          <span className="font-medium text-zinc-700 dark:text-zinc-200">Cover</span>
+          {cover ? (
+            <button
+              type="button"
+              className={opButton}
+              onClick={() => setCover(null)}
+              disabled={readOnly}
+              data-cover-remove
+            >
+              Remove
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={opButton}
+              onClick={() => setCover(defaultCover(title))}
+              disabled={readOnly}
+              data-cover-add
+            >
+              Add cover
+            </button>
+          )}
+        </div>
+        {cover && (
+          <>
+            <div className="flex items-center gap-2">
+              <label htmlFor="cover-title" className="w-20 shrink-0 text-zinc-600 dark:text-zinc-300">
+                Title
+              </label>
+              <input
+                id="cover-title"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                value={cover.title}
+                disabled={readOnly}
+                onChange={(e) => updateCover({ title: e.target.value })}
+                data-cover-title-input
+              />
+            </div>
+            <div className="flex items-start gap-2">
+              <label htmlFor="cover-description" className="w-20 shrink-0 pt-2 text-zinc-600 dark:text-zinc-300">
+                Subtitle
+              </label>
+              <textarea
+                id="cover-description"
+                rows={2}
+                className="min-w-0 flex-1 resize-none rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                value={cover.description}
+                disabled={readOnly}
+                onChange={(e) => updateCover({ description: e.target.value })}
+                data-cover-description-input
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-20 shrink-0 text-zinc-600 dark:text-zinc-300">Colour</span>
+              <div className="flex flex-1 flex-wrap items-center gap-1.5" role="group" aria-label="Cover colour">
+                {COVER_COLOR_SWATCHES.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    aria-label={`Cover ${color}`}
+                    aria-pressed={cover.coverColor.toLowerCase() === color}
+                    className={`h-7 w-7 rounded-full ring-1 ring-black/15 dark:ring-white/20 ${
+                      cover.coverColor.toLowerCase() === color ? 'outline-2 outline-offset-2 outline-blue-500' : ''
+                    }`}
+                    style={{ backgroundColor: color }}
+                    disabled={readOnly}
+                    onClick={() => updateCover({ coverColor: color })}
+                  />
+                ))}
+                <input
+                  type="color"
+                  aria-label="Custom cover colour"
+                  className="h-8 w-8 cursor-pointer rounded-md border-0 bg-transparent p-0"
+                  value={cover.coverColor}
+                  disabled={readOnly}
+                  onChange={(e) => updateCover({ coverColor: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <label htmlFor="cover-text-color" className="w-20 shrink-0 text-zinc-600 dark:text-zinc-300">
+                Text
+              </label>
+              <input
+                id="cover-text-color"
+                type="color"
+                className="h-8 w-8 cursor-pointer rounded-md border-0 bg-transparent p-0"
+                value={cover.textColor}
+                disabled={readOnly}
+                onChange={(e) => updateCover({ textColor: e.target.value })}
+              />
+            </div>
+          </>
+        )}
       </div>
 
       <ol

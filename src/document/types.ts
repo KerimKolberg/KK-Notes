@@ -128,11 +128,27 @@ export interface Page {
   readonly images: readonly ImageLayer[];
 }
 
-export type ViewMode = 'continuous' | 'single';
+/**
+ * How the viewer arranges pages. The two continuous modes scroll along
+ * different axes; `single-page` shows one page at a time.
+ */
+export type ViewMode = 'vertical-continuous' | 'horizontal-continuous' | 'single-page';
+
+/** Optional notebook cover shown before the first page. */
+export interface Cover {
+  readonly title: string;
+  readonly description: string;
+  /** CSS colour of the cover board. */
+  readonly coverColor: string;
+  /** CSS colour of the text printed on it. */
+  readonly textColor: string;
+}
 
 export interface Document {
   readonly id: string;
   readonly title: string;
+  /** Notebook cover, rendered before page 1 in the continuous modes. */
+  readonly cover?: Cover;
   readonly pages: readonly Page[];
   readonly activePageIndex: number;
   readonly viewMode: ViewMode;
@@ -180,7 +196,9 @@ export interface SerializedDocument {
   readonly version: 1;
   readonly id: string;
   readonly title: string;
-  readonly viewMode: ViewMode;
+  readonly cover?: Cover;
+  /** Legacy files carry the old two-mode values; they are migrated on load. */
+  readonly viewMode: ViewMode | 'continuous' | 'single';
   readonly zoom: number;
   readonly activePageIndex: number;
   readonly pages: readonly SerializedPage[];

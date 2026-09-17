@@ -1,4 +1,4 @@
-import type { PageDimensions, PageTemplate, TemplateConfig } from './types';
+import type { Cover, PageDimensions, PageTemplate, TemplateConfig } from './types';
 
 /** A4 at 96 DPI. */
 export const A4_DIMENSIONS: PageDimensions = { width: 794, height: 1123 };
@@ -64,6 +64,40 @@ export const PAGE_BACKGROUND_SWATCHES: readonly string[] = [
   '#1c1c21',
   '#0f172a',
 ];
+
+/** Page pixels per millimetre at 96 DPI. */
+export const MM_TO_PX = 96 / 25.4;
+
+export function mmToPx(mm: number): number {
+  return Math.round(mm * MM_TO_PX * 10) / 10;
+}
+
+export function pxToMm(px: number): number {
+  return Math.round((px / MM_TO_PX) * 10) / 10;
+}
+
+/** Ruled line pitch / grid box presets offered in the arranger, in millimetres. */
+export const SPACING_PRESETS_MM: readonly number[] = [5, 7, 10];
+
+export const MIN_TEMPLATE_SPACING = 8;
+export const MAX_TEMPLATE_SPACING = 80;
+
+/** Templates whose look depends on `templateConfig.spacing`. */
+export const SPACED_TEMPLATES: readonly PageTemplate[] = ['ruled', 'grid', 'engineering', 'isometric'];
+
+export const COVER_COLOR_SWATCHES: readonly string[] = [
+  '#1e3a5f',
+  '#7f1d1d',
+  '#14532d',
+  '#4c1d95',
+  '#78350f',
+  '#111827',
+  '#f4f4f5',
+];
+
+export function defaultCover(title: string): Cover {
+  return { title: title || 'Untitled note', description: '', coverColor: '#1e3a5f', textColor: '#f8fafc' };
+}
 
 /** Placed images default to this fraction of the page width when larger. */
 export const IMAGE_MAX_FRACTION = 0.6;

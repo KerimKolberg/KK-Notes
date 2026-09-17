@@ -1,3 +1,4 @@
+import { DEFAULT_BRUSH } from './engine/brushes';
 import type { CoordinatePlaneConfig, StrokePattern, StylusSettings, ToolSettings } from './types';
 
 /** Pressure substituted when a device reports `0` (mouse, many touch digitisers). */
@@ -101,6 +102,7 @@ export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   color: '#1f1f24',
   size: 4,
   touchDraw: false,
+  brush: DEFAULT_BRUSH,
   laserColor: LASER_DEFAULT_COLOR,
   laserRainbow: false,
   pattern: 'solid',

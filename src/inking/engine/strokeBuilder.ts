@@ -7,6 +7,7 @@ import type {
   Point,
   StrokeStyle,
 } from '../types';
+import { brushPadding } from './brushes';
 import { bboxFromPoints } from './geometry';
 import { createStrokeId } from './ids';
 import { arrowheadLength } from './shapes';
@@ -14,7 +15,7 @@ import { arrowheadLength } from './shapes';
 /** Padding around a freehand path: widest half-width, arrowheads, anti-aliasing slop. */
 export function freehandPadding(style: StrokeStyle): number {
   const arrow = style.arrowheads !== 'none' ? arrowheadLength(style.size) : 0;
-  return style.size * 0.5 * (1 + Math.max(0, style.thinning)) + arrow + 2;
+  return style.size * 0.5 * (1 + Math.max(0, style.thinning)) + arrow + brushPadding(style) + 2;
 }
 
 /** Padded bounding box of a freehand stroke's points. */

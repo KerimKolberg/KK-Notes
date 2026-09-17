@@ -3,16 +3,17 @@ import {
   HIGHLIGHTER_OPACITY,
   HIGHLIGHTER_SIZE_MULTIPLIER,
 } from '../constants';
+import { brushStyle } from './brushes';
 import type { LaserStyle } from './laser';
 import type { InkPointerType, InkTool, StrokeStyle, ToolSettings } from '../types';
 
 /**
  * Build the frozen render style for a new stroke.
  *
- * Pen strokes thin with pressure; when the pointer cannot report pressure
- * (mouse / most touch) we let perfect-freehand simulate it from velocity so
- * the line still has some life. Highlighter, eraser and geometric tools are
- * constant-width.
+ * The pen delegates to the brush engine (`brushes.ts`), which decides width
+ * scale, pressure response, smoothing, tapers and how the outline is painted.
+ * Highlighter, eraser and geometric tools are constant-width presets defined
+ * here.
  */
 export function styleForTool(
   tool: InkTool,
@@ -21,20 +22,8 @@ export function styleForTool(
 ): StrokeStyle {
   switch (tool) {
     case 'pen':
-      return {
-        color: settings.color,
-        size: settings.size,
-        opacity: 1,
-        compositeOperation: 'source-over',
-        thinning: 0.6,
-        smoothing: 0.5,
-        streamline: 0.5,
-        simulatePressure: pointerType !== 'pen',
-        taperStart: 0,
-        taperEnd: 0,
-        pattern: settings.pattern,
-        arrowheads: settings.arrowheads,
-      };
+      // The pen is whichever brush the toolbar has selected.
+      return brushStyle(settings.brush, settings, pointerType);
     case 'highlighter':
       return {
         color: settings.color,

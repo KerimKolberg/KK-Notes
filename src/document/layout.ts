@@ -3,12 +3,22 @@
  * viewport CSS pixels unless a name says "page" — page-local units are the
  * inking engine's coordinate system (CSS px at zoom 1, origin at the page's
  * top-left corner).
+ *
+ * Pages stack along one **main axis**: `y` for vertical continuous scrolling,
+ * `x` for horizontal. Every scroll-related helper takes that axis so the
+ * viewer, the virtualisation ranges and the touch gestures all agree on which
+ * offset they are talking about. Positions themselves are always plain
+ * `left`/`top` pairs, so projection works the same either way.
  */
 import type { Point } from '../inking/types';
 import { MAX_ZOOM, MIN_ZOOM } from './constants';
 import type { PageDimensions } from './types';
 
+/** Which axis pages advance along. */
+export type LayoutAxis = 'y' | 'x';
+
 export interface PageLayout {
+  /** Index in the laid-out list; `COVER_INDEX` for the notebook cover. */
   readonly index: number;
   /** Offset of the page's top edge inside the scroll content. */
   readonly top: number;
@@ -18,10 +28,16 @@ export interface PageLayout {
   readonly height: number;
 }
 
+/** `PageLayout.index` of the cover sheet, which is not a page. */
+export const COVER_INDEX = -1;
+
 export interface DocumentLayout {
   readonly items: readonly PageLayout[];
   readonly totalWidth: number;
   readonly totalHeight: number;
+  readonly axis: LayoutAxis;
+  /** Laid out before the first page when the document has a cover. */
+  readonly cover: PageLayout | null;
 }
 
 export interface LayoutOptions {
@@ -30,23 +46,62 @@ export interface LayoutOptions {
   readonly padding: number;
   /** Width of the scroll viewport; pages are centred in it when narrower. */
   readonly containerWidth: number;
+  /** Height of the scroll viewport; used to centre pages in horizontal mode. */
+  readonly containerHeight?: number;
+  /** Axis pages advance along. Default `'y'`. */
+  readonly axis?: LayoutAxis;
+  /** Size of the notebook cover, laid out before the first page. */
+  readonly cover?: PageDimensions | null;
 }
 
-/** Stack pages vertically, centred, at the given zoom. */
-export function layoutPages(pages: ReadonlyArray<{ readonly dimensions: PageDimensions }>, options: LayoutOptions): DocumentLayout {
-  const { zoom, gap, padding, containerWidth } = options;
+/** Offset of an item along the main axis. */
+export function mainStart(item: PageLayout, axis: LayoutAxis): number {
+  return axis === 'y' ? item.top : item.left;
+}
+
+/** Extent of an item along the main axis. */
+export function mainSize(item: PageLayout, axis: LayoutAxis): number {
+  return axis === 'y' ? item.height : item.width;
+}
+
+/** Scroll offset of a container along the main axis. */
+export function mainScroll(el: { scrollTop: number; scrollLeft: number }, axis: LayoutAxis): number {
+  return axis === 'y' ? el.scrollTop : el.scrollLeft;
+}
+
+/** Stack pages along `axis`, centred on the cross axis, at the given zoom. */
+export function layoutPages(
+  pages: ReadonlyArray<{ readonly dimensions: PageDimensions }>,
+  options: LayoutOptions,
+): DocumentLayout {
+  const { zoom, gap, padding, containerWidth, containerHeight = 0, axis = 'y', cover = null } = options;
   const items: PageLayout[] = [];
-  let top = padding;
+  let main = padding;
   let maxWidth = 0;
-  pages.forEach((page, index) => {
-    const width = page.dimensions.width * zoom;
-    const height = page.dimensions.height * zoom;
+  let maxHeight = 0;
+
+  /** Place one sheet at the running main offset and advance past it. */
+  const place = (index: number, dimensions: PageDimensions): PageLayout => {
+    const width = dimensions.width * zoom;
+    const height = dimensions.height * zoom;
     if (width > maxWidth) maxWidth = width;
-    items.push({ index, top, left: Math.max(padding, (containerWidth - width) / 2), width, height });
-    top += height + gap;
-  });
-  const totalHeight = items.length === 0 ? padding * 2 : top - gap + padding;
-  return { items, totalWidth: maxWidth + padding * 2, totalHeight };
+    if (height > maxHeight) maxHeight = height;
+    const item: PageLayout =
+      axis === 'y'
+        ? { index, top: main, left: Math.max(padding, (containerWidth - width) / 2), width, height }
+        : { index, top: Math.max(padding, (containerHeight - height) / 2), left: main, width, height };
+    main += (axis === 'y' ? height : width) + gap;
+    return item;
+  };
+
+  const coverItem = cover ? place(COVER_INDEX, cover) : null;
+  pages.forEach((page, index) => items.push(place(index, page.dimensions)));
+
+  const empty = items.length === 0 && !coverItem;
+  const totalMain = empty ? padding * 2 : main - gap + padding;
+  return axis === 'y'
+    ? { items, cover: coverItem, axis, totalWidth: maxWidth + padding * 2, totalHeight: totalMain }
+    : { items, cover: coverItem, axis, totalWidth: totalMain, totalHeight: maxHeight + padding * 2 };
 }
 
 export interface IndexRange {
@@ -59,18 +114,20 @@ export interface IndexRange {
 /** Pages intersecting the viewport expanded by `overscan` on both sides. */
 export function visibleRange(
   items: readonly PageLayout[],
-  scrollTop: number,
-  viewportHeight: number,
+  scroll: number,
+  viewportSize: number,
   overscan: number,
+  axis: LayoutAxis = 'y',
 ): IndexRange {
-  const min = scrollTop - overscan;
-  const max = scrollTop + viewportHeight + overscan;
+  const min = scroll - overscan;
+  const max = scroll + viewportSize + overscan;
   let start = -1;
   let end = -2;
   for (const item of items) {
-    const bottom = item.top + item.height;
-    if (bottom < min) continue;
-    if (item.top > max) break;
+    const itemStart = mainStart(item, axis);
+    const itemEnd = itemStart + mainSize(item, axis);
+    if (itemEnd < min) continue;
+    if (itemStart > max) break;
     if (start === -1) start = item.index;
     end = item.index;
   }
@@ -82,19 +139,25 @@ export function inRange(range: IndexRange, index: number): boolean {
 }
 
 /**
- * The page the reader is "on": the one under the reference line 40 % down the
+ * The page the reader is "on": the one under the reference line 40 % into the
  * viewport, or, when that line falls in a gap, the page with the largest
- * visible area.
+ * visible extent.
  */
-export function currentPageIndex(items: readonly PageLayout[], scrollTop: number, viewportHeight: number): number {
+export function currentPageIndex(
+  items: readonly PageLayout[],
+  scroll: number,
+  viewportSize: number,
+  axis: LayoutAxis = 'y',
+): number {
   if (items.length === 0) return 0;
-  const reference = scrollTop + viewportHeight * 0.4;
+  const reference = scroll + viewportSize * 0.4;
   let bestIndex = 0;
   let bestOverlap = -1;
   for (const item of items) {
-    const bottom = item.top + item.height;
-    if (reference >= item.top && reference <= bottom) return item.index;
-    const overlap = Math.min(bottom, scrollTop + viewportHeight) - Math.max(item.top, scrollTop);
+    const itemStart = mainStart(item, axis);
+    const itemEnd = itemStart + mainSize(item, axis);
+    if (reference >= itemStart && reference <= itemEnd) return item.index;
+    const overlap = Math.min(itemEnd, scroll + viewportSize) - Math.max(itemStart, scroll);
     if (overlap > bestOverlap) {
       bestOverlap = overlap;
       bestIndex = item.index;
@@ -103,11 +166,16 @@ export function currentPageIndex(items: readonly PageLayout[], scrollTop: number
   return bestIndex;
 }
 
-/** Scroll offset that places a page's top just inside the viewport. */
-export function scrollTopForPage(items: readonly PageLayout[], index: number, padding: number): number {
+/** Scroll offset that places a page's leading edge just inside the viewport. */
+export function scrollOffsetForPage(
+  items: readonly PageLayout[],
+  index: number,
+  padding: number,
+  axis: LayoutAxis = 'y',
+): number {
   const item = items[index];
   if (!item) return 0;
-  return Math.max(0, item.top - padding);
+  return Math.max(0, mainStart(item, axis) - padding);
 }
 
 /**
@@ -130,7 +198,8 @@ export interface ScrollContainerFrame {
 /**
  * Project a viewport position onto a page using the scroll container's frame
  * and the page's layout item instead of a measured page rect (useful when
- * the page element is not mounted, e.g. a snapshot).
+ * the page element is not mounted, e.g. a snapshot). Works in either axis:
+ * the item's own `left`/`top` carry the layout direction.
  */
 export function projectToPage(clientX: number, clientY: number, frame: ScrollContainerFrame, item: PageLayout, zoom: number): Point {
   const contentX = clientX - frame.left + frame.scrollLeft;
@@ -150,15 +219,20 @@ export function clampZoom(zoom: number, min = MIN_ZOOM, max = MAX_ZOOM): number 
 }
 
 /**
- * The layout item under a scroll-content y position, or the nearest one when
- * the point falls in a gap / the padding. `undefined` only for an empty layout.
+ * The layout item under a scroll-content position, or the nearest one when
+ * the point falls in a gap / the padding. `undefined` only for an empty
+ * layout. Only the main axis is considered: the cross axis is centred, so a
+ * point beside a page still belongs to it.
  */
-export function itemAtContentY(items: readonly PageLayout[], y: number): PageLayout | undefined {
+export function itemAtContent(items: readonly PageLayout[], content: Point, axis: LayoutAxis = 'y'): PageLayout | undefined {
+  const value = axis === 'y' ? content.y : content.x;
   let best: PageLayout | undefined;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (const item of items) {
-    if (y >= item.top && y <= item.top + item.height) return item;
-    const d = y < item.top ? item.top - y : y - (item.top + item.height);
+    const start = mainStart(item, axis);
+    const end = start + mainSize(item, axis);
+    if (value >= start && value <= end) return item;
+    const d = value < start ? start - value : value - end;
     if (d < bestDistance) {
       bestDistance = d;
       best = item;

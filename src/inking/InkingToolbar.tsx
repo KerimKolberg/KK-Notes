@@ -6,10 +6,12 @@ import {
   MIN_STROKE_SIZE,
   STROKE_PATTERNS,
 } from './constants';
+import { BRUSHES } from './engine/brushes';
 import styles from './InkingCanvas.module.css';
 import type {
   ArrowheadMode,
   BarrelButtonAction,
+  BrushId,
   CoordinatePlaneConfig,
   EraserEndAction,
   StrokePattern,
@@ -36,7 +38,7 @@ interface ToolDescriptor {
 const TOOLS: readonly ToolDescriptor[] = [
   { id: 'select', label: 'Select', hint: 'Select and move images, fill in forms' },
   { id: 'lasso', label: 'Lasso', hint: 'Draw a loop around strokes to move, scale, recolour or delete them' },
-  { id: 'pen', label: 'Pen', hint: 'Pressure-sensitive pen. Hold still at the end to snap to a shape.' },
+  { id: 'pen', label: 'Pen', hint: 'Pressure-sensitive pen with selectable brushes. Hold still at the end to snap to a shape.' },
   { id: 'highlighter', label: 'Highlighter', hint: 'Translucent multiply highlighter' },
   { id: 'laser-pointer', label: 'Laser', hint: 'Disappearing pointer trail. Nothing is added to the page.' },
   { id: 'line', label: 'Line', hint: 'Drag a straight line or vector' },
@@ -74,6 +76,7 @@ export const InkingToolbar = memo(function InkingToolbar({
     eraserEnd: useId(),
     size: useId(),
     color: useId(),
+    brush: useId(),
     touch: useId(),
     pattern: useId(),
     divisions: useId(),
@@ -89,6 +92,7 @@ export const InkingToolbar = memo(function InkingToolbar({
   const activeColor = laser ? settings.laserColor : settings.color;
   const setActiveColor = (color: string): void => onSettingsChange(laser ? { laserColor: color } : { color });
   const colorDisabled = !hasColor(settings.tool) || (laser && settings.laserRainbow);
+  const brush = BRUSHES.find((b) => b.id === settings.brush) ?? BRUSHES[0];
 
   return (
     <div className={styles.toolbar} role="toolbar" aria-label="Inking tools">
@@ -154,6 +158,29 @@ export const InkingToolbar = memo(function InkingToolbar({
           />
           <span className={styles.sizeValue}>{settings.size}px</span>
         </label>
+
+        <span className={styles.divider} aria-hidden="true" />
+
+        <div className={styles.group} aria-label="Brush">
+          <label htmlFor={ids.brush} className={styles.srOnly}>
+            Pen brush
+          </label>
+          <select
+            id={ids.brush}
+            className={styles.select}
+            value={settings.brush}
+            disabled={settings.tool !== 'pen'}
+            title={settings.tool === 'pen' ? brush?.hint : 'Select the pen to choose a brush'}
+            onChange={(e) => onSettingsChange({ brush: e.target.value as BrushId })}
+            data-brush-select
+          >
+            {BRUSHES.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
         <span className={styles.divider} aria-hidden="true" />
 

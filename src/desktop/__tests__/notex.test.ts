@@ -87,7 +87,7 @@ function richDocument(): Document {
     }),
   };
   const pageC: Page = createPage({ template: 'isometric', dimensions: A4_DIMENSIONS });
-  return { ...base, pages: [pageA, pageB, pageC].map((p, i) => ({ ...p, pageNumber: i + 1 })), zoom: 1.25, viewMode: 'single', activePageIndex: 1 };
+  return { ...base, pages: [pageA, pageB, pageC].map((p, i) => ({ ...p, pageNumber: i + 1 })), zoom: 1.25, viewMode: 'single-page', activePageIndex: 1 };
 }
 
 /** What a faithful round trip must reproduce: everything except undo history. */

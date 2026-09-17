@@ -21,25 +21,67 @@
  * midpoints of consecutive vertices, which hides the faceting of the polygon.
  */
 import { getStroke, type StrokeOptions } from 'perfect-freehand';
+import { easingForStyle, pencilPressure, strokeBrush, strokeTapers } from './brushes';
 import type { InkPoint, StrokeStyle } from '../types';
 
 export type Outline = ReadonlyArray<readonly [number, number]>;
 
-/** Map our persisted style onto perfect-freehand options. */
-export function toFreehandOptions(style: StrokeStyle, complete: boolean): StrokeOptions {
+type FreehandPoint = { x: number; y: number; pressure?: number };
+
+/**
+ * Map our persisted style onto perfect-freehand options. The brush (when the
+ * stroke has one) supplies the pressure→radius easing, whether the ends are
+ * capped or chiselled flat, and any velocity-dependent taper, which is why
+ * the samples are needed here.
+ */
+export interface CapOverrides {
+  /** Flat, uncapped ends, used where one chunk of a stroke meets the next. */
+  readonly start?: boolean;
+  readonly end?: boolean;
+}
+
+export function toFreehandOptions(
+  style: StrokeStyle,
+  complete: boolean,
+  points: readonly InkPoint[] = [],
+  caps: CapOverrides = {},
+): StrokeOptions {
+  const brush = strokeBrush(style);
+  const taper = strokeTapers(points, style);
+  const cap = brush?.cap !== 'flat';
+  const startCap = caps.start ?? cap;
+  const endCap = caps.end ?? cap;
   return {
     size: style.size,
     thinning: style.thinning,
     smoothing: style.smoothing,
     streamline: style.streamline,
     simulatePressure: style.simulatePressure,
-    easing: (t) => t,
-    start: { cap: true, taper: style.taperStart },
-    end: { cap: true, taper: style.taperEnd },
+    easing: easingForStyle(style),
+    start: { cap: startCap, taper: startCap ? taper.start : 0 },
+    end: { cap: endCap, taper: endCap ? taper.end : 0 },
     // `last: false` while the pen is down: the end is left "open" so the live
     // preview doesn't flash a cap that moves every frame.
     last: complete,
   };
+}
+
+/**
+ * Samples as perfect-freehand wants them. Brushes that respond to tilt fold
+ * the lean of the stylus into the pressure, so a flat pencil draws broader.
+ */
+export function freehandSamples(points: readonly InkPoint[], style: StrokeStyle): readonly FreehandPoint[] {
+  const brush = strokeBrush(style);
+  if (!brush || brush.tiltResponse === 0) return points as readonly FreehandPoint[];
+  let tilted = false;
+  for (const p of points) {
+    if (p.tilt) {
+      tilted = true;
+      break;
+    }
+  }
+  if (!tilted) return points as readonly FreehandPoint[];
+  return points.map((p) => ({ x: p.x, y: p.y, pressure: pencilPressure(p.pressure, p.tilt ?? 0, brush.tiltResponse) }));
 }
 
 /** Compute the outline polygon for a set of input samples. */
@@ -47,21 +89,23 @@ export function getStrokeOutline(
   points: readonly InkPoint[],
   style: StrokeStyle,
   complete: boolean,
+  caps: CapOverrides = {},
 ): Outline {
   if (points.length === 0) return [];
   // perfect-freehand accepts `{x, y, pressure}` objects directly; InkPoint is
   // structurally compatible so no per-frame allocation is needed here.
-  return getStroke(points as { x: number; y: number; pressure?: number }[], toFreehandOptions(style, complete));
+  return getStroke(freehandSamples(points, style) as FreehandPoint[], toFreehandOptions(style, complete, points, caps));
 }
 
 /**
- * Convert an outline polygon to a smooth closed `Path2D`.
+ * Convert an outline polygon to a closed `Path2D`.
  *
- * Each vertex becomes the control point of a quadratic curve that ends at the
- * midpoint to the next vertex (the same construction perfect-freehand's docs
- * use for SVG paths).
+ * Smooth (the default): each vertex becomes the control point of a quadratic
+ * curve ending at the midpoint to the next vertex — the construction
+ * perfect-freehand's docs use for SVG paths. A ballpoint asks for `smooth:
+ * false` instead, keeping the polygon's own hard edges.
  */
-export function outlineToPath2D(outline: Outline): Path2D {
+export function outlineToPath2D(outline: Outline, smooth = true): Path2D {
   const path = new Path2D();
   const n = outline.length;
   if (n === 0) return path;
@@ -77,6 +121,14 @@ export function outlineToPath2D(outline: Outline): Path2D {
   }
 
   path.moveTo(first[0], first[1]);
+  if (!smooth) {
+    for (let i = 1; i < n; i++) {
+      const p = outline[i];
+      if (p) path.lineTo(p[0], p[1]);
+    }
+    path.closePath();
+    return path;
+  }
   for (let i = 0; i < n; i++) {
     const a = outline[i];
     const b = outline[(i + 1) % n];

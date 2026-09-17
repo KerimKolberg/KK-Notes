@@ -5,6 +5,7 @@ import { actionExportPdf } from '../../desktop/fileActions';
 import { FileMenu } from '../../desktop/FileMenu';
 import { MAX_ZOOM, MIN_ZOOM } from '../constants';
 import { selectIsDirty, useDocumentStore } from '../store';
+import type { ViewMode } from '../types';
 
 const button =
   'inline-flex h-9 min-w-9 items-center justify-center rounded-lg px-2.5 text-sm font-medium transition-colors ' +
@@ -12,6 +13,12 @@ const button =
   'dark:text-zinc-200 dark:hover:bg-zinc-800 ' +
   'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-500';
 const pressed = 'bg-zinc-900 text-white hover:bg-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-100';
+
+const VIEW_MODES: readonly { readonly id: ViewMode; readonly label: string; readonly hint: string }[] = [
+  { id: 'vertical-continuous', label: 'Vertical', hint: 'Scroll pages top to bottom' },
+  { id: 'horizontal-continuous', label: 'Horizontal', hint: 'Scroll pages left to right' },
+  { id: 'single-page', label: 'Single', hint: 'One page at a time' },
+];
 
 /** Title, page indicator, jump-to-page, view mode, zoom, the lock and the arranger toggle. */
 export function TopBar() {
@@ -112,12 +119,18 @@ export function TopBar() {
       </div>
 
       <div className="hidden items-center gap-1 sm:flex" role="group" aria-label="View mode">
-        <button type="button" className={`${button} ${viewMode === 'continuous' ? pressed : ''}`} aria-pressed={viewMode === 'continuous'} onClick={() => setViewMode('continuous')}>
-          Continuous
-        </button>
-        <button type="button" className={`${button} ${viewMode === 'single' ? pressed : ''}`} aria-pressed={viewMode === 'single'} onClick={() => setViewMode('single')}>
-          Single
-        </button>
+        {VIEW_MODES.map((mode) => (
+          <button
+            key={mode.id}
+            type="button"
+            className={`${button} ${viewMode === mode.id ? pressed : ''}`}
+            aria-pressed={viewMode === mode.id}
+            title={mode.hint}
+            onClick={() => setViewMode(mode.id)}
+          >
+            {mode.label}
+          </button>
+        ))}
       </div>
 
       <div className="hidden items-center gap-1 md:flex" role="group" aria-label="Zoom">

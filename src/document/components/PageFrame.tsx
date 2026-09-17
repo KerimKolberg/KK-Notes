@@ -77,7 +77,10 @@ export const PageFrame = memo(function PageFrame({
     [pageRef, page.id, setLassoSelection],
   );
   // Locked: the ink and media layers go inert so pointer input reaches the
-  // scroll container (and the form widgets above them) untouched.
+  // scroll container (and the form widgets above them) untouched. The laser
+  // pointer is the exception — it writes nothing to the document, so it stays
+  // usable for presenting, with pen and mouse only (one finger keeps panning).
+  const laserOnly = readOnly && currentTool === 'laser-pointer';
   const showSelection = !readOnly && lassoIds !== null && (currentTool === 'lasso' || currentTool === 'select');
 
   return (
@@ -119,7 +122,8 @@ export const PageFrame = memo(function PageFrame({
               onLassoComplete={onLassoComplete}
               hiddenStrokeIds={hiddenStrokeIds}
               currentTool={currentTool}
-              interactive={currentTool !== 'select' && !readOnly}
+              allowTouch={!readOnly}
+              interactive={currentTool !== 'select' && (!readOnly || laserOnly)}
               ariaLabel={`Page ${page.pageNumber} drawing surface`}
             />
           </div>

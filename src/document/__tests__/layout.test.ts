@@ -6,7 +6,7 @@ import {
   layoutPages,
   pageToContent,
   projectToPage,
-  scrollTopForPage,
+  scrollOffsetForPage,
   viewportToPagePoint,
   visibleRange,
 } from '../layout';
@@ -62,10 +62,10 @@ describe('visibleRange / currentPageIndex', () => {
     expect(currentPageIndex(items, 1147 - 320, 800)).toBe(0);
   });
 
-  it('scrollTopForPage aligns the page top below the padding', () => {
-    expect(scrollTopForPage(items, 0, 24)).toBe(0);
-    expect(scrollTopForPage(items, 1, 24)).toBe(1171 - 24);
-    expect(scrollTopForPage(items, 7, 24)).toBe(0);
+  it('scrollOffsetForPage aligns the page top below the padding', () => {
+    expect(scrollOffsetForPage(items, 0, 24)).toBe(0);
+    expect(scrollOffsetForPage(items, 1, 24)).toBe(1171 - 24);
+    expect(scrollOffsetForPage(items, 7, 24)).toBe(0);
   });
 });
 

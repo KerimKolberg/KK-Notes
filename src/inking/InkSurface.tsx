@@ -17,6 +17,8 @@ export interface InkSurfaceProps {
   /** Shared tool settings (read through a ref by the pointer pipeline). */
   settingsRef: RefObject<ToolSettings>;
   allowMouse?: boolean;
+  /** When false, finger input never inks here even with Touch Draw on (locked documents). */
+  allowTouch?: boolean;
   onCommitStroke: (stroke: Stroke) => void;
   onEraseStrokes: (ids: ReadonlySet<string>) => void;
   /** An accepted pointer began a stroke / erase / drag on this surface. */
@@ -58,6 +60,7 @@ export const InkSurface = memo(function InkSurface({
   strokes,
   settingsRef,
   allowMouse = true,
+  allowTouch = true,
   onCommitStroke,
   onEraseStrokes,
   onInteractionStart,
@@ -124,6 +127,7 @@ export const InkSurface = memo(function InkSurface({
     strokesRef,
     hiddenIdsRef,
     allowMouse,
+    allowTouch,
     contentScaleRef: zoomRef,
     ...(onInteractionStart ? { onInteractionStart } : {}),
     ...(onBarrelSelect ? { onBarrelSelect } : {}),

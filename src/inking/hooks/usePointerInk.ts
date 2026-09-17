@@ -13,6 +13,7 @@ import {
   penPresence,
   subscribeTouchGesture,
 } from '../engine/gestureState';
+import { tiltMagnitude } from '../engine/brushes';
 import { strokeHitBySegment } from '../engine/hitTest';
 import {
   appendLaserPoint,
@@ -67,6 +68,8 @@ export interface UsePointerInkOptions {
   /** Strokes temporarily hidden while the stroke eraser drags over them. */
   hiddenIdsRef: RefObject<Set<string>>;
   allowMouse: boolean;
+  /** When false, touch never inks, whatever Touch Draw says. */
+  allowTouch?: boolean;
   /**
    * CSS pixels per drawing unit (the page zoom). Pointer positions are divided
    * by this so strokes are stored in page-local units. Default 1.
@@ -181,10 +184,14 @@ type Session = InkSession | ShapeSession | EraseSession | LassoSession | LaserSe
  * `getBoundingClientRect` is viewport-relative) and undo the zoom.
  */
 function toInkPoint(e: PointerEvent, rect: DOMRect, scale: number): InkPoint {
+  // Tilt is only recorded when the digitiser reports it, so strokes from
+  // devices without it stay exactly as small as before.
+  const tilt = tiltMagnitude(e.tiltX, e.tiltY);
   return {
     x: (e.clientX - rect.left) / scale,
     y: (e.clientY - rect.top) / scale,
     pressure: normalizePressure(e.pressure),
+    ...(tilt > 0 ? { tilt } : {}),
   };
 }
 
@@ -525,7 +532,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       const pen = penPresence(now);
       const accepted = isPointerAccepted({
         pointerType,
-        touchDraw: settings.touchDraw,
+        touchDraw: settings.touchDraw && (opts.allowTouch ?? true),
         allowMouse: opts.allowMouse,
         penInProximity: pen.inProximity,
         msSincePen: pen.msSincePen,

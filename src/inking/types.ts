@@ -51,6 +51,13 @@ export type GeometricTool = Exclude<PersistentTool, 'eraser-pixel'>;
 /** Pointer classes we distinguish between. Unknown types are treated as mouse. */
 export type InkPointerType = 'pen' | 'touch' | 'mouse';
 
+/**
+ * Named pen preset (see `engine/brushes.ts`). Stored on a stroke so it keeps
+ * its character across saves; everything the preset implies is looked up from
+ * the id at paint time.
+ */
+export type BrushId = 'ballpoint' | 'fountain' | 'pencil' | 'marker' | 'brush';
+
 /** Line dash pattern, scaled by the stroke width at render time. */
 export type StrokePattern = 'solid' | 'dashed' | 'dotted' | 'dash-dot' | 'long-dash';
 
@@ -66,6 +73,11 @@ export interface Point {
 export interface InkPoint extends Point {
   /** Normalized pressure in (0, 1]. A raw `0` from the device is mapped to `DEFAULT_PRESSURE`. */
   readonly pressure: number;
+  /**
+   * Normalised stylus lean in 0..1 (0 upright, 1 flat), from `tiltX`/`tiltY`.
+   * Absent when the device reports no tilt, which keeps saved strokes small.
+   */
+  readonly tilt?: number;
 }
 
 /** Axis-aligned bounding box in CSS pixels. */
@@ -105,6 +117,8 @@ export interface StrokeStyle {
   readonly pattern: StrokePattern;
   /** Terminal decorators for open strokes. */
   readonly arrowheads: ArrowheadMode;
+  /** Pen preset this stroke was drawn with. Absent on strokes from other tools. */
+  readonly brush?: BrushId;
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +256,8 @@ export interface ToolSettings {
   size: number;
   /** When false, only pen (and optionally mouse) input draws. */
   touchDraw: boolean;
+  /** Pen preset used by the pen tool. */
+  brush: BrushId;
   /** Laser pointer colour, kept separate from the ink colour. */
   laserColor: string;
   /** Laser pointer: cycle the hue along the trail instead of using `laserColor`. */

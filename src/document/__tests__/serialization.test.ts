@@ -56,7 +56,7 @@ describe('document serialization', () => {
     doc = {
       ...doc,
       zoom: 1.5,
-      viewMode: 'single',
+      viewMode: 'single-page',
       activePageIndex: 1,
       pages: [appendStroke(appendStroke(first, freehand), plane), { ...second, template: 'isometric', backgroundColor: '#1c1c21' }],
     };
@@ -67,7 +67,7 @@ describe('document serialization', () => {
     expect(back.id).toBe(doc.id);
     expect(back.title).toBe('Signals');
     expect(back.zoom).toBe(1.5);
-    expect(back.viewMode).toBe('single');
+    expect(back.viewMode).toBe('single-page');
     expect(back.activePageIndex).toBe(1);
     expect(back.pages).toHaveLength(2);
     expect(back.pages[0]?.strokes).toEqual([freehand, plane]);
@@ -75,6 +75,42 @@ describe('document serialization', () => {
     expect(back.pages[0]?.redoStack).toEqual([]);
     expect(back.pages[1]).toMatchObject({ template: 'isometric', backgroundColor: '#1c1c21', pageNumber: 2 });
     expect(JSON.parse(json)).not.toHaveProperty('pages.0.undoStack');
+  });
+
+  it('round-trips the notebook cover, and omits it when there is none', () => {
+    const doc = createDocument(1, 'Field notes');
+    const cover = { title: 'Field notes', description: 'Summer 2026', coverColor: '#1e3a5f', textColor: '#f8fafc' };
+    const back = deserializeDocument(serializeDocument({ ...doc, cover }));
+    expect(back.cover).toEqual(cover);
+
+    const plain = serializeDocument(doc);
+    expect(JSON.parse(plain)).not.toHaveProperty('cover');
+    expect(deserializeDocument(plain).cover).toBeUndefined();
+  });
+
+  it('round-trips the template spacing of each page', () => {
+    const doc = createDocument(2);
+    const [first, second] = doc.pages;
+    const pages = [
+      { ...first!, template: 'ruled' as const, templateConfig: { ...first!.templateConfig, spacing: 26.5 } },
+      { ...second!, template: 'grid' as const, templateConfig: { ...second!.templateConfig, spacing: 18.9, strokeWidth: 0.75 } },
+    ];
+    const back = deserializeDocument(serializeDocument({ ...doc, pages }));
+    expect(back.pages[0]?.templateConfig.spacing).toBe(26.5);
+    expect(back.pages[1]?.templateConfig).toMatchObject({ spacing: 18.9, strokeWidth: 0.75 });
+  });
+
+  it('migrates the view mode of files written before horizontal scrolling', () => {
+    const doc = createDocument(1);
+    const legacy = (mode: string): string => {
+      const parsed: Record<string, unknown> = JSON.parse(serializeDocument(doc));
+      parsed.viewMode = mode;
+      return JSON.stringify(parsed);
+    };
+    expect(deserializeDocument(legacy('continuous')).viewMode).toBe('vertical-continuous');
+    expect(deserializeDocument(legacy('single')).viewMode).toBe('single-page');
+    expect(deserializeDocument(legacy('horizontal-continuous')).viewMode).toBe('horizontal-continuous');
+    expect(deserializeDocument(legacy('nonsense')).viewMode).toBe('vertical-continuous');
   });
 
   it('round-trips PDF-backed pages, storing the bytes once per source', () => {

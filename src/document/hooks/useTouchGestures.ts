@@ -165,7 +165,7 @@ export function useTouchGestures(options: UseTouchGesturesOptions): TouchGesture
       const rect = el.getBoundingClientRect();
       const offset = { x: start.mid.x - rect.left, y: start.mid.y - rect.top };
       const content = { x: offset.x + el.scrollLeft, y: offset.y + el.scrollTop };
-      const anchor = anchorForContentPoint(layoutRef.current.items, content, zoom, offset);
+      const anchor = anchorForContentPoint(layoutRef.current.items, content, zoom, offset, layoutRef.current.axis);
       state = {
         kind: 'pinch',
         ids: [a, b],

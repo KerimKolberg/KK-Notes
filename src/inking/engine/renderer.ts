@@ -12,6 +12,17 @@
  */
 import type { InkPoint, Point, Shape, Stroke, StrokePattern, StrokeStyle, CoordinatePlaneShape } from '../types';
 import type { AngleArc } from './angleHud';
+import {
+  GRAIN_TILE,
+  PENCIL_MAX_CHUNKS,
+  chunkRanges,
+  grainTileData,
+  meanPressureTilt,
+  pencilAlpha,
+  pencilWidthScale,
+  streamlinePoints,
+  strokeBrush,
+} from './brushes';
 import type { LaserRun } from './laser';
 import { TAU, normalizeRadians } from './angles';
 import {
@@ -68,11 +79,29 @@ export function dashArray(pattern: StrokePattern, width: number): number[] {
   }
 }
 
+/**
+ * One painting operation of a stroke. `fill` is the body or an arrowhead,
+ * `texture` fills the same path with the brush's grain pattern, and `bleed`
+ * strokes a soft wide edge around it (marker / wet brush).
+ */
+interface PlanPass {
+  readonly path: Path2D;
+  readonly kind: 'fill' | 'texture' | 'bleed';
+  /** Multiplies the style's opacity. */
+  readonly alpha: number;
+  /** `bleed` only: line width in drawing units. */
+  readonly width?: number;
+}
+
 interface RenderPlan {
-  /** Filled with the stroke colour: solid freehand bodies and arrowheads. */
-  readonly fills: readonly Path2D[];
+  readonly passes: readonly PlanPass[];
   /** Stroked with the line width and dash pattern. */
   readonly outline: Path2D | null;
+}
+
+/** Plain body fill, the shape of every stroke before brushes got involved. */
+function fillPass(path: Path2D, alpha = 1): PlanPass {
+  return { path, kind: 'fill', alpha };
 }
 
 const planCache = new WeakMap<Stroke, RenderPlan>();
@@ -150,44 +179,143 @@ export function freehandCentreline(points: readonly InkPoint[], style: StrokeSty
   return resamplePolyline(simplified, Math.max(1.5, style.size * 0.5));
 }
 
+/**
+ * The body of a freehand stroke, as the passes its brush asks for:
+ *
+ * - a pencil is painted in overlapping chunks, each with its own opacity
+ *   taken from the pressure and tilt of the samples in it, and filled with
+ *   the grain pattern instead of a flat colour;
+ * - a marker or wet brush gets a wide, low-alpha edge pass before the body,
+ *   which reads as ink bleeding into the paper;
+ * - everything else is the single filled outline it always was.
+ */
+function freehandBody(points: readonly InkPoint[], style: StrokeStyle, complete: boolean): PlanPass[] {
+  const brush = strokeBrush(style);
+  const smooth = brush ? brush.smoothOutline : true;
+  if (brush?.texture === 'pencil') {
+    const passes: PlanPass[] = [];
+    // Smooth once for the whole stroke, then let each chunk take its samples
+    // as they are, so neighbouring chunks share their boundary exactly.
+    const smoothed = streamlinePoints(points, style.streamline);
+    const chunked = { ...style, streamline: 0 };
+    const ranges = chunkRanges(smoothed.length, PENCIL_MAX_CHUNKS);
+    ranges.forEach(([start, end], i) => {
+      const slice = smoothed.slice(start, end);
+      const { pressure, tilt } = meanPressureTilt(slice);
+      // The lean of the pencil over this run widens the nib and lightens it.
+      const scale = pencilWidthScale(tilt, brush.tiltResponse);
+      const chunkStyle = scale === 1 ? chunked : { ...chunked, size: style.size * scale };
+      // Interior ends are flat and untapered, so neighbouring chunks tile edge
+      // to edge: rounded ends would overlap and paint that seam twice.
+      const path = outlineToPath2D(
+        getStrokeOutline(slice, chunkStyle, complete || end < smoothed.length, {
+          ...(i > 0 ? { start: false } : {}),
+          ...(i < ranges.length - 1 ? { end: false } : {}),
+        }),
+        smooth,
+      );
+      passes.push({ path, kind: 'texture', alpha: pencilAlpha(pressure, tilt, brush.tiltResponse) });
+    });
+    if (passes.length > 0) return passes;
+  }
+  const path = outlineToPath2D(getStrokeOutline(points, style, complete), smooth);
+  const passes: PlanPass[] = [];
+  if (brush && brush.bleed > 0) {
+    // Two graduated passes under the body: a faint wide halo and a stronger
+    // narrow one, so the edge fades out instead of ending in a hard band.
+    const width = style.size * brush.bleed * 2;
+    passes.push({ path, kind: 'bleed', alpha: brush.bleedAlpha * 0.5, width });
+    passes.push({ path, kind: 'bleed', alpha: brush.bleedAlpha, width: width * 0.5 });
+  }
+  passes.push(fillPass(path));
+  return passes;
+}
+
 function buildFreehandPlan(points: readonly InkPoint[], style: StrokeStyle, complete: boolean): RenderPlan {
   const isEraser = style.compositeOperation === 'destination-out';
   if (isEraser || (style.pattern === 'solid' && style.arrowheads === 'none')) {
-    return { fills: [outlineToPath2D(getStrokeOutline(points, style, complete))], outline: null };
+    return { passes: freehandBody(points, style, complete), outline: null };
   }
-  const arrows = arrowheadFills(points, style);
+  const arrows = arrowheadFills(points, style).map((path) => fillPass(path));
   if (style.pattern === 'solid') {
-    return { fills: [outlineToPath2D(getStrokeOutline(points, style, complete)), ...arrows], outline: null };
+    return { passes: [...freehandBody(points, style, complete), ...arrows], outline: null };
   }
-  return { fills: arrows, outline: polylinePath(trimForArrowheads(freehandCentreline(points, style), style)) };
+  return { passes: arrows, outline: polylinePath(trimForArrowheads(freehandCentreline(points, style), style)) };
 }
 
 function buildShapePlan(shape: Shape, style: StrokeStyle): RenderPlan {
   switch (shape.type) {
     case 'line': {
       const pts = [shape.from, shape.to];
-      return { fills: arrowheadFills(pts, style), outline: polylinePath(trimForArrowheads(pts, style)) };
+      return { passes: arrowheadFills(pts, style).map((p) => fillPass(p)), outline: polylinePath(trimForArrowheads(pts, style)) };
     }
     case 'polyline':
       return {
-        fills: arrowheadFills(shape.points, style),
+        passes: arrowheadFills(shape.points, style).map((p) => fillPass(p)),
         outline: polylinePath(trimForArrowheads(shape.points, style)),
       };
     case 'polygon':
-      return { fills: [], outline: polylinePath(shape.points, true) };
+      return { passes: [], outline: polylinePath(shape.points, true) };
     case 'rectangle':
-      return { fills: [], outline: polylinePath(rectangleCorners(shape), true) };
+      return { passes: [], outline: polylinePath(rectangleCorners(shape), true) };
     case 'ellipse': {
       const path = new Path2D();
       path.ellipse(shape.center.x, shape.center.y, shape.radiusX, shape.radiusY, shape.rotation, 0, TAU);
-      return { fills: [], outline: path };
+      return { passes: [], outline: path };
     }
     case 'heart':
-      return { fills: [], outline: outlineToPath2D(heartPoints(shape).map((p) => [p.x, p.y] as const)) };
+      return { passes: [], outline: outlineToPath2D(heartPoints(shape).map((p) => [p.x, p.y] as const)) };
     case 'coordinate-plane':
       // Drawn directly: it needs several line widths and text.
-      return { fills: [], outline: null };
+      return { passes: [], outline: null };
   }
+}
+
+/**
+ * Grain tiles, one per colour: white noise masked to the stroke colour. Built
+ * lazily so importing the renderer stays safe where no canvas exists (tests),
+ * and capped because a tile is only 64² px but there is no reason to keep one
+ * per colour the user ever tried.
+ */
+const grainTiles = new Map<string, CanvasImageSource | null>();
+const MAX_GRAIN_TILES = 12;
+
+function createTileCanvas(size: number): { canvas: CanvasImageSource; ctx: InkContext } | null {
+  if (typeof OffscreenCanvas !== 'undefined') {
+    const canvas = new OffscreenCanvas(size, size);
+    const ctx = canvas.getContext('2d');
+    return ctx ? { canvas, ctx } : null;
+  }
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  return ctx ? { canvas, ctx } : null;
+}
+
+function grainTile(color: string): CanvasImageSource | null {
+  const cached = grainTiles.get(color);
+  if (cached !== undefined) return cached;
+  let tile: CanvasImageSource | null = null;
+  const made = createTileCanvas(GRAIN_TILE);
+  if (made) {
+    const image = new ImageData(grainTileData(), GRAIN_TILE, GRAIN_TILE);
+    made.ctx.putImageData(image, 0, 0);
+    // Tint the mask: keep the noise alpha, replace the white with the ink.
+    made.ctx.globalCompositeOperation = 'source-in';
+    made.ctx.fillStyle = color;
+    made.ctx.fillRect(0, 0, GRAIN_TILE, GRAIN_TILE);
+    tile = made.canvas;
+  }
+  if (grainTiles.size >= MAX_GRAIN_TILES) grainTiles.clear();
+  grainTiles.set(color, tile);
+  return tile;
+}
+
+function grainPattern(ctx: InkContext, color: string): CanvasPattern | null {
+  const tile = grainTile(color);
+  return tile ? ctx.createPattern(tile, 'repeat') : null;
 }
 
 function paintPlan(ctx: InkContext, plan: RenderPlan, style: StrokeStyle): void {
@@ -204,9 +332,22 @@ function paintPlan(ctx: InkContext, plan: RenderPlan, style: StrokeStyle): void 
     ctx.stroke(plan.outline);
     ctx.setLineDash([]);
   }
-  for (const fill of plan.fills) {
+  for (const pass of plan.passes) {
+    ctx.globalAlpha = Math.min(1, style.opacity * pass.alpha);
+    if (pass.kind === 'bleed') {
+      ctx.lineWidth = pass.width ?? style.size * 0.2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.setLineDash([]);
+      ctx.stroke(pass.path);
+      continue;
+    }
+    if (pass.kind === 'texture') {
+      ctx.fillStyle = grainPattern(ctx, style.color) ?? style.color;
+    }
     // Outlines self-intersect at sharp turns; nonzero winding keeps them solid.
-    ctx.fill(fill, 'nonzero');
+    ctx.fill(pass.path, 'nonzero');
+    if (pass.kind === 'texture') ctx.fillStyle = style.color;
   }
   ctx.restore();
 }

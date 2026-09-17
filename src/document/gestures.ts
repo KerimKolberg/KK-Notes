@@ -5,7 +5,7 @@
  */
 import type { Point } from '../inking/types';
 import { MAX_ZOOM, MIN_ZOOM } from './constants';
-import { clampZoom, itemAtContentY, pageToContent, type PageLayout } from './layout';
+import { clampZoom, itemAtContent, pageToContent, type LayoutAxis, type PageLayout } from './layout';
 
 export function centroid(a: Point, b: Point): Point {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
@@ -87,14 +87,15 @@ export interface GestureAnchor {
   readonly offset: Point;
 }
 
-/** The page point under a scroll-content position (pages sit in a single column). */
+/** The page point under a scroll-content position (pages sit in a single row or column). */
 export function anchorForContentPoint(
   items: readonly PageLayout[],
   content: Point,
   zoom: number,
   offset: Point,
+  axis: LayoutAxis = 'y',
 ): GestureAnchor | null {
-  const item = itemAtContentY(items, content.y);
+  const item = itemAtContent(items, content, axis);
   if (!item || zoom <= 0) return null;
   return {
     itemIndex: items.indexOf(item),

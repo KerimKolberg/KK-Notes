@@ -42,6 +42,7 @@ import {
   withStrokes,
 } from './operations';
 import type {
+  Cover,
   Document,
   FormValue,
   ImageLayer,
@@ -81,6 +82,7 @@ export interface DocumentStore {
   /** Content as of the last save / load; view state (zoom, scroll) is not part of it. */
   savedPages: readonly Page[] | null;
   savedTitle: string | null;
+  savedCover: Cover | null | undefined;
 
   // navigation / view
   setActivePage: (index: number) => void;
@@ -104,6 +106,11 @@ export interface DocumentStore {
   movePage: (from: number, to: number) => void;
   setPageTemplate: (target: PageTarget, template: PageTemplate, config?: Partial<TemplateConfig>) => void;
   setPageBackground: (target: PageTarget, color: string) => void;
+  /** Patch the template's line spacing / colour / weight. */
+  setTemplateConfig: (target: PageTarget, patch: Partial<TemplateConfig>) => void;
+  /** Add, replace or (with `null`) remove the notebook cover. */
+  setCover: (cover: Cover | null) => void;
+  updateCover: (patch: Partial<Cover>) => void;
 
   // ink (keyed by page id so a stale index can never write to the wrong page)
   commitStroke: (pageId: string, stroke: Stroke) => void;
@@ -153,7 +160,11 @@ function edit(
 
 /** True when the document content differs from the last saved / loaded state. */
 export function selectIsDirty(s: DocumentStore): boolean {
-  return s.document.pages !== s.savedPages || s.document.title !== s.savedTitle;
+  return (
+    s.document.pages !== s.savedPages ||
+    s.document.title !== s.savedTitle ||
+    s.document.cover !== s.savedCover
+  );
 }
 
 function updatePageById(doc: Document, pageId: string, fn: (page: Page) => Page): Document {
@@ -191,6 +202,7 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
   filePath: null,
   savedPages: initialDocument.pages,
   savedTitle: initialDocument.title,
+  savedCover: initialDocument.cover,
 
   setActivePage: (index) =>
     set((s) => {
@@ -319,6 +331,28 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
   setPageBackground: (target, color) =>
     set(edit((s) => ({ document: updateTargets(s.document, target, (page) => ({ ...page, backgroundColor: color })) }))),
 
+  setTemplateConfig: (target, patch) =>
+    set(edit((s) => ({
+      document: updateTargets(s.document, target, (page) => ({
+        ...page,
+        templateConfig: { ...page.templateConfig, ...patch },
+      })),
+    }))),
+
+  setCover: (cover) =>
+    set(edit((s) => {
+      const { cover: current, ...rest } = s.document;
+      void current;
+      return { document: cover ? { ...s.document, cover } : rest };
+    })),
+
+  updateCover: (patch) =>
+    set(edit((s) => {
+      const current = s.document.cover;
+      if (!current) return s;
+      return { document: { ...s.document, cover: { ...current, ...patch } } };
+    })),
+
   commitStroke: (pageId, stroke) =>
     set(edit((s) => ({ document: updatePageById(s.document, pageId, (page) => appendStroke(page, stroke)) }))),
 
@@ -428,6 +462,7 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
       filePath: path,
       savedPages: doc.pages,
       savedTitle: doc.title,
+      savedCover: doc.cover,
     }),
 
   newDocument: () => {
@@ -440,6 +475,7 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
       filePath: null,
       savedPages: doc.pages,
       savedTitle: doc.title,
+      savedCover: doc.cover,
     });
   },
 
@@ -449,6 +485,7 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
     set((s) => ({
       savedPages: s.document.pages,
       savedTitle: s.document.title,
+      savedCover: s.document.cover,
       ...(path !== undefined ? { filePath: path } : {}),
     })),
 }));

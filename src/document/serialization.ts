@@ -7,6 +7,7 @@ import { clampIndex, renumber } from './operations';
 import type {
   Document,
   Page,
+  ViewMode,
   PdfPageRef,
   SerializedDocument,
   SerializedPage,
@@ -68,6 +69,7 @@ export function toSerializable(doc: Document): SerializedDocument {
     version: 1,
     id: doc.id,
     title: doc.title,
+    ...(doc.cover ? { cover: doc.cover } : {}),
     viewMode: doc.viewMode,
     zoom: doc.zoom,
     activePageIndex: doc.activePageIndex,
@@ -113,6 +115,19 @@ export function fromSerializablePage(
   };
 }
 
+/** Accept the legacy two-mode values written before horizontal scrolling. */
+export function normalizeViewMode(value: unknown): ViewMode {
+  switch (value) {
+    case 'horizontal-continuous':
+      return 'horizontal-continuous';
+    case 'single-page':
+    case 'single':
+      return 'single-page';
+    default:
+      return 'vertical-continuous';
+  }
+}
+
 export function fromSerializable(data: SerializedDocument): Document {
   if (data.version !== 1) throw new Error(`Unsupported document version ${String(data.version)}`);
   if (!Array.isArray(data.pages) || data.pages.length === 0) throw new Error('A document needs at least one page');
@@ -125,9 +140,10 @@ export function fromSerializable(data: SerializedDocument): Document {
   return {
     id: data.id,
     title: data.title,
+    ...(data.cover ? { cover: data.cover } : {}),
     pages,
     activePageIndex: clampIndex(data.activePageIndex, pages.length),
-    viewMode: data.viewMode === 'single' ? 'single' : 'continuous',
+    viewMode: normalizeViewMode(data.viewMode),
     zoom,
   };
 }
