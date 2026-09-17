@@ -5,8 +5,9 @@ inking engine (`src/inking/`) with palm rejection, pressure-sensitive strokes
 via [perfect-freehand], STEM shape tools and hold-to-snap, hosted in a
 multi-page document system (`src/document/`) with procedural page templates,
 canvas virtualisation, a Samsung Notes-style page arranger, an image layer,
-a lasso selection tool, two-finger pan / pinch-zoom navigation, and PDF
-import / fillable AcroForms / vector PDF export (`src/pdf/`). Styled
+a lasso selection tool, two-finger pan / pinch-zoom navigation, a read-only
+lock, a disappearing laser pointer, and PDF import / fillable AcroForms /
+vector PDF export (`src/pdf/`). Styled
 with Tailwind CSS and follows the system light/dark theme.
 
 ```bash
@@ -100,8 +101,8 @@ the build if either library ends up in the critical path.
 
 **State.** A Zustand store (`store.ts`) owns the `Document` (pages, active
 index, view mode, zoom), a `scrollRequest` counter that asks the viewer to
-scroll, the arranger's open state, and the image / lasso selections;
-`toolStore.ts` holds the shared tool settings. All structural edits are pure functions in `operations.ts`
+scroll, the arranger's open state, the read-only lock, and the image /
+lasso selections; `toolStore.ts` holds the shared tool settings. All structural edits are pure functions in `operations.ts`
 (reorder, insert, duplicate with deep-cloned strokes, delete with a one-page
 guard, snapshot undo/redo per page) so they can be unit-tested without React.
 The inking render loop never subscribes to the store; a surface only calls
@@ -251,6 +252,62 @@ translation with preview, undo / redo, duplicate, recolour, width, corner
 scaling, delete, and the two-finger gestures including the Touch Draw and
 resting-palm cases.
 
+## Presenting: read-only lock and laser pointer
+
+**Read-only lock.** The top bar's **Lock** toggle puts the document into
+read-only mode. The lock is a store invariant rather than a UI convention:
+every action that changes document content is wrapped in a guard
+(`edit()` in `store.ts`), so while it is set, nothing — a stray pointer
+event, a keyboard shortcut, a dropped file, a page operation — can modify
+the document. What stays available is everything that is not an edit:
+
+- continuous scrolling and single-page navigation with wheel, scrollbar,
+  one finger and two fingers, plus the top bar's jump / prev / next, view
+  mode and zoom (a locked page never inks, so one finger pans it even with
+  Touch Draw on);
+- **AcroForm widgets**, which keep taking input: filling in a form is not
+  an edit to the document's ink, and the pen stops being forwarded to the
+  ink canvas so it operates the widgets directly;
+- the page arranger for navigation, with its editing controls (add,
+  duplicate, delete, reorder, template, background) disabled.
+
+The floating ink toolbar is replaced by a read-only banner, the ink and
+media layers go inert (`pointer-events: none`, so pointer input reaches the
+scroll container), selections are dropped, and undo / redo / delete
+shortcuts are switched off. Locking is view state: it never marks the
+document dirty and is not part of a saved file.
+
+**Laser pointer.** A `laser-pointer` tool for pointing at things while
+presenting. It is *ephemeral*: `isEphemeralTool()` marks it, `appendStroke`
+refuses it, and `StrokeBuilder` cannot even accumulate one, so its marks
+exist on the live preview canvas only — never in a stroke array, an undo
+stack, a `.notex` file or a PDF export.
+
+The trail (`src/inking/engine/laser.ts`) is a list of timestamped samples,
+each carrying the colour and width it was drawn with. A sample's opacity
+decays linearly to nothing over `LASER_FADE_MS` (2.7 s) and is then
+dropped, which produces both behaviours from one rule: while the pen keeps
+moving the tail dissolves 2.7 s behind the tip, and after `pointerup` the
+last sample — drawn at the moment of release — takes exactly 2.7 s to
+vanish. Widths follow pressure around the toolbar's width, the laser keeps
+its own colour (so switching tools never disturbs the ink colour), and
+**Rainbow** cycles the hue along the trail. Rendering batches the trail
+into a few dozen polylines (`laserRuns`) drawn in three passes — glow,
+beam, bright core — and the surface keeps its own animation frame running
+until the last sample expires.
+
+Verification: `src/inking/__tests__/laser.test.ts` (fade curve, pruning,
+sampling, rainbow hues, run batching, the ephemeral-tool set),
+`src/document/__tests__/laserPersistence.test.ts` (a laser stroke changes
+neither the stroke array nor the history, and never appears in a save) and
+`src/document/__tests__/readOnly.test.ts` (every content action is a no-op
+while locked; navigation, zoom and form values still work). A headless
+Chromium suite draws with the laser and measures the live canvas fading to
+zero while the committed canvas stays empty, then locks the document and
+checks that the pen cannot draw while the wheel and a one-finger drag still
+scroll, the arranger's edit controls are disabled and form fields still
+accept input.
+
 ## PDF, forms and media (`src/pdf/`, `src/document/media.ts`)
 
 **Page layer stack.** Every page frame is an isolated stacking context with,
@@ -358,6 +415,7 @@ Keyboard: `Ctrl/⌘+Z` undo, `Ctrl/⌘+Shift+Z` or `Ctrl+Y` redo.
 | Lasso | freehand loop | selects enclosed strokes (see above) |
 | Pen | freehand | pressure-thinned perfect-freehand polygon |
 | Highlighter | freehand | 4× width, `multiply` at 35 % |
+| Laser | freehand | glowing trail that fades out in 2.7 s, never committed |
 | Line | drag | straight segment / vector |
 | Axes | drag from the origin | coordinate plane |
 | Stroke eraser | sweep | removes whole strokes |
@@ -495,6 +553,7 @@ src/inking/
 │   ├── history.ts          undo/redo reducer
 │   ├── pointerPolicy.ts    palm rejection, pressure, button mapping
 │   ├── lasso.ts            point-in-polygon selection, stroke transforms, handle geometry
+│   ├── laser.ts            disappearing pointer trail: fade, rainbow, run batching
 │   ├── gestureState.ts     shared two-finger-gesture flag and pen presence
 │   ├── toolStyles.ts       per-tool StrokeStyle
 │   ├── strokeBuilder.ts    in-progress freehand accumulator

@@ -52,6 +52,7 @@ export const PageFrame = memo(function PageFrame({
   const setLassoSelection = useDocumentStore((s) => s.setLassoSelection);
   const clearLassoSelection = useDocumentStore((s) => s.clearLassoSelection);
   const lassoIds = useDocumentStore((s) => (s.lassoSelection?.pageId === page.id ? s.lassoSelection.strokeIds : null));
+  const readOnly = useDocumentStore((s) => s.readOnly);
   const pageRef = useLatestRef(page);
   /** Strokes the selection layer is previewing; the ink layer leaves them out meanwhile. */
   const [hiddenStrokeIds, setHiddenStrokeIds] = useState<ReadonlySet<string> | null>(null);
@@ -75,7 +76,9 @@ export const PageFrame = memo(function PageFrame({
     },
     [pageRef, page.id, setLassoSelection],
   );
-  const showSelection = lassoIds !== null && (currentTool === 'lasso' || currentTool === 'select');
+  // Locked: the ink and media layers go inert so pointer input reaches the
+  // scroll container (and the form widgets above them) untouched.
+  const showSelection = !readOnly && lassoIds !== null && (currentTool === 'lasso' || currentTool === 'select');
 
   return (
     <div
@@ -99,7 +102,7 @@ export const PageFrame = memo(function PageFrame({
       {mode === 'active' ? (
         <>
           {page.pdf && <PdfBackground page={page} cssWidth={layout.width} />}
-          <MediaLayer page={page} zoom={zoom} active={currentTool === 'select'} />
+          <MediaLayer page={page} zoom={zoom} active={currentTool === 'select' && !readOnly} />
           {/* The wrapper only provides the z-index; the surface itself decides whether it takes pointer input. */}
           <div className="pointer-events-none absolute inset-0 z-20">
             <InkSurface
@@ -116,12 +119,12 @@ export const PageFrame = memo(function PageFrame({
               onLassoComplete={onLassoComplete}
               hiddenStrokeIds={hiddenStrokeIds}
               currentTool={currentTool}
-              interactive={currentTool !== 'select'}
+              interactive={currentTool !== 'select' && !readOnly}
               ariaLabel={`Page ${page.pageNumber} drawing surface`}
             />
           </div>
           {showSelection && <SelectionLayer page={page} zoom={zoom} strokeIds={lassoIds} onPreviewHidden={setHiddenStrokeIds} />}
-          <FormOverlay page={page} zoom={zoom} tool={currentTool} />
+          <FormOverlay page={page} zoom={zoom} tool={currentTool} readOnly={readOnly} />
         </>
       ) : (
         <PageSnapshot page={page} cssWidth={layout.width} cssHeight={layout.height} />

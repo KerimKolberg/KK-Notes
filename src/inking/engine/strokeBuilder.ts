@@ -1,4 +1,12 @@
-import type { BBox, FreehandStroke, FreehandTool, InkPoint, InkPointerType, Point, StrokeStyle } from '../types';
+import type {
+  BBox,
+  FreehandStroke,
+  InkPoint,
+  InkPointerType,
+  PersistentFreehandTool,
+  Point,
+  StrokeStyle,
+} from '../types';
 import { bboxFromPoints } from './geometry';
 import { createStrokeId } from './ids';
 import { arrowheadLength } from './shapes';
@@ -17,7 +25,8 @@ export function freehandBBox(points: readonly Point[], style: StrokeStyle): BBox
 /**
  * Accumulates samples for the freehand stroke currently being drawn and
  * tracks its bounding box incrementally, so `build()` is O(1) apart from
- * freezing.
+ * freezing. Ephemeral tools (the laser pointer) never use it — nothing they
+ * draw may become a stroke.
  */
 export class StrokeBuilder {
   readonly id: string = createStrokeId();
@@ -29,7 +38,7 @@ export class StrokeBuilder {
   private maxY = Number.NEGATIVE_INFINITY;
 
   constructor(
-    readonly tool: FreehandTool,
+    readonly tool: PersistentFreehandTool,
     readonly style: StrokeStyle,
     readonly pointerType: InkPointerType,
   ) {}

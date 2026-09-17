@@ -74,6 +74,8 @@ export interface DocumentStore {
   exporting: boolean;
   selectedImage: ImageSelection | null;
   lassoSelection: LassoSelection | null;
+  /** Lock / read-only mode: navigation and form filling only, no content edits. */
+  readOnly: boolean;
   /** Native path of the open `.notex` file, if any. */
   filePath: string | null;
   /** Content as of the last save / load; view state (zoom, scroll) is not part of it. */
@@ -88,6 +90,8 @@ export interface DocumentStore {
   zoomBy: (steps: number) => void;
   setTitle: (title: string) => void;
   setArrangerOpen: (open: boolean) => void;
+  setReadOnly: (readOnly: boolean) => void;
+  toggleReadOnly: () => void;
   setImportDialogOpen: (open: boolean) => void;
   setExporting: (exporting: boolean) => void;
 
@@ -134,6 +138,19 @@ export interface DocumentStore {
   markSaved: (path?: string | null) => void;
 }
 
+/**
+ * Wrap a state updater so it becomes a no-op while the document is locked.
+ * Read-only mode is an invariant of the store, not a UI convention: every
+ * action that changes document content goes through this, so nothing short
+ * of unlocking can edit a locked document. Navigation, view state and
+ * AcroForm values are deliberately not wrapped.
+ */
+function edit(
+  update: (s: DocumentStore) => Partial<DocumentStore> | DocumentStore,
+): (s: DocumentStore) => Partial<DocumentStore> | DocumentStore {
+  return (s) => (s.readOnly ? s : update(s));
+}
+
 /** True when the document content differs from the last saved / loaded state. */
 export function selectIsDirty(s: DocumentStore): boolean {
   return s.document.pages !== s.savedPages || s.document.title !== s.savedTitle;
@@ -170,6 +187,7 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
   exporting: false,
   selectedImage: null,
   lassoSelection: null,
+  readOnly: false,
   filePath: null,
   savedPages: initialDocument.pages,
   savedTitle: initialDocument.title,
@@ -197,14 +215,20 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
 
   zoomBy: (steps) => set((s) => ({ document: { ...s.document, zoom: clampZoom(s.document.zoom + steps * ZOOM_STEP) } })),
 
-  setTitle: (title) => set((s) => ({ document: { ...s.document, title } })),
+  setTitle: (title) => set(edit((s) => ({ document: { ...s.document, title } }))),
 
   setArrangerOpen: (open) => set({ arrangerOpen: open }),
+
+  // Locking drops the editing selections; nothing can act on them any more.
+  setReadOnly: (readOnly) =>
+    set((s) => (s.readOnly === readOnly ? s : { readOnly, selectedImage: null, lassoSelection: null })),
+
+  toggleReadOnly: () => set((s) => ({ readOnly: !s.readOnly, selectedImage: null, lassoSelection: null })),
   setImportDialogOpen: (open) => set({ importDialogOpen: open }),
   setExporting: (exporting) => set({ exporting }),
 
   appendPages: (pages, at) =>
-    set((s) => {
+    set(edit((s) => {
       if (pages.length === 0) return s;
       const doc = s.document;
       const index = Math.min(Math.max(0, Math.trunc(at ?? doc.pages.length)), doc.pages.length);
@@ -213,10 +237,10 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
         next = insertPage(next, index + i, page);
       });
       return { document: { ...doc, pages: next, activePageIndex: index }, scrollRequest: s.scrollRequest + 1 };
-    }),
+    })),
 
   addPage: (position, referenceIndex) =>
-    set((s) => {
+    set(edit((s) => {
       const doc = s.document;
       const ref = clampIndex(referenceIndex ?? doc.activePageIndex, doc.pages.length);
       const reference = doc.pages[ref];
@@ -235,10 +259,10 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
         document: { ...doc, pages: insertPage(doc.pages, at, page), activePageIndex: at },
         scrollRequest: s.scrollRequest + 1,
       };
-    }),
+    })),
 
   duplicatePage: (index) =>
-    set((s) => {
+    set(edit((s) => {
       const doc = s.document;
       const i = clampIndex(index, doc.pages.length);
       const source = doc.pages[i];
@@ -247,10 +271,10 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
         document: { ...doc, pages: insertPage(doc.pages, i + 1, clonePage(source)), activePageIndex: i + 1 },
         scrollRequest: s.scrollRequest + 1,
       };
-    }),
+    })),
 
   deletePage: (index) =>
-    set((s) => {
+    set(edit((s) => {
       const doc = s.document;
       if (doc.pages.length <= 1) return s;
       const i = clampIndex(index, doc.pages.length);
@@ -264,10 +288,10 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
         lassoSelection: s.lassoSelection?.pageId === deletedId ? null : s.lassoSelection,
         selectedImage: s.selectedImage?.pageId === deletedId ? null : s.selectedImage,
       };
-    }),
+    })),
 
   movePage: (from, to) =>
-    set((s) => {
+    set(edit((s) => {
       const doc = s.document;
       const activeId = doc.pages[doc.activePageIndex]?.id ?? '';
       const pages = reorderPages(doc.pages, from, to);
@@ -277,10 +301,10 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
         document: { ...doc, pages, activePageIndex: indexOfPage(pages, activeId, doc.activePageIndex) },
         scrollRequest: s.scrollRequest + 1,
       };
-    }),
+    })),
 
   setPageTemplate: (target, template, config) =>
-    set((s) => ({
+    set(edit((s) => ({
       document: updateTargets(s.document, target, (page) => ({
         ...page,
         template,
@@ -290,56 +314,56 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
           ...config,
         },
       })),
-    })),
+    }))),
 
   setPageBackground: (target, color) =>
-    set((s) => ({ document: updateTargets(s.document, target, (page) => ({ ...page, backgroundColor: color })) })),
+    set(edit((s) => ({ document: updateTargets(s.document, target, (page) => ({ ...page, backgroundColor: color })) }))),
 
   commitStroke: (pageId, stroke) =>
-    set((s) => ({ document: updatePageById(s.document, pageId, (page) => appendStroke(page, stroke)) })),
+    set(edit((s) => ({ document: updatePageById(s.document, pageId, (page) => appendStroke(page, stroke)) }))),
 
   eraseStrokes: (pageId, ids) =>
-    set((s) => ({ document: updatePageById(s.document, pageId, (page) => removeStrokes(page, ids)) })),
+    set(edit((s) => ({ document: updatePageById(s.document, pageId, (page) => removeStrokes(page, ids)) }))),
 
   clearPage: (pageId) =>
-    set((s) => ({
+    set(edit((s) => ({
       document: updatePageById(s.document, pageId, clearPageStrokes),
       lassoSelection: s.lassoSelection?.pageId === pageId ? null : s.lassoSelection,
-    })),
+    }))),
 
-  undo: (pageId) => set((s) => ({ document: updatePageById(s.document, pageId, undoPage) })),
+  undo: (pageId) => set(edit((s) => ({ document: updatePageById(s.document, pageId, undoPage) }))),
 
-  redo: (pageId) => set((s) => ({ document: updatePageById(s.document, pageId, redoPage) })),
+  redo: (pageId) => set(edit((s) => ({ document: updatePageById(s.document, pageId, redoPage) }))),
 
   setFormValue: (pageId, name, value) =>
     set((s) => ({ document: updatePageById(s.document, pageId, (page) => withFormValue(page, name, value)) })),
 
   addImage: (pageId, image) =>
-    set((s) => ({
+    set(edit((s) => ({
       document: updatePageById(s.document, pageId, (page) => withImages(page, addImageToList(page.images, image))),
       selectedImage: { pageId, imageId: image.id },
-    })),
+    }))),
 
   updateImage: (pageId, imageId, patch) =>
-    set((s) => ({
+    set(edit((s) => ({
       document: updatePageById(s.document, pageId, (page) => withImages(page, updateImageInList(page.images, imageId, patch))),
-    })),
+    }))),
 
   removeImage: (pageId, imageId) =>
-    set((s) => ({
+    set(edit((s) => ({
       document: updatePageById(s.document, pageId, (page) => withImages(page, removeImageFromList(page.images, imageId))),
       selectedImage: s.selectedImage?.imageId === imageId ? null : s.selectedImage,
-    })),
+    }))),
 
   bringImageToFront: (pageId, imageId) =>
-    set((s) => ({
+    set(edit((s) => ({
       document: updatePageById(s.document, pageId, (page) => withImages(page, bringImageToFrontInList(page.images, imageId))),
-    })),
+    }))),
 
   sendImageToBack: (pageId, imageId) =>
-    set((s) => ({
+    set(edit((s) => ({
       document: updatePageById(s.document, pageId, (page) => withImages(page, sendImageToBackInList(page.images, imageId))),
-    })),
+    }))),
 
   selectImage: (selection) =>
     set((s) =>
@@ -347,20 +371,20 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
     ),
 
   setLassoSelection: (selection) =>
-    set((s) => (selection === null && s.lassoSelection === null ? s : { lassoSelection: selection })),
+    set(edit((s) => (selection === null && s.lassoSelection === null ? s : { lassoSelection: selection }))),
 
   clearLassoSelection: () => set((s) => (s.lassoSelection === null ? s : { lassoSelection: null })),
 
   transformSelection: (pageId, ids, transform) =>
-    set((s) => {
+    set(edit((s) => {
       const idSet = new Set(ids);
       return {
         document: updatePageById(s.document, pageId, (page) => withStrokes(page, transformStrokes(page.strokes, idSet, transform))),
       };
-    }),
+    })),
 
   restyleSelection: (pageId, ids, change) =>
-    set((s) => {
+    set(edit((s) => {
       const idSet = new Set(ids);
       return {
         document: updatePageById(s.document, pageId, (page) => {
@@ -368,10 +392,10 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
           return next.every((stroke, i) => stroke === page.strokes[i]) ? page : withStrokes(page, next);
         }),
       };
-    }),
+    })),
 
   duplicateSelection: (pageId, ids) =>
-    set((s) => {
+    set(edit((s) => {
       const idSet = new Set(ids);
       let copies: string[] = [];
       const document = updatePageById(s.document, pageId, (page) => {
@@ -381,10 +405,10 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
       });
       if (copies.length === 0) return s;
       return { document, lassoSelection: { pageId, strokeIds: copies } };
-    }),
+    })),
 
   deleteSelection: (pageId, ids) =>
-    set((s) => {
+    set(edit((s) => {
       const idSet = new Set(ids);
       return {
         document: updatePageById(s.document, pageId, (page) => {
@@ -393,7 +417,7 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
         }),
         lassoSelection: s.lassoSelection?.pageId === pageId ? null : s.lassoSelection,
       };
-    }),
+    })),
 
   loadDocument: (doc, path = null) =>
     set({

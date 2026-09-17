@@ -42,6 +42,7 @@ export function useMediaInput(onPdfDropped?: (file: File) => void) {
   const placeImage = useCallback(
     async (file: Blob, pageIndex: number | null, at: Point | null) => {
       const state = useDocumentStore.getState();
+      if (state.readOnly) return;
       const doc = state.document;
       const index = pageIndex ?? doc.activePageIndex;
       const page = doc.pages[index];

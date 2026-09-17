@@ -35,6 +35,7 @@ export function DocumentApp() {
       };
     }),
   );
+  const readOnly = useDocumentStore((s) => s.readOnly);
   const { undo, redo, clearPage } = useDocumentStore(
     useShallow((s) => ({ undo: s.undo, redo: s.redo, clearPage: s.clearPage })),
   );
@@ -42,13 +43,14 @@ export function DocumentApp() {
   const undoActive = useCallback(() => undo(activePageId), [undo, activePageId]);
   const redoActive = useCallback(() => redo(activePageId), [redo, activePageId]);
   const clearActive = useCallback(() => clearPage(activePageId), [clearPage, activePageId]);
-  useUndoRedoShortcuts(undoActive, redoActive);
+  useUndoRedoShortcuts(undoActive, redoActive, !readOnly);
   useDesktopIntegration();
 
   const importDialogOpen = useDocumentStore((s) => s.importDialogOpen);
 
   // Dropped PDFs import all their pages at the end of the document.
   const importDroppedPdf = useCallback((file: File) => {
+    if (useDocumentStore.getState().readOnly) return;
     void (async () => {
       const { loadPdfFile, buildPdfPages } = await import('../../pdf/import');
       const loaded = await loadPdfFile(file);
@@ -66,9 +68,9 @@ export function DocumentApp() {
   // Delete / Backspace removes the lasso selection or the selected image; Escape deselects.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      const { selectedImage, lassoSelection, removeImage, selectImage, deleteSelection, clearLassoSelection } =
+      const { selectedImage, lassoSelection, removeImage, selectImage, deleteSelection, clearLassoSelection, readOnly: locked } =
         useDocumentStore.getState();
-      if (isEditableTarget(e.target)) return;
+      if (locked || isEditableTarget(e.target)) return;
       const isDelete = e.key === 'Delete' || e.key === 'Backspace';
       if (lassoSelection) {
         if (isDelete) {
@@ -96,15 +98,25 @@ export function DocumentApp() {
       <TopBar />
       <div className="relative min-h-0 flex-1" onDragOver={onDragOver} onDrop={onDrop}>
         <DocumentViewer settingsRef={settingsRef} currentTool={settings.tool} />
-        <InkingToolbar
-          settings={settings}
-          onSettingsChange={updateSettings}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          onUndo={undoActive}
-          onRedo={redoActive}
-          onClear={clearActive}
-        />
+        {readOnly ? (
+          <p
+            className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-zinc-900/85 px-4 py-2 text-sm font-medium text-white shadow-lg backdrop-blur dark:bg-zinc-100/90 dark:text-zinc-900"
+            role="status"
+            data-read-only-banner
+          >
+            Read-only — unlock to edit
+          </p>
+        ) : (
+          <InkingToolbar
+            settings={settings}
+            onSettingsChange={updateSettings}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={undoActive}
+            onRedo={redoActive}
+            onClear={clearActive}
+          />
+        )}
       </div>
       <PageArranger />
       {importDialogOpen && (

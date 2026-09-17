@@ -8,6 +8,8 @@ export interface FormOverlayProps {
   page: Page;
   zoom: number;
   tool: ToolType;
+  /** Lock mode: form widgets stay usable, but the pen no longer draws over them. */
+  readOnly?: boolean;
 }
 
 const BASE_WIDGET: CSSProperties = {
@@ -123,9 +125,11 @@ const FormWidget = memo(function FormWidget({ pageId, field, values, onInput }: 
  * z-30 interactive AcroForm layer. Widgets are laid out in page units inside
  * a container scaled by the zoom. With a drawing tool active, a stylus
  * touching a widget is forwarded to the ink canvas so the pen can draw over
- * the whole page, while mouse and touch keep operating the controls.
+ * the whole page, while mouse and touch keep operating the controls. The
+ * layer stays live in read-only mode: filling in a form is not an edit to
+ * the document's ink.
  */
-export const FormOverlay = memo(function FormOverlay({ page, zoom, tool }: FormOverlayProps) {
+export const FormOverlay = memo(function FormOverlay({ page, zoom, tool, readOnly = false }: FormOverlayProps) {
   const setFormValue = useDocumentStore((s) => s.setFormValue);
 
   const onInput = useCallback(
@@ -140,7 +144,8 @@ export const FormOverlay = memo(function FormOverlay({ page, zoom, tool }: FormO
 
   const forwardPen = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (tool === 'select' || e.pointerType !== 'pen') return;
+      // Locked: nothing draws, so the pen operates the widget like a mouse.
+      if (readOnly || tool === 'select' || e.pointerType !== 'pen') return;
       const live = e.currentTarget.parentElement?.parentElement?.querySelector<HTMLCanvasElement>('canvas[data-layer="live"]');
       if (!live) return;
       e.preventDefault();
@@ -150,7 +155,7 @@ export const FormOverlay = memo(function FormOverlay({ page, zoom, tool }: FormO
       // so the rest of the stroke flows straight to the ink pipeline.
       live.dispatchEvent(new PointerEvent('pointerdown', e.nativeEvent));
     },
-    [tool],
+    [tool, readOnly],
   );
 
   if (page.formFields.length === 0) return null;

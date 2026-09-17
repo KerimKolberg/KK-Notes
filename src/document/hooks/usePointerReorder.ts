@@ -13,6 +13,8 @@ export interface UsePointerReorderOptions {
   readonly threshold?: number;
   /** Touch must be held this long before it can drag (so short swipes still scroll). */
   readonly touchHoldMs?: number;
+  /** Disable reordering (read-only mode); selection by click / keyboard still works. */
+  readonly disabled?: boolean;
 }
 
 export interface ReorderItemProps {
@@ -47,6 +49,7 @@ export function usePointerReorder({
   onSelect,
   threshold = 6,
   touchHoldMs = 250,
+  disabled = false,
 }: UsePointerReorderOptions): { drag: ReorderDragState | null; getItemProps: (index: number) => ReorderItemProps } {
   const [drag, setDrag] = useState<ReorderDragState | null>(null);
   const pressRef = useRef<Press | null>(null);
@@ -88,7 +91,7 @@ export function usePointerReorder({
         elements.current[index] = el;
       },
       onPointerDown: (e) => {
-        if (e.button !== 0 || pressRef.current) return;
+        if (disabled || e.button !== 0 || pressRef.current) return;
         const isTouch = e.pointerType === 'touch';
         const press: Press = {
           index,
@@ -152,7 +155,7 @@ export function usePointerReorder({
         onSelect(index);
       },
       onKeyDown: (e) => {
-        if (!e.altKey) return;
+        if (disabled || !e.altKey) return;
         if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
           e.preventDefault();
           if (index > 0) onMove(index, index - 1);
@@ -162,7 +165,7 @@ export function usePointerReorder({
         }
       },
     }),
-    [count, endPress, indexAt, onMove, onSelect, threshold, touchHoldMs],
+    [count, disabled, endPress, indexAt, onMove, onSelect, threshold, touchHoldMs],
   );
 
   return useMemo(() => ({ drag, getItemProps }), [drag, getItemProps]);

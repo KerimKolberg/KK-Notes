@@ -42,8 +42,12 @@ export interface UseTouchGesturesOptions {
   previewRef: RefObject<HTMLDivElement | null>;
   layoutRef: RefObject<DocumentLayout>;
   zoomRef: RefObject<number>;
-  /** Whether a single finger inks (then it must not pan). */
-  touchDrawRef: RefObject<boolean>;
+  /**
+   * Whether a single finger draws ink (then it must not pan). False while
+   * Touch Draw is off and while the document is locked, so a locked page
+   * always scrolls under one finger.
+   */
+  oneFingerInksRef: RefObject<boolean>;
   onCommit: (commit: TouchGestureCommit) => void;
 }
 
@@ -207,7 +211,7 @@ export function useTouchGestures(options: UseTouchGesturesOptions): TouchGesture
       }
       if (touches.size !== 1 || state !== null) return;
       const el = optionsRef.current.scrollRef.current;
-      if (!el || optionsRef.current.touchDrawRef.current || isNoPanTarget(e.target)) return;
+      if (!el || optionsRef.current.oneFingerInksRef.current || isNoPanTarget(e.target)) return;
       state = {
         kind: 'pan',
         pointerId: e.pointerId,

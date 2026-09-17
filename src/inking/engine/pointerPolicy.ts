@@ -3,7 +3,19 @@
  * can be unit-tested and reasoned about in isolation.
  */
 import { DEFAULT_PRESSURE, DEFAULT_STYLUS_SETTINGS, PALM_REJECTION_GRACE_MS, PEN_PROXIMITY_TIMEOUT_MS } from '../constants';
-import type { InkPointerType, StylusSettings, ToolType } from '../types';
+import type { EphemeralTool, InkPointerType, StylusSettings, ToolType } from '../types';
+
+/** Tools whose marks are shown live and never written to the document. */
+export const EPHEMERAL_TOOLS: ReadonlySet<ToolType> = new Set<EphemeralTool>(['laser-pointer']);
+
+/**
+ * True for tools that must never reach the document: their output exists on
+ * the live preview layer only, so it can never enter a stroke array, an undo
+ * stack, a save file or an export.
+ */
+export function isEphemeralTool(tool: ToolType): boolean {
+  return EPHEMERAL_TOOLS.has(tool);
+}
 
 /** `PointerEvent.buttons` bit flags (https://w3c.github.io/pointerevents/#the-buttons-property). */
 export const POINTER_BUTTONS = {

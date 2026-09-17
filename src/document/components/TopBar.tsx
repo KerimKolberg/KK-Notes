@@ -13,9 +13,9 @@ const button =
   'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-500';
 const pressed = 'bg-zinc-900 text-white hover:bg-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-100';
 
-/** Title, page indicator, jump-to-page, view mode, zoom and the arranger toggle. */
+/** Title, page indicator, jump-to-page, view mode, zoom, the lock and the arranger toggle. */
 export function TopBar() {
-  const { title, pageCount, activePageIndex, viewMode, zoom, arrangerOpen, exporting, dirty } = useDocumentStore(
+  const { title, pageCount, activePageIndex, viewMode, zoom, arrangerOpen, exporting, readOnly, dirty } = useDocumentStore(
     useShallow((s) => ({
       title: s.document.title,
       pageCount: s.document.pages.length,
@@ -24,10 +24,11 @@ export function TopBar() {
       zoom: s.document.zoom,
       arrangerOpen: s.arrangerOpen,
       exporting: s.exporting,
+      readOnly: s.readOnly,
       dirty: selectIsDirty(s),
     })),
   );
-  const { setTitle, jumpToPage, setViewMode, zoomBy, setZoom, setArrangerOpen, setImportDialogOpen } = useDocumentStore(
+  const { setTitle, jumpToPage, setViewMode, zoomBy, setZoom, setArrangerOpen, setImportDialogOpen, toggleReadOnly } = useDocumentStore(
     useShallow((s) => ({
       setTitle: s.setTitle,
       jumpToPage: s.jumpToPage,
@@ -36,6 +37,7 @@ export function TopBar() {
       setZoom: s.setZoom,
       setArrangerOpen: s.setArrangerOpen,
       setImportDialogOpen: s.setImportDialogOpen,
+      toggleReadOnly: s.toggleReadOnly,
     })),
   );
   const { notice, setNotice } = useDesktopStore(useShallow((s) => ({ notice: s.notice, setNotice: s.setNotice })));
@@ -58,6 +60,7 @@ export function TopBar() {
           className="h-9 min-w-0 flex-1 rounded-lg bg-transparent px-2 text-base font-semibold text-zinc-900 outline-none placeholder:text-zinc-400 focus:bg-zinc-100 dark:text-zinc-100 dark:focus:bg-zinc-900"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
+          readOnly={readOnly}
           placeholder="Untitled note"
         />
         {dirty && (
@@ -130,7 +133,13 @@ export function TopBar() {
       </div>
 
       <div className="flex items-center gap-1" role="group" aria-label="Import and export">
-        <button type="button" className={button} onClick={() => setImportDialogOpen(true)} title="Import pages from a PDF">
+        <button
+          type="button"
+          className={button}
+          onClick={() => setImportDialogOpen(true)}
+          disabled={readOnly}
+          title={readOnly ? 'Unlock the document to import pages' : 'Import pages from a PDF'}
+        >
           Import PDF
         </button>
         <button
@@ -145,6 +154,18 @@ export function TopBar() {
           {exporting ? 'Exporting…' : 'Export PDF'}
         </button>
       </div>
+
+      <button
+        type="button"
+        className={`${button} ${readOnly ? pressed : ''}`}
+        aria-pressed={readOnly}
+        aria-label="Read-only lock"
+        onClick={toggleReadOnly}
+        title={readOnly ? 'Document is locked: reading, navigation and forms only' : 'Lock the document (read-only)'}
+        data-lock-toggle
+      >
+        {readOnly ? 'Locked' : 'Lock'}
+      </button>
 
       <button
         type="button"

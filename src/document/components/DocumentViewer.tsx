@@ -43,6 +43,7 @@ export function DocumentViewer({ settingsRef, currentTool }: DocumentViewerProps
   const setActivePage = useDocumentStore((s) => s.setActivePage);
   const setZoom = useDocumentStore((s) => s.setZoom);
   const touchDraw = useToolStore((s) => s.settings.touchDraw);
+  const readOnly = useDocumentStore((s) => s.readOnly);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -75,7 +76,8 @@ export function DocumentViewer({ settingsRef, currentTool }: DocumentViewerProps
   const layoutRef = useLatestRef(layout);
   const singlePageRef = useLatestRef(Boolean(singlePage));
   const zoomRef = useLatestRef(zoom);
-  const touchDrawRef = useLatestRef(touchDraw);
+  // A locked document never inks, so one finger always pans it.
+  const oneFingerInksRef = useLatestRef(touchDraw && !readOnly);
 
   // rAF-throttled scroll tracking. The active page is derived here, from real
   // scroll events only: deriving it in an effect keyed on layout changes would
@@ -127,7 +129,7 @@ export function DocumentViewer({ settingsRef, currentTool }: DocumentViewerProps
     pendingCommitRef.current = null;
     applyGestureCommit(pending, layout.items, zoom);
   }, [layout, zoom, applyGestureCommit]);
-  const gestureHandlers = useTouchGestures({ scrollRef, previewRef, layoutRef, zoomRef, touchDrawRef, onCommit: onGestureCommit });
+  const gestureHandlers = useTouchGestures({ scrollRef, previewRef, layoutRef, zoomRef, oneFingerInksRef, onCommit: onGestureCommit });
 
   const activeRange = visibleRange(layout.items, viewport.scrollTop, viewport.height, ACTIVE_OVERSCAN_PX);
   const renderRange = visibleRange(layout.items, viewport.scrollTop, viewport.height, RENDER_OVERSCAN_PX);
@@ -153,6 +155,7 @@ export function DocumentViewer({ settingsRef, currentTool }: DocumentViewerProps
       style={{ touchAction: 'none' }}
       data-viewer
       data-view-mode={viewMode}
+      data-read-only={readOnly ? 'true' : undefined}
     >
       <div className="relative" style={{ height: layout.totalHeight, minWidth: layout.totalWidth }}>
         {/* Pinch previews transform this wrapper; the sized parent keeps the scroll range stable meanwhile. */}

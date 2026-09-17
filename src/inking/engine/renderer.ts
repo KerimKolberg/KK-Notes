@@ -12,6 +12,7 @@
  */
 import type { InkPoint, Point, Shape, Stroke, StrokePattern, StrokeStyle, CoordinatePlaneShape } from '../types';
 import type { AngleArc } from './angleHud';
+import type { LaserRun } from './laser';
 import { TAU, normalizeRadians } from './angles';
 import {
   arrowheadEnds,
@@ -337,6 +338,44 @@ export function drawLassoPreview(ctx: InkContext, points: readonly Point[]): voi
   ctx.fill(path);
   ctx.setLineDash([6, 4]);
   ctx.stroke(path);
+  ctx.restore();
+}
+
+/**
+ * Laser passes, outermost first: a wide soft glow, the coloured beam, and a
+ * bright core that reads as light rather than ink.
+ */
+const LASER_PASSES: readonly { readonly width: number; readonly alpha: number; readonly color?: string }[] = [
+  { width: 2.8, alpha: 0.3 },
+  { width: 1, alpha: 1 },
+  { width: 0.3, alpha: 0.5, color: 'rgba(255, 255, 255, 0.95)' },
+];
+
+/**
+ * Disappearing laser trail. Drawn on the live layer only — these runs are
+ * never part of a stroke, so nothing here ever reaches the document.
+ */
+export function drawLaserTrail(ctx: InkContext, runs: readonly LaserRun[]): void {
+  if (runs.length === 0) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.setLineDash([]);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const paths = runs.map((run) => polylinePath(run.points, false));
+  for (const pass of LASER_PASSES) {
+    for (let i = 0; i < runs.length; i++) {
+      const run = runs[i];
+      const path = paths[i];
+      if (!run || !path) continue;
+      const width = run.width * pass.width;
+      if (width < 0.4) continue;
+      ctx.globalAlpha = Math.min(1, run.alpha * pass.alpha);
+      ctx.lineWidth = width;
+      ctx.strokeStyle = pass.color ?? run.color;
+      ctx.stroke(path);
+    }
+  }
   ctx.restore();
 }
 

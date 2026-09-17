@@ -18,8 +18,8 @@ const opButton =
  */
 export function PageArranger() {
   const open = useDocumentStore((s) => s.arrangerOpen);
-  const { pages, activePageIndex } = useDocumentStore(
-    useShallow((s) => ({ pages: s.document.pages, activePageIndex: s.document.activePageIndex })),
+  const { pages, activePageIndex, readOnly } = useDocumentStore(
+    useShallow((s) => ({ pages: s.document.pages, activePageIndex: s.document.activePageIndex, readOnly: s.readOnly })),
   );
   const { setArrangerOpen, jumpToPage, movePage, addPage, duplicatePage, deletePage, setPageTemplate, setPageBackground } =
     useDocumentStore(
@@ -39,7 +39,8 @@ export function PageArranger() {
   const selected = pages[activePageIndex];
 
   const onSelect = useCallback((index: number) => jumpToPage(index), [jumpToPage]);
-  const { drag, getItemProps } = usePointerReorder({ count: pages.length, onMove: movePage, onSelect });
+  // Read-only: thumbnails still navigate, but nothing reorders or edits.
+  const { drag, getItemProps } = usePointerReorder({ count: pages.length, onMove: movePage, onSelect, disabled: readOnly });
 
   useEffect(() => {
     if (!open) return;
@@ -69,24 +70,35 @@ export function PageArranger() {
       </header>
 
       <div className="flex flex-wrap gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800" role="group" aria-label="Page operations">
-        <button type="button" className={opButton} onClick={() => addPage('before', activePageIndex)}>
+        <button type="button" className={opButton} onClick={() => addPage('before', activePageIndex)} disabled={readOnly}>
           Add before
         </button>
-        <button type="button" className={opButton} onClick={() => addPage('after', activePageIndex)}>
+        <button type="button" className={opButton} onClick={() => addPage('after', activePageIndex)} disabled={readOnly}>
           Add after
         </button>
-        <button type="button" className={opButton} onClick={() => duplicatePage(activePageIndex)}>
+        <button type="button" className={opButton} onClick={() => duplicatePage(activePageIndex)} disabled={readOnly}>
           Duplicate
         </button>
         <button
           type="button"
           className={`${opButton} text-rose-700 dark:text-rose-300`}
           onClick={() => deletePage(activePageIndex)}
-          disabled={pages.length <= 1}
-          title={pages.length <= 1 ? 'A document needs at least one page' : 'Delete page'}
+          disabled={readOnly || pages.length <= 1}
+          title={
+            readOnly
+              ? 'The document is locked'
+              : pages.length <= 1
+                ? 'A document needs at least one page'
+                : 'Delete page'
+          }
         >
           Delete
         </button>
+        {readOnly && (
+          <span className="inline-flex h-9 items-center text-sm text-zinc-500 dark:text-zinc-400" data-arranger-read-only>
+            Locked
+          </span>
+        )}
       </div>
 
       <div className="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800" role="group" aria-label="Page appearance">
@@ -98,6 +110,7 @@ export function PageArranger() {
             id="arranger-template"
             className="h-9 flex-1 rounded-lg border border-zinc-300 bg-white px-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
             value={selected?.template ?? 'blank'}
+            disabled={readOnly}
             onChange={(e) => setPageTemplate(target, e.target.value as PageTemplate)}
           >
             {PAGE_TEMPLATES.map((t) => (
@@ -120,6 +133,7 @@ export function PageArranger() {
                   selected?.backgroundColor.toLowerCase() === color ? 'outline-2 outline-offset-2 outline-blue-500' : ''
                 }`}
                 style={{ backgroundColor: color }}
+                disabled={readOnly}
                 onClick={() => setPageBackground(target, color)}
               />
             ))}
@@ -128,17 +142,27 @@ export function PageArranger() {
               aria-label="Custom background colour"
               className="h-8 w-8 cursor-pointer rounded-md border-0 bg-transparent p-0"
               value={selected?.backgroundColor ?? '#ffffff'}
+              disabled={readOnly}
               onChange={(e) => setPageBackground(target, e.target.value)}
             />
           </div>
         </div>
         <label className="flex items-center gap-2 text-zinc-700 dark:text-zinc-200">
-          <input type="checkbox" className="h-4 w-4 accent-blue-600" checked={applyToAll} onChange={(e) => setApplyToAll(e.target.checked)} />
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-blue-600"
+            checked={applyToAll}
+            disabled={readOnly}
+            onChange={(e) => setApplyToAll(e.target.checked)}
+          />
           Apply to all pages
         </label>
       </div>
 
-      <ol className="grid flex-1 grid-cols-2 content-start gap-2 overflow-y-auto p-3" aria-label="Page thumbnails (drag to reorder, Alt+arrows to move)">
+      <ol
+        className="grid flex-1 grid-cols-2 content-start gap-2 overflow-y-auto p-3"
+        aria-label={readOnly ? 'Page thumbnails (locked: tap to jump)' : 'Page thumbnails (drag to reorder, Alt+arrows to move)'}
+      >
         {pages.map((page, index) => (
           <PageThumbnail
             key={page.id}

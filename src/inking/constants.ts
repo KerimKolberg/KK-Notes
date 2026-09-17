@@ -84,11 +84,25 @@ export const DEFAULT_STYLUS_SETTINGS: Readonly<StylusSettings> = {
   eraserEnd: 'eraser-stroke',
 };
 
+/**
+ * How long a laser pointer sample stays visible. The tail dissolves this far
+ * behind a moving tip, and a released stroke is gone this long after pointerup.
+ */
+export const LASER_FADE_MS = 2700;
+
+/** Full hue cycle of the rainbow laser, in milliseconds of drawing. */
+export const LASER_RAINBOW_PERIOD_MS = 1800;
+
+/** Default laser colour (the laser keeps its own colour, apart from the ink colour). */
+export const LASER_DEFAULT_COLOR = '#ef4444';
+
 export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   tool: 'pen',
   color: '#1f1f24',
   size: 4,
   touchDraw: false,
+  laserColor: LASER_DEFAULT_COLOR,
+  laserRainbow: false,
   pattern: 'solid',
   arrowheads: 'none',
   angleSnap: false,

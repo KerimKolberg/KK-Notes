@@ -44,6 +44,11 @@
   cursor: crosshair;
 }
 
+.root[data-tool='laser-pointer'] .live,
+.surface[data-tool='laser-pointer'] .live {
+  cursor: crosshair;
+}
+
 .root[data-tool='eraser-stroke'] .live,
 .root[data-tool='eraser-pixel'] .live,
 .surface[data-tool='eraser-stroke'] .live,

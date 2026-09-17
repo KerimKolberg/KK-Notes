@@ -3,6 +3,7 @@ import {
   HIGHLIGHTER_OPACITY,
   HIGHLIGHTER_SIZE_MULTIPLIER,
 } from '../constants';
+import type { LaserStyle } from './laser';
 import type { InkPointerType, InkTool, StrokeStyle, ToolSettings } from '../types';
 
 /**
@@ -79,6 +80,23 @@ export function styleForTool(
         pattern: 'solid',
         arrowheads: 'none',
       };
+    case 'laser-pointer':
+      // The laser never becomes a stroke; this style only feeds generic code
+      // paths (bounds, previews). Its real appearance comes from `LaserStyle`.
+      return {
+        color: settings.laserColor,
+        size: settings.size,
+        opacity: 1,
+        compositeOperation: 'source-over',
+        thinning: 0.4,
+        smoothing: 0.6,
+        streamline: 0.5,
+        simulatePressure: pointerType !== 'pen',
+        taperStart: 0,
+        taperEnd: 0,
+        pattern: 'solid',
+        arrowheads: 'none',
+      };
     case 'eraser-pixel':
       return {
         color: '#000000',
@@ -95,6 +113,11 @@ export function styleForTool(
         arrowheads: 'none',
       };
   }
+}
+
+/** Live appearance of the laser pointer for the current settings. */
+export function laserStyleFor(settings: Readonly<ToolSettings>): LaserStyle {
+  return { color: settings.laserColor, size: settings.size, rainbow: settings.laserRainbow };
 }
 
 /** Radius of the stroke-eraser hit circle for the current settings. */

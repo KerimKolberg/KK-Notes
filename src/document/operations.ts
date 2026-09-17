@@ -3,6 +3,7 @@
  * objects and never mutates its input, so the store can hand them straight
  * to React and history can share stroke references between snapshots.
  */
+import { isEphemeralTool } from '../inking/engine/pointerPolicy';
 import { createStrokeId } from '../inking/engine/ids';
 import type { Stroke } from '../inking/types';
 import { A4_DIMENSIONS, DEFAULT_TEMPLATE_CONFIG, DEFAULT_ZOOM, LIGHT_PAGE_BACKGROUND, PAGE_HISTORY_DEPTH } from './constants';
@@ -165,7 +166,13 @@ export function redoPage(page: Page): Page {
   };
 }
 
+/**
+ * Append a stroke, recording an undo entry. Ephemeral tools (the laser
+ * pointer) are live-only: their marks never enter the stroke array, so they
+ * can never reach the undo stack, a save file or an export either.
+ */
 export function appendStroke(page: Page, stroke: Stroke): Page {
+  if (isEphemeralTool(stroke.tool)) return page;
   return withStrokes(page, [...page.strokes, stroke]);
 }
 

@@ -38,6 +38,7 @@ const TOOLS: readonly ToolDescriptor[] = [
   { id: 'lasso', label: 'Lasso', hint: 'Draw a loop around strokes to move, scale, recolour or delete them' },
   { id: 'pen', label: 'Pen', hint: 'Pressure-sensitive pen. Hold still at the end to snap to a shape.' },
   { id: 'highlighter', label: 'Highlighter', hint: 'Translucent multiply highlighter' },
+  { id: 'laser-pointer', label: 'Laser', hint: 'Disappearing pointer trail. Nothing is added to the page.' },
   { id: 'line', label: 'Line', hint: 'Drag a straight line or vector' },
   { id: 'coordinate-plane', label: 'Axes', hint: 'Drag from the origin to lay out a coordinate plane' },
   { id: 'eraser-stroke', label: 'Stroke eraser', hint: 'Remove whole strokes' },
@@ -49,6 +50,7 @@ const ARROW_LABEL: Record<ArrowheadMode, string> = { none: 'Arrow off', end: 'Ar
 
 const hasColor = (tool: ToolType): boolean =>
   tool !== 'eraser-stroke' && tool !== 'eraser-pixel' && tool !== 'select' && tool !== 'lasso';
+const isLaser = (tool: ToolType): boolean => tool === 'laser-pointer';
 const hasPattern = (tool: ToolType): boolean => tool === 'pen' || tool === 'highlighter' || tool === 'line';
 const hasAngleSnap = (tool: ToolType): boolean => hasPattern(tool);
 const hasHoldToSnap = (tool: ToolType): boolean => tool === 'pen' || tool === 'highlighter';
@@ -82,6 +84,11 @@ export const InkingToolbar = memo(function InkingToolbar({
   const plane = settings.coordinatePlane;
   const patchPlane = (patch: Partial<CoordinatePlaneConfig>): void =>
     onSettingsChange({ coordinatePlane: { ...plane, ...patch } });
+  // The laser keeps its own colour, so switching to it does not disturb the ink colour.
+  const laser = isLaser(settings.tool);
+  const activeColor = laser ? settings.laserColor : settings.color;
+  const setActiveColor = (color: string): void => onSettingsChange(laser ? { laserColor: color } : { color });
+  const colorDisabled = !hasColor(settings.tool) || (laser && settings.laserRainbow);
 
   return (
     <div className={styles.toolbar} role="toolbar" aria-label="Inking tools">
@@ -112,9 +119,9 @@ export const InkingToolbar = memo(function InkingToolbar({
                 className={styles.swatch}
                 style={{ background: color }}
                 aria-label={`Colour ${color}`}
-                aria-pressed={settings.color.toLowerCase() === color.toLowerCase()}
-                disabled={!hasColor(settings.tool)}
-                onClick={() => onSettingsChange({ color })}
+                aria-pressed={activeColor.toLowerCase() === color.toLowerCase()}
+                disabled={colorDisabled}
+                onClick={() => setActiveColor(color)}
               />
             ))}
           </div>
@@ -125,9 +132,9 @@ export const InkingToolbar = memo(function InkingToolbar({
             id={ids.color}
             type="color"
             className={styles.colorInput}
-            value={settings.color}
-            disabled={!hasColor(settings.tool)}
-            onChange={(e) => onSettingsChange({ color: e.target.value })}
+            value={activeColor}
+            disabled={colorDisabled}
+            onChange={(e) => setActiveColor(e.target.value)}
           />
         </div>
 
@@ -196,6 +203,17 @@ export const InkingToolbar = memo(function InkingToolbar({
             onClick={() => onSettingsChange({ holdToSnap: !settings.holdToSnap })}
           >
             Hold to snap
+          </button>
+          <button
+            type="button"
+            className={styles.button}
+            aria-pressed={settings.laserRainbow}
+            disabled={!laser}
+            title="Laser pointer: cycle the hue along the trail"
+            onClick={() => onSettingsChange({ laserRainbow: !settings.laserRainbow })}
+            data-laser-rainbow
+          >
+            Rainbow
           </button>
         </div>
 

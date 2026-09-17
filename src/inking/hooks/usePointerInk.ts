@@ -15,6 +15,13 @@ import {
 } from '../engine/gestureState';
 import { strokeHitBySegment } from '../engine/hitTest';
 import {
+  appendLaserPoint,
+  laserRuns,
+  pruneLaserTrail,
+  type LaserPoint,
+  type LaserStyle,
+} from '../engine/laser';
+import {
   isBarrelPress,
   isPointerAccepted,
   normalizePointerType,
@@ -25,6 +32,7 @@ import {
   clearSurface,
   drawAngleHud,
   drawEraserCursor,
+  drawLaserTrail,
   drawLassoPreview,
   drawLiveStroke,
   drawShape,
@@ -34,7 +42,7 @@ import { recognizeShape } from '../engine/shapeRecognition';
 import { coordinatePlaneFromDrag, createGeometricStroke, lineFromDrag } from '../engine/shapes';
 import { polylineLength } from '../engine/simplify';
 import { StrokeBuilder } from '../engine/strokeBuilder';
-import { strokeEraserRadius, styleForTool } from '../engine/toolStyles';
+import { laserStyleFor, strokeEraserRadius, styleForTool } from '../engine/toolStyles';
 import type {
   CanvasSize,
   CoordinatePlaneConfig,
@@ -130,6 +138,20 @@ interface ShapeSession {
   hud: readonly AngleArc[];
 }
 
+/**
+ * Laser pointer stroke. The trail itself is kept outside the session: it
+ * keeps fading (and animating) after the pointer lifts, and it is never
+ * committed anywhere.
+ */
+interface LaserSession {
+  readonly kind: 'laser';
+  readonly pointerId: number;
+  readonly pointerType: InkPointerType;
+  readonly rect: DOMRect;
+  readonly scale: number;
+  readonly style: LaserStyle;
+}
+
 /** Freehand lasso loop. */
 interface LassoSession {
   readonly kind: 'lasso';
@@ -151,7 +173,7 @@ interface EraseSession {
   last: InkPoint;
 }
 
-type Session = InkSession | ShapeSession | EraseSession | LassoSession;
+type Session = InkSession | ShapeSession | EraseSession | LassoSession | LaserSession;
 
 /**
  * Project a viewport position into drawing units: subtract the surface's
@@ -210,7 +232,10 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
   const sessionRef = useRef<Session | null>(null);
   const frameRef = useRef(0);
 
-  const controller = useMemo<PointerInkHandlers & { cancelTouchSession: () => void }>(() => {
+  const controller = useMemo<PointerInkHandlers & { cancelTouchSession: () => void; dropLaserTrail: () => void }>(() => {
+    /** Fading laser samples; outlives the session that drew them. */
+    let laserTrail: LaserPoint[] = [];
+
     const liveContext = (): CanvasRenderingContext2D | null =>
       get2dContext(optionsRef.current.liveCanvasRef.current);
     const committedContext = (): CanvasRenderingContext2D | null =>
@@ -267,7 +292,20 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       if (!live) return;
       const { cssWidth, cssHeight } = optionsRef.current.sizeRef.current;
       clearSurface(live, cssWidth, cssHeight);
+
+      // The laser trail is independent of the session: it fades on its own
+      // clock and keeps the loop alive until the last sample expires.
+      if (laserTrail.length > 0) {
+        const now = performance.now();
+        laserTrail = pruneLaserTrail(laserTrail, now);
+        if (laserTrail.length > 0) {
+          drawLaserTrail(live, laserRuns(laserTrail, now));
+          scheduleFrame();
+        }
+      }
+
       if (!session) return;
+      if (session.kind === 'laser') return;
 
       if (session.kind === 'erase') {
         drawEraserCursor(live, session.last.x, session.last.y, session.radius);
@@ -379,6 +417,12 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
 
     // ---- session lifecycle ----------------------------------------------------
 
+    /** Clear the preview layer, unless a laser trail still has to fade out. */
+    const endLiveFrame = (): void => {
+      if (laserTrail.length > 0) scheduleFrame();
+      else clearLive();
+    };
+
     const finishSession = (): void => {
       const session = sessionRef.current;
       if (!session) return;
@@ -406,6 +450,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         }
       } else if (session.kind === 'lasso') {
         if (session.points.length >= 3) opts.onLassoComplete?.(session.points);
+      } else if (session.kind === 'laser') {
+        // Nothing to commit, by design: the trail simply finishes fading.
       } else if (session.kind === 'shape') {
         if (!isDegenerateShape(session.shape)) {
           opts.onCommitStroke(
@@ -422,7 +468,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         opts.hiddenIdsRef.current.clear();
         if (session.hits.size > 0) opts.onEraseStrokes(session.hits);
       }
-      clearLive();
+      endLiveFrame();
       setLiveBlend('normal');
     };
 
@@ -443,7 +489,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         opts.hiddenIdsRef.current.clear();
       }
       if (needsRedraw) opts.redrawCommitted();
-      clearLive();
+      endLiveFrame();
       setLiveBlend('normal');
     };
 
@@ -513,6 +559,14 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       opts.onInteractionStart?.();
 
       const point = toInkPoint(e.nativeEvent, rect, scale);
+
+      if (tool === 'laser-pointer') {
+        const style = laserStyleFor(settings);
+        laserTrail = appendLaserPoint(laserTrail, point, now, style, true);
+        sessionRef.current = { kind: 'laser', pointerId: e.pointerId, pointerType, rect, scale, style };
+        scheduleFrame();
+        return;
+      }
 
       if (tool === 'lasso') {
         opts.onLassoStart?.();
@@ -595,6 +649,11 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           const last = session.points[session.points.length - 1];
           if (!last || Math.hypot(point.x - last.x, point.y - last.y) >= 1) session.points.push(point);
         }
+      } else if (session.kind === 'laser') {
+        const now = performance.now();
+        for (const sample of samples) {
+          laserTrail = appendLaserPoint(laserTrail, toInkPoint(sample, session.rect, session.scale), now, session.style);
+        }
       } else if (session.kind === 'shape') {
         const sample = samples[samples.length - 1];
         if (sample) {
@@ -655,6 +714,9 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       onPointerLeave,
       onLostPointerCapture,
       cancelTouchSession,
+      dropLaserTrail: () => {
+        laserTrail = [];
+      },
     };
   }, [optionsRef]);
 
@@ -671,10 +733,11 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       const session = sessionRef.current;
       if (session?.kind === 'ink' && session.snap?.timer) clearTimeout(session.snap.timer);
       sessionRef.current = null;
+      controller.dropLaserTrail();
     },
-    [],
+    [controller],
   );
 
-  const { cancelTouchSession: _cancel, ...handlers } = controller;
+  const { cancelTouchSession: _cancel, dropLaserTrail: _drop, ...handlers } = controller;
   return handlers;
 }

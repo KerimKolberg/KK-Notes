@@ -12,6 +12,7 @@ export type ToolType =
   | 'lasso'
   | 'pen'
   | 'highlighter'
+  | 'laser-pointer'
   | 'line'
   | 'coordinate-plane'
   | 'eraser-stroke'
@@ -21,19 +22,31 @@ export type ToolType =
 export type DrawingTool = Exclude<ToolType, 'select'>;
 
 /**
- * Tools that produce a persisted stroke record. The stroke eraser removes
- * existing strokes instead of creating one, and select never draws.
+ * Tools that put marks on the surface. The stroke eraser removes existing
+ * strokes instead of creating one, and select never draws.
  */
 export type InkTool = Exclude<ToolType, 'eraser-stroke' | 'select' | 'lasso'>;
 
+/**
+ * Tools whose output is shown live and never written to the document: no
+ * stroke record, no undo entry, nothing in an export.
+ */
+export type EphemeralTool = 'laser-pointer';
+
+/** Tools that produce a persisted stroke record. */
+export type PersistentTool = Exclude<InkTool, EphemeralTool>;
+
 /** Tools whose raw samples become a perfect-freehand polygon. */
-export type FreehandTool = 'pen' | 'highlighter' | 'eraser-pixel';
+export type FreehandTool = 'pen' | 'highlighter' | 'eraser-pixel' | 'laser-pointer';
+
+/** Freehand tools that may be accumulated into a committed stroke. */
+export type PersistentFreehandTool = Exclude<FreehandTool, EphemeralTool>;
 
 /** Tools that create a geometric primitive by click-and-drag. */
 export type ShapeTool = 'line' | 'coordinate-plane';
 
 /** Tools that may own a geometric stroke (drag tools plus snapped freehand). */
-export type GeometricTool = Exclude<InkTool, 'eraser-pixel'>;
+export type GeometricTool = Exclude<PersistentTool, 'eraser-pixel'>;
 
 /** Pointer classes we distinguish between. Unknown types are treated as mouse. */
 export type InkPointerType = 'pen' | 'touch' | 'mouse';
@@ -229,6 +242,10 @@ export interface ToolSettings {
   size: number;
   /** When false, only pen (and optionally mouse) input draws. */
   touchDraw: boolean;
+  /** Laser pointer colour, kept separate from the ink colour. */
+  laserColor: string;
+  /** Laser pointer: cycle the hue along the trail instead of using `laserColor`. */
+  laserRainbow: boolean;
   pattern: StrokePattern;
   arrowheads: ArrowheadMode;
   /** Snap straight lines / vectors to 15° increments. */
