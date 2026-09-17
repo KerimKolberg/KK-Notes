@@ -323,6 +323,23 @@ export function drawEraserCursor(
   ctx.restore();
 }
 
+/** In-progress lasso loop: dashed outline, closing segment and a faint fill. */
+export function drawLassoPreview(ctx: InkContext, points: readonly Point[]): void {
+  if (points.length < 2) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = HUD_COLOR;
+  ctx.fillStyle = 'rgba(37, 99, 235, 0.08)';
+  const path = polylinePath(points, true);
+  ctx.fill(path);
+  ctx.setLineDash([6, 4]);
+  ctx.stroke(path);
+  ctx.restore();
+}
+
 /** Non-committed angle overlay: arcs plus haloed degree read-outs. */
 export function drawAngleHud(ctx: InkContext, arcs: readonly AngleArc[]): void {
   if (arcs.length === 0) return;

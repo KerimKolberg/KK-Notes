@@ -1,6 +1,18 @@
-import type { FreehandStroke, FreehandTool, InkPoint, InkPointerType, StrokeStyle } from '../types';
+import type { BBox, FreehandStroke, FreehandTool, InkPoint, InkPointerType, Point, StrokeStyle } from '../types';
+import { bboxFromPoints } from './geometry';
 import { createStrokeId } from './ids';
 import { arrowheadLength } from './shapes';
+
+/** Padding around a freehand path: widest half-width, arrowheads, anti-aliasing slop. */
+export function freehandPadding(style: StrokeStyle): number {
+  const arrow = style.arrowheads !== 'none' ? arrowheadLength(style.size) : 0;
+  return style.size * 0.5 * (1 + Math.max(0, style.thinning)) + arrow + 2;
+}
+
+/** Padded bounding box of a freehand stroke's points. */
+export function freehandBBox(points: readonly Point[], style: StrokeStyle): BBox {
+  return bboxFromPoints(points, freehandPadding(style));
+}
 
 /**
  * Accumulates samples for the freehand stroke currently being drawn and
@@ -42,9 +54,7 @@ export class StrokeBuilder {
   }
 
   build(): FreehandStroke {
-    // Pad by the widest possible half-width, arrowheads and anti-aliasing slop.
-    const arrow = this.style.arrowheads !== 'none' ? arrowheadLength(this.style.size) : 0;
-    const pad = this.style.size * 0.5 * (1 + Math.max(0, this.style.thinning)) + arrow + 2;
+    const pad = freehandPadding(this.style);
     return {
       kind: 'freehand',
       id: this.id,

@@ -9,6 +9,7 @@
 /** Every tool the user can select in the UI. */
 export type ToolType =
   | 'select'
+  | 'lasso'
   | 'pen'
   | 'highlighter'
   | 'line'
@@ -23,7 +24,7 @@ export type DrawingTool = Exclude<ToolType, 'select'>;
  * Tools that produce a persisted stroke record. The stroke eraser removes
  * existing strokes instead of creating one, and select never draws.
  */
-export type InkTool = Exclude<ToolType, 'eraser-stroke' | 'select'>;
+export type InkTool = Exclude<ToolType, 'eraser-stroke' | 'select' | 'lasso'>;
 
 /** Tools whose raw samples become a perfect-freehand polygon. */
 export type FreehandTool = 'pen' | 'highlighter' | 'eraser-pixel';

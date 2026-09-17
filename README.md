@@ -5,7 +5,8 @@ inking engine (`src/inking/`) with palm rejection, pressure-sensitive strokes
 via [perfect-freehand], STEM shape tools and hold-to-snap, hosted in a
 multi-page document system (`src/document/`) with procedural page templates,
 canvas virtualisation, a Samsung Notes-style page arranger, an image layer,
-and PDF import / fillable AcroForms / vector PDF export (`src/pdf/`). Styled
+a lasso selection tool, two-finger pan / pinch-zoom navigation, and PDF
+import / fillable AcroForms / vector PDF export (`src/pdf/`). Styled
 with Tailwind CSS and follows the system light/dark theme.
 
 ```bash
@@ -99,8 +100,8 @@ the build if either library ends up in the critical path.
 
 **State.** A Zustand store (`store.ts`) owns the `Document` (pages, active
 index, view mode, zoom), a `scrollRequest` counter that asks the viewer to
-scroll, and the arranger's open state; `toolStore.ts` holds the shared tool
-settings. All structural edits are pure functions in `operations.ts`
+scroll, the arranger's open state, and the image / lasso selections;
+`toolStore.ts` holds the shared tool settings. All structural edits are pure functions in `operations.ts`
 (reorder, insert, duplicate with deep-cloned strokes, delete with a one-page
 guard, snapshot undo/redo per page) so they can be unit-tested without React.
 The inking render loop never subscribes to the store; a surface only calls
@@ -155,10 +156,11 @@ src/document/
 ├── serialization.ts    JSON round trip
 ├── store.ts            Zustand document store   toolStore.ts  shared tool settings
 ├── media.ts            image placement, anchored resize, rotation, z-order
+├── gestures.ts         pinch / pan math, centroid anchoring across zoom changes
 ├── raster/             rasterize.ts, rasterWorker.ts, rasterClient.ts, rasterCache.ts
-├── hooks/              useRasterBitmap, usePointerReorder, useMediaInput
+├── hooks/              useRasterBitmap, usePointerReorder, useMediaInput, useTouchGestures
 └── components/         DocumentApp, TopBar, DocumentViewer, PageFrame, PageSnapshot,
-                        PageArranger, PageThumbnail, MediaLayer
+                        PageArranger, PageThumbnail, MediaLayer, SelectionLayer
 
 src/desktop/
 ├── notex.ts            .notex envelope encode / decode
@@ -183,6 +185,71 @@ src/pdf/
 ├── FormOverlay.tsx  PdfBackground.tsx  ImportPdfDialog.tsx
 └── download.ts
 ```
+
+## Lasso selection and touch navigation
+
+**Lasso tool** (`src/inking/engine/lasso.ts`, `SelectionLayer.tsx`). The
+`lasso` tool mode draws a freehand loop on the live canvas (pen or mouse).
+When the loop closes, every stroke on the page is tested with a ray-casting
+point-in-polygon check: the stroke's bounding box must intersect the loop's,
+and at least half of its sample points — the raw samples of a freehand
+stroke, or points spread evenly along the flattened outline of a geometric
+shape — must fall inside the polygon. Both `FreehandStroke` and
+`GeometricStroke` are selectable; pixel-eraser strokes are skipped. The
+selection (`lassoSelection` in the store: page id + stroke ids) shows up as
+a dashed box on a z-25 layer between the ink and the form widgets:
+
+- **drag the box** to translate, **drag a corner handle** to scale about the
+  opposite corner (uniform by default, Shift for free aspect; line widths
+  scale with the geometric mean of the axes);
+- **quick actions**: Duplicate (offset copies become the new selection),
+  six colour swatches plus a colour picker, a width slider that previews
+  live and commits on release, Delete, Deselect; Delete / Backspace and
+  Escape work from the keyboard.
+
+While a drag is in flight the originals are hidden on the committed layer
+(`hiddenStrokeIds`) and transformed copies are drawn on the selection
+layer's own canvas, so nothing is written to the store until the pointer
+lifts. Every commit (`transformSelection`, `restyleSelection`,
+`duplicateSelection`, `deleteSelection`) replaces the page's stroke array
+through `withStrokes`, i.e. it is exactly one entry on that page's undo
+stack. Transforms keep stroke ids, so a selection stays valid across undo /
+redo of its own edits; a new lasso, or switching to any tool other than
+Lasso / Select, clears it.
+
+**Two-finger navigation** (`src/document/gestures.ts`,
+`hooks/useTouchGestures.ts`). The viewer's scroll container has
+`touch-action: none` and tracks touch pointers itself:
+
+- **one finger** (Touch Draw off) pans the scroll offsets directly;
+- **exactly two fingers** start a gesture: the midpoint's movement pans and
+  the change in finger distance zooms (rounded to 1 %, clamped to 25–300 %).
+  The gesture is previewed with a CSS `translate() scale()` on the page
+  column, anchored at the scroll-content point under the starting centroid,
+  and committed once when a finger lifts: the store's zoom changes, the
+  layout is rebuilt at the new scale, and a layout effect re-scrolls so the
+  page point that was under the centroid is still under it. Same-zoom
+  gestures (pure pans) commit synchronously.
+
+A process-wide flag (`engine/gestureState.ts`) tells every `InkSurface`
+that a two-finger gesture is active: the pointer pipeline refuses touch
+input for its duration and cancels any touch stroke already in progress,
+even with Touch Draw on — so a pinch can never leave a mark. The pen always
+wins: touches are ignored while a pen was seen recently or is hovering
+(the same 700 ms / 3 s windows palm rejection uses), a pen landing ends a
+pinch and cancels a one-finger pan (it was a palm), and pen input is never
+blocked by a gesture. A finger left over after a pinch is ignored until it
+lifts, so lifting fingers one at a time does not nudge the view.
+
+Verification: `src/inking/__tests__/lasso.test.ts` (polygon containment on
+concave loops, freehand polylines and geometric outlines, transforms,
+restyle, duplicate, handle geometry), `src/document/__tests__/gestures.test.ts`
+(pinch math, anchoring across a zoom change) and
+`src/document/__tests__/selectionStore.test.ts` (store actions and undo
+integrity); a headless Chromium suite exercises lasso selection, drag
+translation with preview, undo / redo, duplicate, recolour, width, corner
+scaling, delete, and the two-finger gestures including the Touch Draw and
+resting-palm cases.
 
 ## PDF, forms and media (`src/pdf/`, `src/document/media.ts`)
 
@@ -288,6 +355,7 @@ Keyboard: `Ctrl/⌘+Z` undo, `Ctrl/⌘+Shift+Z` or `Ctrl+Y` redo.
 
 | Tool | Gesture | Output |
 | --- | --- | --- |
+| Lasso | freehand loop | selects enclosed strokes (see above) |
 | Pen | freehand | pressure-thinned perfect-freehand polygon |
 | Highlighter | freehand | 4× width, `multiply` at 35 % |
 | Line | drag | straight segment / vector |
@@ -426,6 +494,8 @@ src/inking/
 │   ├── hitTest.ts          stroke-eraser geometry for both stroke kinds
 │   ├── history.ts          undo/redo reducer
 │   ├── pointerPolicy.ts    palm rejection, pressure, button mapping
+│   ├── lasso.ts            point-in-polygon selection, stroke transforms, handle geometry
+│   ├── gestureState.ts     shared two-finger-gesture flag and pen presence
 │   ├── toolStyles.ts       per-tool StrokeStyle
 │   ├── strokeBuilder.ts    in-progress freehand accumulator
 │   └── geometry.ts

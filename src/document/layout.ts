@@ -5,6 +5,7 @@
  * top-left corner).
  */
 import type { Point } from '../inking/types';
+import { MAX_ZOOM, MIN_ZOOM } from './constants';
 import type { PageDimensions } from './types';
 
 export interface PageLayout {
@@ -140,4 +141,28 @@ export function projectToPage(clientX: number, clientY: number, frame: ScrollCon
 /** Inverse of `projectToPage`: page-local → scroll-content coordinates. */
 export function pageToContent(point: Point, item: PageLayout, zoom: number): Point {
   return { x: item.left + point.x * zoom, y: item.top + point.y * zoom };
+}
+
+/** Zoom rounded to 1% and clamped to the supported range. */
+export function clampZoom(zoom: number, min = MIN_ZOOM, max = MAX_ZOOM): number {
+  const z = Math.round(zoom * 100) / 100;
+  return Math.min(max, Math.max(min, Number.isFinite(z) ? z : min));
+}
+
+/**
+ * The layout item under a scroll-content y position, or the nearest one when
+ * the point falls in a gap / the padding. `undefined` only for an empty layout.
+ */
+export function itemAtContentY(items: readonly PageLayout[], y: number): PageLayout | undefined {
+  let best: PageLayout | undefined;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const item of items) {
+    if (y >= item.top && y <= item.top + item.height) return item;
+    const d = y < item.top ? item.top - y : y - (item.top + item.height);
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = item;
+    }
+  }
+  return best;
 }

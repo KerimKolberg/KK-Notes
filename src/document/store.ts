@@ -5,8 +5,17 @@
  * keeps per-frame drawing independent from React state updates.
  */
 import { create } from 'zustand';
+import {
+  duplicateStrokes,
+  removeStrokesById,
+  restyleStrokes,
+  transformStrokes,
+  type StrokeTransform,
+  type StyleChange,
+} from '../inking/engine/lasso';
 import type { Stroke } from '../inking/types';
-import { MAX_ZOOM, MIN_ZOOM, TEMPLATE_DEFAULT_SPACING, ZOOM_STEP } from './constants';
+import { TEMPLATE_DEFAULT_SPACING, ZOOM_STEP } from './constants';
+import { clampZoom } from './layout';
 import {
   addImage as addImageToList,
   bringToFront as bringImageToFrontInList,
@@ -30,6 +39,7 @@ import {
   undoPage,
   withFormValue,
   withImages,
+  withStrokes,
 } from './operations';
 import type {
   Document,
@@ -48,6 +58,12 @@ export interface ImageSelection {
   readonly imageId: string;
 }
 
+/** Strokes picked by the lasso tool, all on one page. */
+export interface LassoSelection {
+  readonly pageId: string;
+  readonly strokeIds: readonly string[];
+}
+
 export interface DocumentStore {
   document: Document;
   /** Incremented whenever the viewer should scroll to `document.activePageIndex`. */
@@ -57,6 +73,7 @@ export interface DocumentStore {
   /** True while a PDF export is being assembled. */
   exporting: boolean;
   selectedImage: ImageSelection | null;
+  lassoSelection: LassoSelection | null;
   /** Native path of the open `.notex` file, if any. */
   filePath: string | null;
   /** Content as of the last save / load; view state (zoom, scroll) is not part of it. */
@@ -100,6 +117,15 @@ export interface DocumentStore {
   sendImageToBack: (pageId: string, imageId: string) => void;
   selectImage: (selection: ImageSelection | null) => void;
 
+  // lasso selection (every edit is one undo step on the page)
+  setLassoSelection: (selection: LassoSelection | null) => void;
+  clearLassoSelection: () => void;
+  transformSelection: (pageId: string, ids: readonly string[], transform: StrokeTransform) => void;
+  restyleSelection: (pageId: string, ids: readonly string[], change: StyleChange) => void;
+  /** Appends offset copies and moves the selection onto them. */
+  duplicateSelection: (pageId: string, ids: readonly string[]) => void;
+  deleteSelection: (pageId: string, ids: readonly string[]) => void;
+
   /** Replace the document; `path` is the native file it came from. Marks it clean. */
   loadDocument: (doc: Document, path?: string | null) => void;
   newDocument: () => void;
@@ -111,11 +137,6 @@ export interface DocumentStore {
 /** True when the document content differs from the last saved / loaded state. */
 export function selectIsDirty(s: DocumentStore): boolean {
   return s.document.pages !== s.savedPages || s.document.title !== s.savedTitle;
-}
-
-function clampZoom(zoom: number): number {
-  const z = Math.round(zoom * 100) / 100;
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 }
 
 function updatePageById(doc: Document, pageId: string, fn: (page: Page) => Page): Document {
@@ -148,6 +169,7 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
   importDialogOpen: false,
   exporting: false,
   selectedImage: null,
+  lassoSelection: null,
   filePath: null,
   savedPages: initialDocument.pages,
   savedTitle: initialDocument.title,
@@ -236,7 +258,12 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
       const pages = removePage(doc.pages, i);
       // Keep following the same page; if it was the one deleted, stay at its slot.
       const activePageIndex = i === doc.activePageIndex ? clampIndex(i, pages.length) : indexOfPage(pages, activeId, i);
-      return { document: { ...doc, pages, activePageIndex } };
+      const deletedId = doc.pages[i]?.id;
+      return {
+        document: { ...doc, pages, activePageIndex },
+        lassoSelection: s.lassoSelection?.pageId === deletedId ? null : s.lassoSelection,
+        selectedImage: s.selectedImage?.pageId === deletedId ? null : s.selectedImage,
+      };
     }),
 
   movePage: (from, to) =>
@@ -274,7 +301,11 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
   eraseStrokes: (pageId, ids) =>
     set((s) => ({ document: updatePageById(s.document, pageId, (page) => removeStrokes(page, ids)) })),
 
-  clearPage: (pageId) => set((s) => ({ document: updatePageById(s.document, pageId, clearPageStrokes) })),
+  clearPage: (pageId) =>
+    set((s) => ({
+      document: updatePageById(s.document, pageId, clearPageStrokes),
+      lassoSelection: s.lassoSelection?.pageId === pageId ? null : s.lassoSelection,
+    })),
 
   undo: (pageId) => set((s) => ({ document: updatePageById(s.document, pageId, undoPage) })),
 
@@ -315,12 +346,77 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
       (s.selectedImage?.pageId === selection?.pageId && s.selectedImage?.imageId === selection?.imageId) ? s : { selectedImage: selection },
     ),
 
+  setLassoSelection: (selection) =>
+    set((s) => (selection === null && s.lassoSelection === null ? s : { lassoSelection: selection })),
+
+  clearLassoSelection: () => set((s) => (s.lassoSelection === null ? s : { lassoSelection: null })),
+
+  transformSelection: (pageId, ids, transform) =>
+    set((s) => {
+      const idSet = new Set(ids);
+      return {
+        document: updatePageById(s.document, pageId, (page) => withStrokes(page, transformStrokes(page.strokes, idSet, transform))),
+      };
+    }),
+
+  restyleSelection: (pageId, ids, change) =>
+    set((s) => {
+      const idSet = new Set(ids);
+      return {
+        document: updatePageById(s.document, pageId, (page) => {
+          const next = restyleStrokes(page.strokes, idSet, change);
+          return next.every((stroke, i) => stroke === page.strokes[i]) ? page : withStrokes(page, next);
+        }),
+      };
+    }),
+
+  duplicateSelection: (pageId, ids) =>
+    set((s) => {
+      const idSet = new Set(ids);
+      let copies: string[] = [];
+      const document = updatePageById(s.document, pageId, (page) => {
+        const result = duplicateStrokes(page.strokes, idSet);
+        copies = result.ids;
+        return copies.length === 0 ? page : withStrokes(page, result.strokes);
+      });
+      if (copies.length === 0) return s;
+      return { document, lassoSelection: { pageId, strokeIds: copies } };
+    }),
+
+  deleteSelection: (pageId, ids) =>
+    set((s) => {
+      const idSet = new Set(ids);
+      return {
+        document: updatePageById(s.document, pageId, (page) => {
+          const next = removeStrokesById(page.strokes, idSet);
+          return next.length === page.strokes.length ? page : withStrokes(page, next);
+        }),
+        lassoSelection: s.lassoSelection?.pageId === pageId ? null : s.lassoSelection,
+      };
+    }),
+
   loadDocument: (doc, path = null) =>
-    set({ document: doc, scrollRequest: 0, selectedImage: null, filePath: path, savedPages: doc.pages, savedTitle: doc.title }),
+    set({
+      document: doc,
+      scrollRequest: 0,
+      selectedImage: null,
+      lassoSelection: null,
+      filePath: path,
+      savedPages: doc.pages,
+      savedTitle: doc.title,
+    }),
 
   newDocument: () => {
     const doc = createDocument(1);
-    set({ document: doc, scrollRequest: 0, selectedImage: null, filePath: null, savedPages: doc.pages, savedTitle: doc.title });
+    set({
+      document: doc,
+      scrollRequest: 0,
+      selectedImage: null,
+      lassoSelection: null,
+      filePath: null,
+      savedPages: doc.pages,
+      savedTitle: doc.title,
+    });
   },
 
   setFilePath: (path) => set({ filePath: path }),

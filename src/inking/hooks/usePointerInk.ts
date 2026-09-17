@@ -6,6 +6,13 @@ import {
   SNAP_JITTER_PX,
 } from '../constants';
 import { buildLineHud, geometricSegments, type AngleArc } from '../engine/angleHud';
+import {
+  isTouchGestureActive,
+  notePenLeft,
+  notePenPresence,
+  penPresence,
+  subscribeTouchGesture,
+} from '../engine/gestureState';
 import { strokeHitBySegment } from '../engine/hitTest';
 import {
   isBarrelPress,
@@ -18,6 +25,7 @@ import {
   clearSurface,
   drawAngleHud,
   drawEraserCursor,
+  drawLassoPreview,
   drawLiveStroke,
   drawShape,
   get2dContext,
@@ -60,6 +68,10 @@ export interface UsePointerInkOptions {
   onInteractionStart?: () => void;
   /** The pen's barrel button is mapped to select mode and was pressed on the surface. */
   onBarrelSelect?: () => void;
+  /** A lasso loop is starting (hosts clear any previous selection). */
+  onLassoStart?: () => void;
+  /** A lasso loop was closed; `polygon` is in drawing units. */
+  onLassoComplete?: (polygon: readonly Point[]) => void;
   onCommitStroke: (stroke: Stroke) => void;
   onEraseStrokes: (ids: ReadonlySet<string>) => void;
   /** Full replay of the committed layer (honours `hiddenIdsRef`). */
@@ -118,6 +130,16 @@ interface ShapeSession {
   hud: readonly AngleArc[];
 }
 
+/** Freehand lasso loop. */
+interface LassoSession {
+  readonly kind: 'lasso';
+  readonly pointerId: number;
+  readonly pointerType: InkPointerType;
+  readonly rect: DOMRect;
+  readonly scale: number;
+  readonly points: Point[];
+}
+
 interface EraseSession {
   readonly kind: 'erase';
   readonly pointerId: number;
@@ -129,12 +151,7 @@ interface EraseSession {
   last: InkPoint;
 }
 
-type Session = InkSession | ShapeSession | EraseSession;
-
-interface PenState {
-  inProximity: boolean;
-  lastSeen: number;
-}
+type Session = InkSession | ShapeSession | EraseSession | LassoSession;
 
 /**
  * Project a viewport position into drawing units: subtract the surface's
@@ -192,9 +209,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
   const optionsRef = useLatestRef(options);
   const sessionRef = useRef<Session | null>(null);
   const frameRef = useRef(0);
-  const penRef = useRef<PenState>({ inProximity: false, lastSeen: Number.NEGATIVE_INFINITY });
 
-  const handlers = useMemo<PointerInkHandlers>(() => {
+  const controller = useMemo<PointerInkHandlers & { cancelTouchSession: () => void }>(() => {
     const liveContext = (): CanvasRenderingContext2D | null =>
       get2dContext(optionsRef.current.liveCanvasRef.current);
     const committedContext = (): CanvasRenderingContext2D | null =>
@@ -261,6 +277,11 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       if (session.kind === 'shape') {
         drawShape(live, session.shape, session.style);
         drawAngleHud(live, session.hud);
+        return;
+      }
+
+      if (session.kind === 'lasso') {
+        drawLassoPreview(live, session.points);
         return;
       }
 
@@ -383,6 +404,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         } else {
           opts.onCommitStroke(builder.build());
         }
+      } else if (session.kind === 'lasso') {
+        if (session.points.length >= 3) opts.onLassoComplete?.(session.points);
       } else if (session.kind === 'shape') {
         if (!isDegenerateShape(session.shape)) {
           opts.onCommitStroke(
@@ -425,13 +448,19 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
     };
 
     /**
-     * Record pen presence. A pen arriving while a finger is drawing means the
-     * finger was almost certainly a palm, so that stroke is discarded.
+     * Record pen presence (shared across all surfaces). A pen arriving while a
+     * finger is drawing means the finger was almost certainly a palm, so that
+     * stroke is discarded.
      */
     const notePen = (pointerType: InkPointerType): void => {
       if (pointerType !== 'pen') return;
-      penRef.current.inProximity = true;
-      penRef.current.lastSeen = performance.now();
+      notePenPresence();
+      const session = sessionRef.current;
+      if (session && session.pointerType === 'touch') cancelSession();
+    };
+
+    /** A two-finger navigation gesture began: touch may not ink until it ends. */
+    const cancelTouchSession = (): void => {
       const session = sessionRef.current;
       if (session && session.pointerType === 'touch') cancelSession();
     };
@@ -444,14 +473,16 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
 
       const opts = optionsRef.current;
       const settings = opts.settingsRef.current;
-      const pen = penRef.current;
       const now = performance.now();
+      // Fingers never ink during a two-finger pan / pinch.
+      if (pointerType === 'touch' && isTouchGestureActive()) return;
+      const pen = penPresence(now);
       const accepted = isPointerAccepted({
         pointerType,
         touchDraw: settings.touchDraw,
         allowMouse: opts.allowMouse,
         penInProximity: pen.inProximity,
-        msSincePen: now - pen.lastSeen,
+        msSincePen: pen.msSincePen,
       });
       if (!accepted) return;
 
@@ -482,6 +513,13 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       opts.onInteractionStart?.();
 
       const point = toInkPoint(e.nativeEvent, rect, scale);
+
+      if (tool === 'lasso') {
+        opts.onLassoStart?.();
+        sessionRef.current = { kind: 'lasso', pointerId: e.pointerId, pointerType, rect, scale, points: [point] };
+        scheduleFrame();
+        return;
+      }
 
       if (tool === 'eraser-stroke') {
         const session: EraseSession = {
@@ -551,6 +589,12 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           session.builder.add(point);
           noteDwell(session, point, now);
         }
+      } else if (session.kind === 'lasso') {
+        for (const sample of samples) {
+          const point = toInkPoint(sample, session.rect, session.scale);
+          const last = session.points[session.points.length - 1];
+          if (!last || Math.hypot(point.x - last.x, point.y - last.y) >= 1) session.points.push(point);
+        }
       } else if (session.kind === 'shape') {
         const sample = samples[samples.length - 1];
         if (sample) {
@@ -592,9 +636,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
 
     const onPointerLeave: CanvasPointerHandler = (e) => {
       if (normalizePointerType(e.pointerType) !== 'pen') return;
-      const pen = penRef.current;
-      pen.inProximity = false;
-      pen.lastSeen = performance.now();
+      notePenLeft();
     };
 
     const onLostPointerCapture: CanvasPointerHandler = (e) => {
@@ -612,8 +654,14 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       onPointerEnter,
       onPointerLeave,
       onLostPointerCapture,
+      cancelTouchSession,
     };
   }, [optionsRef]);
+
+  // Two-finger gestures cancel any touch stroke in progress on this surface.
+  useEffect(() => subscribeTouchGesture((active) => {
+    if (active) controller.cancelTouchSession();
+  }), [controller]);
 
   // Drop any in-flight frame or dwell timer if the component unmounts mid-stroke.
   useEffect(
@@ -627,5 +675,6 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
     [],
   );
 
+  const { cancelTouchSession: _cancel, ...handlers } = controller;
   return handlers;
 }

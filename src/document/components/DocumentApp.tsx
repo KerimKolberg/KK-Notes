@@ -58,12 +58,29 @@ export function DocumentApp() {
   }, []);
   const { onDragOver, onDrop } = useMediaInput(importDroppedPdf);
 
-  // Delete / Backspace removes the selected image; Escape deselects.
+  // A lasso selection only lives while the lasso / select tools are active.
+  useEffect(() => {
+    if (settings.tool !== 'lasso' && settings.tool !== 'select') useDocumentStore.getState().clearLassoSelection();
+  }, [settings.tool]);
+
+  // Delete / Backspace removes the lasso selection or the selected image; Escape deselects.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      const { selectedImage, removeImage, selectImage } = useDocumentStore.getState();
-      if (!selectedImage || isEditableTarget(e.target)) return;
-      if (e.key === 'Delete' || e.key === 'Backspace') {
+      const { selectedImage, lassoSelection, removeImage, selectImage, deleteSelection, clearLassoSelection } =
+        useDocumentStore.getState();
+      if (isEditableTarget(e.target)) return;
+      const isDelete = e.key === 'Delete' || e.key === 'Backspace';
+      if (lassoSelection) {
+        if (isDelete) {
+          e.preventDefault();
+          deleteSelection(lassoSelection.pageId, lassoSelection.strokeIds);
+        } else if (e.key === 'Escape') {
+          clearLassoSelection();
+        }
+        return;
+      }
+      if (!selectedImage) return;
+      if (isDelete) {
         e.preventDefault();
         removeImage(selectedImage.pageId, selectedImage.imageId);
       } else if (e.key === 'Escape') {

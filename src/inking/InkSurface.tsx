@@ -1,10 +1,10 @@
-import { memo, useCallback, useLayoutEffect, useRef, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 import { drawStroke, get2dContext, replayStrokes } from './engine/renderer';
 import { useLatestRef } from './hooks/useLatestRef';
 import { usePageCanvas } from './hooks/usePageCanvas';
 import { usePointerInk } from './hooks/usePointerInk';
 import styles from './InkingCanvas.module.css';
-import type { CanvasSize, Stroke, ToolSettings } from './types';
+import type { CanvasSize, Point, Stroke, ToolSettings } from './types';
 
 export interface InkSurfaceProps {
   /** Page size in drawing units. */
@@ -23,6 +23,11 @@ export interface InkSurfaceProps {
   onInteractionStart?: () => void;
   /** Barrel button mapped to select was pressed: switch tools temporarily. */
   onBarrelSelect?: () => void;
+  /** Lasso tool: a loop is starting / was closed (polygon in page units). */
+  onLassoStart?: () => void;
+  onLassoComplete?: (polygon: readonly Point[]) => void;
+  /** Strokes to leave out of the committed layer (a selection being dragged draws them elsewhere). */
+  hiddenStrokeIds?: ReadonlySet<string> | null;
   currentTool: ToolSettings['tool'];
   /** When false the surface ignores pointer input (e.g. the select tool is active). Default true. */
   interactive?: boolean;
@@ -57,6 +62,9 @@ export const InkSurface = memo(function InkSurface({
   onEraseStrokes,
   onInteractionStart,
   onBarrelSelect,
+  onLassoStart,
+  onLassoComplete,
+  hiddenStrokeIds = null,
   currentTool,
   interactive = true,
   ariaLabel = 'Drawing surface',
@@ -96,6 +104,18 @@ export const InkSurface = memo(function InkSurface({
     }
   }, [strokes, redrawCommitted]);
 
+  // Externally hidden strokes (selection previews) share the eraser's hidden set.
+  useEffect(() => {
+    const hidden = hiddenIdsRef.current;
+    const next = hiddenStrokeIds ?? new Set<string>();
+    let same = hidden.size === next.size;
+    if (same) for (const id of next) if (!hidden.has(id)) { same = false; break; }
+    if (same) return;
+    hidden.clear();
+    for (const id of next) hidden.add(id);
+    redrawCommitted();
+  }, [hiddenStrokeIds, redrawCommitted]);
+
   const handlers = usePointerInk({
     liveCanvasRef: liveRef,
     committedCanvasRef: committedRef,
@@ -107,6 +127,8 @@ export const InkSurface = memo(function InkSurface({
     contentScaleRef: zoomRef,
     ...(onInteractionStart ? { onInteractionStart } : {}),
     ...(onBarrelSelect ? { onBarrelSelect } : {}),
+    ...(onLassoStart ? { onLassoStart } : {}),
+    ...(onLassoComplete ? { onLassoComplete } : {}),
     onCommitStroke,
     onEraseStrokes,
     redrawCommitted,

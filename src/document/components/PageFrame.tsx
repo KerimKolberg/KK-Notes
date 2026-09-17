@@ -1,6 +1,8 @@
-import { memo, useCallback, useMemo, type RefObject } from 'react';
+import { memo, useCallback, useMemo, useState, type RefObject } from 'react';
+import { selectStrokesInLasso } from '../../inking/engine/lasso';
+import { useLatestRef } from '../../inking/hooks/useLatestRef';
 import { InkSurface } from '../../inking/InkSurface';
-import type { Stroke, ToolSettings } from '../../inking/types';
+import type { Point, Stroke, ToolSettings } from '../../inking/types';
 import { FormOverlay } from '../../pdf/FormOverlay';
 import { PdfBackground } from '../../pdf/PdfBackground';
 import type { PageLayout } from '../layout';
@@ -10,6 +12,7 @@ import { beginTemporaryTool } from '../toolStore';
 import type { Page } from '../types';
 import { MediaLayer } from './MediaLayer';
 import { PageSnapshot } from './PageSnapshot';
+import { SelectionLayer } from './SelectionLayer';
 
 export type PageFrameMode = 'active' | 'snapshot';
 
@@ -30,6 +33,7 @@ export interface PageFrameProps {
  *   z-0  background — template SVG (CSS) or the PDF.js raster
  *   z-10 media      — user-placed images with transform boxes
  *   z-20 ink        — live + committed canvases (or a snapshot when far away)
+ *   z-25 selection  — lasso selection box, handles and quick actions
  *   z-30 forms      — HTML widgets for AcroForm annotations
  */
 export const PageFrame = memo(function PageFrame({
@@ -45,6 +49,12 @@ export const PageFrame = memo(function PageFrame({
   const commitStroke = useDocumentStore((s) => s.commitStroke);
   const eraseStrokes = useDocumentStore((s) => s.eraseStrokes);
   const setActivePage = useDocumentStore((s) => s.setActivePage);
+  const setLassoSelection = useDocumentStore((s) => s.setLassoSelection);
+  const clearLassoSelection = useDocumentStore((s) => s.clearLassoSelection);
+  const lassoIds = useDocumentStore((s) => (s.lassoSelection?.pageId === page.id ? s.lassoSelection.strokeIds : null));
+  const pageRef = useLatestRef(page);
+  /** Strokes the selection layer is previewing; the ink layer leaves them out meanwhile. */
+  const [hiddenStrokeIds, setHiddenStrokeIds] = useState<ReadonlySet<string> | null>(null);
 
   const backgroundImage = useMemo(
     () => templateSvgDataUrl(page),
@@ -57,6 +67,15 @@ export const PageFrame = memo(function PageFrame({
   const onErase = useCallback((ids: ReadonlySet<string>) => eraseStrokes(page.id, ids), [eraseStrokes, page.id]);
   const onInteractionStart = useCallback(() => setActivePage(index), [setActivePage, index]);
   const onBarrelSelect = useCallback(() => beginTemporaryTool('select'), []);
+  const onLassoStart = useCallback(() => clearLassoSelection(), [clearLassoSelection]);
+  const onLassoComplete = useCallback(
+    (polygon: readonly Point[]) => {
+      const strokeIds = selectStrokesInLasso(pageRef.current.strokes, polygon);
+      setLassoSelection(strokeIds.length > 0 ? { pageId: page.id, strokeIds } : null);
+    },
+    [pageRef, page.id, setLassoSelection],
+  );
+  const showSelection = lassoIds !== null && (currentTool === 'lasso' || currentTool === 'select');
 
   return (
     <div
@@ -93,11 +112,15 @@ export const PageFrame = memo(function PageFrame({
               onEraseStrokes={onErase}
               onInteractionStart={onInteractionStart}
               onBarrelSelect={onBarrelSelect}
+              onLassoStart={onLassoStart}
+              onLassoComplete={onLassoComplete}
+              hiddenStrokeIds={hiddenStrokeIds}
               currentTool={currentTool}
               interactive={currentTool !== 'select'}
               ariaLabel={`Page ${page.pageNumber} drawing surface`}
             />
           </div>
+          {showSelection && <SelectionLayer page={page} zoom={zoom} strokeIds={lassoIds} onPreviewHidden={setHiddenStrokeIds} />}
           <FormOverlay page={page} zoom={zoom} tool={currentTool} />
         </>
       ) : (

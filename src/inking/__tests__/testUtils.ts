@@ -1,4 +1,5 @@
 import { createGeometricStroke } from '../engine/shapes';
+import { freehandBBox } from '../engine/strokeBuilder';
 import type { FreehandStroke, GeometricStroke, InkPoint, Point, Shape, Stroke, StrokeStyle } from '../types';
 
 export const PEN_STYLE: StrokeStyle = {
@@ -23,22 +24,15 @@ export function makeStroke(
   overrides: Partial<Omit<FreehandStroke, 'kind'>> = {},
 ): Stroke {
   const pts: InkPoint[] = points.map(([x, y]) => ({ x, y, pressure: 0.5 }));
-  const xs = pts.map((p) => p.x);
-  const ys = pts.map((p) => p.y);
-  const pad = PEN_STYLE.size / 2 + 2;
+  const style = overrides.style ?? PEN_STYLE;
   seq += 1;
   return {
     kind: 'freehand',
     id: `stroke-${seq}`,
     tool: 'pen',
     points: pts,
-    style: PEN_STYLE,
-    bbox: {
-      minX: Math.min(...xs) - pad,
-      minY: Math.min(...ys) - pad,
-      maxX: Math.max(...xs) + pad,
-      maxY: Math.max(...ys) + pad,
-    },
+    style,
+    bbox: freehandBBox(pts, style),
     pointerType: 'pen',
     createdAt: 0,
     ...overrides,
