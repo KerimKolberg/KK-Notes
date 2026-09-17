@@ -8,6 +8,8 @@ import type {
   BBox,
   CoordinatePlaneConfig,
   CoordinatePlaneShape,
+  CurveKind,
+  CurveShape,
   EllipseShape,
   GeometricStroke,
   GeometricTool,
@@ -74,6 +76,106 @@ function clamp(v: number, lo: number, hi: number): number {
 export function lineFromDrag(start: Point, end: Point, angleSnapDeg?: number): LineShape {
   const to = angleSnapDeg !== undefined ? snapLineEnd(start, end, angleSnapDeg) : end;
   return { type: 'line', from: start, to };
+}
+
+/**
+ * A curve from the same drag a straight line would use. Its depth is a
+ * fraction of the chord, so a long sweep bows proportionally rather than
+ * flattening out, and the sign decides which side it falls on.
+ */
+export function curveFromDrag(
+  start: Point,
+  end: Point,
+  kind: CurveKind,
+  amplitudeRatio: number,
+  cycles: number,
+  flip: boolean,
+  angleSnapDeg?: number,
+): CurveShape {
+  const to = angleSnapDeg !== undefined ? snapLineEnd(start, end, angleSnapDeg) : end;
+  const length = Math.hypot(to.x - start.x, to.y - start.y);
+  return {
+    type: 'curve',
+    kind,
+    from: start,
+    to,
+    amplitude: length * amplitudeRatio * (flip ? -1 : 1),
+    cycles: Math.max(1, Math.round(cycles)),
+  };
+}
+
+/**
+ * Unit vector along the chord and the left-hand normal to it. A degenerate
+ * chord has no direction to speak of; the caller draws nothing in that case,
+ * so any consistent answer will do.
+ */
+function chordFrame(shape: CurveShape): { length: number; ux: number; uy: number; nx: number; ny: number } {
+  const dx = shape.to.x - shape.from.x;
+  const dy = shape.to.y - shape.from.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return { length: 0, ux: 1, uy: 0, nx: 0, ny: -1 };
+  const ux = dx / length;
+  const uy = dy / length;
+  return { length, ux, uy, nx: uy, ny: -ux };
+}
+
+/** A point at arc fraction `t` along the chord, displaced `offset` off it. */
+function alongChord(shape: CurveShape, t: number, offset: number): Point {
+  const { length, ux, uy, nx, ny } = chordFrame(shape);
+  const d = t * length;
+  return { x: shape.from.x + ux * d + nx * offset, y: shape.from.y + uy * d + ny * offset };
+}
+
+/** Samples per cycle of a wave; enough that the polyline reads as smooth. */
+const WAVE_SEGMENTS_PER_CYCLE = 24;
+/** Samples across a parabola's span. */
+const PARABOLA_SEGMENTS = 48;
+
+/**
+ * The curve as a polyline. Everything downstream — canvas, hit tests, bounds,
+ * the PDF exporter — consumes exactly these points, so what is exported is
+ * literally what was drawn. A zigzag yields only its corners; the other two
+ * are sampled densely enough to read as smooth at any sane zoom.
+ */
+export function curvePoints(shape: CurveShape): Point[] {
+  const { length } = chordFrame(shape);
+  if (length === 0) return [shape.from];
+  const cycles = Math.max(1, Math.round(shape.cycles));
+
+  if (shape.kind === 'zigzag') {
+    // Corners only: the peaks alternate, with the endpoints back on the chord.
+    const points: Point[] = [shape.from];
+    for (let k = 0; k < cycles * 2; k++) {
+      points.push(alongChord(shape, (2 * k + 1) / (4 * cycles), k % 2 === 0 ? shape.amplitude : -shape.amplitude));
+    }
+    points.push(shape.to);
+    return points;
+  }
+
+  if (shape.kind === 'wave') {
+    const steps = cycles * WAVE_SEGMENTS_PER_CYCLE;
+    const points: Point[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      points.push(alongChord(shape, t, shape.amplitude * Math.sin(2 * Math.PI * cycles * t)));
+    }
+    return points;
+  }
+
+  // Parabola: a quadratic Bézier whose control point sits twice the amplitude
+  // off the midpoint, because a quadratic reaches only half way to its control
+  // at t = 0.5 — which puts the apex exactly on the amplitude.
+  const control = alongChord(shape, 0.5, shape.amplitude * 2);
+  const points: Point[] = [];
+  for (let i = 0; i <= PARABOLA_SEGMENTS; i++) {
+    const t = i / PARABOLA_SEGMENTS;
+    const m = 1 - t;
+    points.push({
+      x: m * m * shape.from.x + 2 * m * t * control.x + t * t * shape.to.x,
+      y: m * m * shape.from.y + 2 * m * t * control.y + t * t * shape.to.y,
+    });
+  }
+  return points;
 }
 
 /**
@@ -240,7 +342,7 @@ export function coordinatePlaneGeometry(shape: CoordinatePlaneShape): Coordinate
 // ---------------------------------------------------------------------------
 
 export function shapeIsClosed(shape: Shape): boolean {
-  return shape.type !== 'line' && shape.type !== 'polyline';
+  return shape.type !== 'line' && shape.type !== 'polyline' && shape.type !== 'curve';
 }
 
 /** Straight-segment approximation of a shape, for hit tests and bounds. */
@@ -258,6 +360,8 @@ export function shapeToPolylines(shape: Shape): Point[][] {
       return [closeRing(ellipsePoints(shape))];
     case 'heart':
       return [closeRing(heartPoints(shape))];
+    case 'curve':
+      return [curvePoints(shape)];
     case 'coordinate-plane': {
       const g = coordinatePlaneGeometry(shape);
       return [...g.axes.map((s) => [s.a, s.b]), closeRing(g.frame)];

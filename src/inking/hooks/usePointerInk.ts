@@ -3,7 +3,6 @@ import {
   ANGLE_SNAP_INCREMENT_DEG,
   HOLD_TO_SNAP_MS,
   MIN_SNAP_PATH_LENGTH_PX,
-  SNAP_JITTER_PX,
 } from '../constants';
 import { buildLineHud, geometricSegments, type AngleArc } from '../engine/angleHud';
 import {
@@ -41,13 +40,13 @@ import {
   get2dContext,
 } from '../engine/renderer';
 import { recognizeShape } from '../engine/shapeRecognition';
-import { coordinatePlaneFromDrag, createGeometricStroke, lineFromDrag } from '../engine/shapes';
+import { coordinatePlaneFromDrag, createGeometricStroke, curveFromDrag, lineFromDrag } from '../engine/shapes';
 import { polylineLength } from '../engine/simplify';
 import { StrokeBuilder } from '../engine/strokeBuilder';
+import { beginDwell, lockDwell, noteDwellMovement, type DwellState } from '../engine/dwell';
 import { laserStyleFor, strokeEraserRadius, styleForTool } from '../engine/toolStyles';
 import type {
   CanvasSize,
-  CoordinatePlaneConfig,
   InkPoint,
   InkPointerType,
   Point,
@@ -102,16 +101,9 @@ export interface PointerInkHandlers {
   onLostPointerCapture: CanvasPointerHandler;
 }
 
-/** Hold-to-snap bookkeeping for a freehand stroke. */
-interface SnapState {
-  /** Where the pointer came to rest. */
-  anchor: Point;
-  /** When it came to rest. */
-  since: number;
+/** Hold-to-snap bookkeeping: the dwell state machine plus its timer. */
+interface SnapState extends DwellState {
   timer: ReturnType<typeof setTimeout> | null;
-  /** Recognised shape currently replacing the raw preview, if any. */
-  shape: Shape | null;
-  hud: readonly AngleArc[];
 }
 
 interface InkSession {
@@ -134,7 +126,8 @@ interface ShapeSession {
   readonly rect: DOMRect;
   readonly scale: number;
   readonly start: Point;
-  readonly planeConfig: CoordinatePlaneConfig;
+  /** Toolbar state frozen at pointerdown, like every stroke's style. */
+  readonly settings: Readonly<ToolSettings>;
   readonly angleSnapDeg: number | undefined;
   readonly createdAt: number;
   current: Point;
@@ -213,15 +206,27 @@ function buildDragShape(
   start: Point,
   current: Point,
   angleSnapDeg: number | undefined,
-  planeConfig: CoordinatePlaneConfig,
+  settings: Readonly<ToolSettings>,
 ): Shape {
-  return tool === 'line'
-    ? lineFromDrag(start, current, angleSnapDeg)
-    : coordinatePlaneFromDrag(start, current, planeConfig);
+  if (tool !== 'line') return coordinatePlaneFromDrag(start, current, settings.coordinatePlane);
+  // The line tool lays down whichever path its flyout is set to; all of them
+  // are defined by the drag's two endpoints, so the gesture is the same one.
+  if (settings.lineCurve === 'straight') return lineFromDrag(start, current, angleSnapDeg);
+  return curveFromDrag(
+    start,
+    current,
+    settings.lineCurve,
+    settings.curveAmplitude,
+    settings.curveCycles,
+    settings.curveFlip,
+    angleSnapDeg,
+  );
 }
 
 function isDegenerateShape(shape: Shape): boolean {
-  if (shape.type === 'line') return Math.hypot(shape.to.x - shape.from.x, shape.to.y - shape.from.y) < 2;
+  if (shape.type === 'line' || shape.type === 'curve') {
+    return Math.hypot(shape.to.x - shape.from.x, shape.to.y - shape.from.y) < 2;
+  }
   if (shape.type === 'coordinate-plane') return shape.extentX < 8 || shape.extentY < 8;
   return false;
 }
@@ -387,24 +392,19 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         const snapDeg = angleSnapFor(settings);
         const shape = recognizeShape(points, snapDeg === undefined ? {} : { angleSnapDeg: snapDeg });
         if (!shape) return;
-        snap.shape = shape;
-        snap.hud = hudFor(shape);
+        lockDwell(snap, shape, hudFor(shape));
         scheduleFrame();
       }, HOLD_TO_SNAP_MS);
     };
 
-    /** Movement beyond the jitter radius restarts the dwell and drops any snap. */
+    /**
+     * Movement restarts the dwell — but only past the tolerance the dwell is
+     * currently on, which widens once a shape is locked so that lifting the
+     * pen cannot undo the recognition.
+     */
     const noteDwell = (session: InkSession, point: Point, now: number): void => {
       const { snap } = session;
-      if (!snap) return;
-      if (Math.hypot(point.x - snap.anchor.x, point.y - snap.anchor.y) <= SNAP_JITTER_PX) return;
-      snap.anchor = point;
-      snap.since = now;
-      if (snap.shape) {
-        snap.shape = null;
-        snap.hud = [];
-      }
-      armSnapTimer(session);
+      if (snap && noteDwellMovement(snap, point, now)) armSnapTimer(session);
     };
 
     // ---- erasing ------------------------------------------------------------
@@ -600,8 +600,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         if (eraseSweep(session, point, point)) opts.redrawCommitted();
       } else if (tool === 'line' || tool === 'coordinate-plane') {
         const angleSnapDeg = angleSnapFor(settings);
-        const planeConfig = settings.coordinatePlane;
-        const shape = buildDragShape(tool, point, point, angleSnapDeg, planeConfig);
+        const shape = buildDragShape(tool, point, point, angleSnapDeg, settings);
         sessionRef.current = {
           kind: 'shape',
           pointerId: e.pointerId,
@@ -611,7 +610,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           rect,
           scale,
           start: point,
-          planeConfig,
+          settings,
           angleSnapDeg,
           createdAt: now,
           current: point,
@@ -629,7 +628,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           builder,
           rect,
           scale,
-          snap: canSnap ? { anchor: point, since: now, timer: null, shape: null, hud: [] } : null,
+          snap: canSnap ? { ...beginDwell(point, now), timer: null } : null,
         };
         sessionRef.current = session;
         armSnapTimer(session);
@@ -668,13 +667,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         const sample = samples[samples.length - 1];
         if (sample) {
           session.current = toInkPoint(sample, session.rect, session.scale);
-          session.shape = buildDragShape(
-            session.tool,
-            session.start,
-            session.current,
-            session.angleSnapDeg,
-            session.planeConfig,
-          );
+          session.shape = buildDragShape(session.tool, session.start, session.current, session.angleSnapDeg, session.settings);
           session.hud = hudFor(session.shape);
         }
       } else {

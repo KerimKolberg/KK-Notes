@@ -6,7 +6,16 @@
  * paths are emitted in "flipped user space" (`x`, `-y`) so pdf-lib's
  * `drawSvgPath` at origin (0, 0) — which inverts y — lands them exactly.
  */
-import { arrowheadEnds, arrowheadTriangle, coordinatePlaneGeometry, ellipsePoints, heartPoints, rectangleCorners, type Segment } from '../inking/engine/shapes';
+import {
+  arrowheadEnds,
+  arrowheadTriangle,
+  coordinatePlaneGeometry,
+  curvePoints,
+  ellipsePoints,
+  heartPoints,
+  rectangleCorners,
+  type Segment,
+} from '../inking/engine/shapes';
 import { freehandCentreline, dashArray, trimForArrowheads } from '../inking/engine/renderer';
 import { endTangent, startTangent } from '../inking/engine/simplify';
 import { getStrokeOutline } from '../inking/engine/strokeOutline';
@@ -325,6 +334,17 @@ function shapeToPdfOps(shape: Shape, style: StrokeStyle, project: PdfProjection)
     }
     case 'heart':
       return [strokedPolyline(heartPoints(shape, 96), style, project, true)];
+    case 'curve': {
+      // Flattened to the same polyline the canvas draws and emitted as plain
+      // M/L segments, which is all pdf-lib's path parser accepts — and which
+      // carries the dash pattern and the arrowheads like any other open path.
+      const points = curvePoints(shape);
+      const trimmed = trimForArrowheads(points, style);
+      return [
+        ...(trimmed.length >= 2 ? [strokedPolyline(trimmed, style, project, false)] : []),
+        ...arrowPaths(points, style, project),
+      ];
+    }
     case 'coordinate-plane': {
       const g = coordinatePlaneGeometry(shape);
       const seg = (s: Segment, thickness: number, alpha: number): LineOp => ({

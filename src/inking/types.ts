@@ -181,6 +181,27 @@ export interface HeartShape {
   readonly height: number;
 }
 
+/**
+ * A procedural path between two points. All three kinds are defined entirely
+ * by the drag's endpoints plus an amplitude and a cycle count, so one drag
+ * produces the whole curve and it stays exact under later scaling.
+ */
+export type CurveKind = 'parabola' | 'wave' | 'zigzag';
+
+export interface CurveShape {
+  readonly type: 'curve';
+  readonly kind: CurveKind;
+  readonly from: Point;
+  readonly to: Point;
+  /**
+   * Peak displacement perpendicular to `from`→`to`, in px. Signed: which side
+   * the bow sits on, or which way the first crest goes.
+   */
+  readonly amplitude: number;
+  /** `wave` / `zigzag`: whole cycles between the endpoints. Ignored by `parabola`. */
+  readonly cycles: number;
+}
+
 export interface CoordinatePlaneShape {
   readonly type: 'coordinate-plane';
   readonly origin: Point;
@@ -198,6 +219,7 @@ export type Shape =
   | RectangleShape
   | EllipseShape
   | HeartShape
+  | CurveShape
   | CoordinatePlaneShape;
 
 export type ShapeType = Shape['type'];
@@ -266,6 +288,14 @@ export interface ToolSettings {
   laserRainbow: boolean;
   pattern: StrokePattern;
   arrowheads: ArrowheadMode;
+  /** Line tool: a straight segment, or which procedural curve to lay down. */
+  lineCurve: 'straight' | CurveKind;
+  /** Curve depth as a fraction of the drag's length. */
+  curveAmplitude: number;
+  /** Whole cycles a wave or zigzag fits between the drag's endpoints. */
+  curveCycles: number;
+  /** Mirror a curve onto the other side of the drag. */
+  curveFlip: boolean;
   /** Snap straight lines / vectors to 15° increments. */
   angleSnap: boolean;
   /** Hold the pointer still at the end of a stroke to convert it to a shape. */

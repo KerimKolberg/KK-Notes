@@ -197,6 +197,16 @@ function transformShape(shape: Shape, t: StrokeTransform): Shape {
       return { ...shape, center: transformPoint(shape.center, t), radiusX: shape.radiusX * sx, radiusY: shape.radiusY * sy };
     case 'heart':
       return { ...shape, center: transformPoint(shape.center, t), width: shape.width * sx, height: shape.height * sy };
+    case 'curve':
+      // The amplitude is measured across the chord, so it follows whichever
+      // axis the chord runs least along — the mean is the honest answer for a
+      // diagonal, and is exact for a curve lying on either axis.
+      return {
+        ...shape,
+        from: transformPoint(shape.from, t),
+        to: transformPoint(shape.to, t),
+        amplitude: shape.amplitude * ((sx + sy) / 2),
+      };
     case 'coordinate-plane':
       return { ...shape, origin: transformPoint(shape.origin, t), extentX: shape.extentX * sx, extentY: shape.extentY * sy };
   }

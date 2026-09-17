@@ -49,8 +49,30 @@ export const MAX_STROKE_SIZE = 24;
 export const HOLD_TO_SNAP_MS = 1000;
 /** Movement below this radius counts as "stationary" during the dwell. */
 export const SNAP_JITTER_PX = 5;
+/**
+ * …but once a shape has been recognised it takes this much to give it up. A
+ * stylus slides a few pixels as it leaves the glass, and at the jitter radius
+ * that lift was discarding the snap the user had just waited a second for.
+ * Past this, carrying on drawing is clearly what was meant.
+ */
+export const SNAP_RELEASE_PX = 28;
 /** Strokes shorter than this are never snapped (taps, dots). */
 export const MIN_SNAP_PATH_LENGTH_PX = 24;
+
+// ---- Procedural curves ----------------------------------------------------
+
+/**
+ * How deep a curve bows, as a fraction of the drag's own length, so the shape
+ * of a curve is the same whether it spans an inch or the page.
+ */
+export const DEFAULT_CURVE_AMPLITUDE = 0.18;
+export const MIN_CURVE_AMPLITUDE = 0.02;
+export const MAX_CURVE_AMPLITUDE = 0.6;
+
+/** Whole cycles a wave or zigzag fits between the drag's endpoints. */
+export const DEFAULT_CURVE_CYCLES = 4;
+export const MIN_CURVE_CYCLES = 1;
+export const MAX_CURVE_CYCLES = 20;
 
 // ---- Angles ---------------------------------------------------------------
 
@@ -120,6 +142,10 @@ export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   laserRainbow: false,
   pattern: 'solid',
   arrowheads: 'none',
+  lineCurve: 'straight',
+  curveAmplitude: DEFAULT_CURVE_AMPLITUDE,
+  curveCycles: DEFAULT_CURVE_CYCLES,
+  curveFlip: false,
   angleSnap: false,
   holdToSnap: true,
   coordinatePlane: DEFAULT_COORDINATE_PLANE,

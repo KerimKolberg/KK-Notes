@@ -30,6 +30,7 @@ import {
   arrowheadLength,
   arrowheadTriangle,
   coordinatePlaneGeometry,
+  curvePoints,
   heartPoints,
   rectangleCorners,
   type Segment,
@@ -270,6 +271,14 @@ function buildShapePlan(shape: Shape, style: StrokeStyle): RenderPlan {
     }
     case 'heart':
       return { passes: [], outline: outlineToPath2D(heartPoints(shape).map((p) => [p.x, p.y] as const)) };
+    case 'curve': {
+      // The same polyline the exporter uses, so paper matches screen exactly.
+      const points = curvePoints(shape);
+      return {
+        passes: arrowheadFills(points, style).map((p) => fillPass(p)),
+        outline: polylinePath(trimForArrowheads(points, style)),
+      };
+    }
     case 'coordinate-plane':
       // Drawn directly: it needs several line widths and text.
       return { passes: [], outline: null };

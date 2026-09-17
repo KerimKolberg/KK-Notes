@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { FreehandStroke, GeometricStroke, StrokeStyle } from '../../inking/types';
+import { curvePoints } from '../../inking/engine/shapes';
+import type { CurveKind, FreehandStroke, GeometricStroke, StrokeStyle } from '../../inking/types';
 import {
   cssColorToPdf,
   fmt,
@@ -194,5 +195,75 @@ describe('strokeToPdfOps', () => {
     expect(kinds.filter((k2) => k2 === 'line').length).toBeGreaterThanOrEqual(2 + 6);
     expect(kinds.filter((k2) => k2 === 'path')).toHaveLength(4);
     expect(ops.filter((o) => o.kind === 'text').map((o) => (o.kind === 'text' ? o.text : ''))).toEqual(['x', 'y']);
+  });
+
+  /** A wave and a zigzag drawn left to right across a page. */
+  const procedural = (kind: CurveKind, over: Partial<StrokeStyle> = {}): GeometricStroke => ({
+    kind: 'geometric',
+    id: `c-${kind}`,
+    tool: 'line',
+    shape: { type: 'curve', kind, from: { x: 100, y: 400 }, to: { x: 300, y: 400 }, amplitude: 30, cycles: 3 },
+    style: { ...style, ...over },
+    bbox: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
+    pointerType: 'pen',
+    createdAt: 0,
+  });
+
+  it('wave → one stroked vector path pdf-lib can parse', () => {
+    const ops = strokeToPdfOps(procedural('wave'), flat);
+    expect(ops).toHaveLength(1);
+    const op = ops[0];
+    if (op?.kind !== 'path') throw new Error('kind');
+    // Stroked, not filled: a curve is a centreline, like any other open shape.
+    expect(op.stroke).toBeDefined();
+    expect(op.fill).toBeUndefined();
+    expect(op.lineWidth).toBeCloseTo(4 * k);
+    expect(isValidPdfSvgPath(op.d)).toBe(true);
+    // The wave really is in the path, not flattened to its chord: the vertices
+    // span the full amplitude either side of y = 400.
+    // `M x y L x y …` in flipped space: emitted y = pageY·k − H, so undo that.
+    const numbers = (op.d.match(/-?[\d.]+/g) ?? []).map(Number);
+    const ys = numbers.filter((_, i) => i % 2 === 1).map((y) => (y + H) / k);
+    expect(Math.min(...ys)).toBeCloseTo(370);
+    expect(Math.max(...ys)).toBeCloseTo(430);
+    expect(ys.length).toBeGreaterThan(40);
+  });
+
+  it('zigzag → the same corners the canvas draws, and no more', () => {
+    const stroke = procedural('zigzag');
+    const [op] = strokeToPdfOps(stroke, flat);
+    if (op?.kind !== 'path') throw new Error('kind');
+    if (stroke.shape.type !== 'curve') throw new Error('shape');
+    // 3 cycles → 6 peaks + 2 endpoints, as vertices of an open M/L path.
+    const expected = curvePoints(stroke.shape);
+    expect(expected).toHaveLength(8);
+    expect(op.d).toBe(pointsToSvgPath(expected.map((pt) => ({ x: pt.x * k, y: -(H - pt.y * k) })), false));
+    expect(op.d.endsWith(' Z')).toBe(false);
+  });
+
+  it('curves carry the dash pattern and the arrowheads', () => {
+    const dotted = strokeToPdfOps(procedural('wave', { pattern: 'dotted' }), flat);
+    const [body] = dotted;
+    if (body?.kind !== 'path') throw new Error('kind');
+    expect(body.dash).toEqual([0.01, 8 * k]);
+
+    const arrowed = strokeToPdfOps(procedural('parabola', { arrowheads: 'both' }), flat);
+    expect(arrowed.map((o) => o.kind)).toEqual(['path', 'path', 'path']);
+    const [shaft, ...heads] = arrowed;
+    if (shaft?.kind !== 'path') throw new Error('kind');
+    expect(shaft.stroke).toBeDefined();
+    for (const head of heads) {
+      if (head.kind !== 'path') throw new Error('kind');
+      // Arrowheads are filled triangles, and closed.
+      expect(head.fill).toBeDefined();
+      expect(head.d.endsWith(' Z')).toBe(true);
+      expect(isValidPdfSvgPath(head.d)).toBe(true);
+    }
+  });
+
+  it('exports a curve on a rotated source page like any other path', () => {
+    const [op] = strokeToPdfOps(procedural('zigzag'), rotated);
+    if (op?.kind !== 'path') throw new Error('kind');
+    expect(isValidPdfSvgPath(op.d)).toBe(true);
   });
 });

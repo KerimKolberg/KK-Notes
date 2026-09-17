@@ -20,7 +20,7 @@ import { Tooltip } from '../../ui/Tooltip';
 import { useDraggablePanel } from '../../ui/useDraggablePanel';
 import { useSafeAreaInsets } from '../../ui/useSafeAreaInsets';
 import type { ToolSettings, ToolType } from '../types';
-import { BRUSH_ICONS, BrushFlyout, PaletteSettings, PlaneOptions, StrokeOptions, ToolConfigRow, brushLabel } from './parts';
+import { BRUSH_ICONS, BrushFlyout, LineOptions, PaletteSettings, PlaneOptions, StrokeOptions, ToolConfigRow, brushLabel } from './parts';
 
 export interface ToolPaletteProps {
   settings: Readonly<ToolSettings>;
@@ -37,9 +37,20 @@ export interface ToolPaletteProps {
   hidden?: boolean;
 }
 
-type Flyout = 'brush' | 'stroke' | 'plane' | 'settings' | null;
+type Flyout = 'brush' | 'line' | 'stroke' | 'plane' | 'settings' | null;
 
 const ERASERS: readonly ToolType[] = ['eraser-stroke', 'eraser-pixel'];
+
+const LINE_LABELS: Readonly<Record<ToolSettings['lineCurve'], string>> = {
+  straight: 'Line and shapes',
+  parabola: 'Parabola',
+  wave: 'Wave',
+  zigzag: 'Zigzag',
+};
+
+function lineLabel(curve: ToolSettings['lineCurve']): string {
+  return LINE_LABELS[curve];
+}
 
 const DIVIDER = <span className="mx-0.5 h-8 w-px shrink-0 bg-zinc-200 dark:bg-zinc-700" aria-hidden="true" />;
 
@@ -92,6 +103,7 @@ export const ToolPalette = memo(function ToolPalette({
 
   const BrushIcon = BRUSH_ICONS[settings.brush];
   const penActive = settings.tool === 'pen';
+  const lineActive = settings.tool === 'line';
   const planeActive = settings.tool === 'coordinate-plane';
 
   return (
@@ -166,7 +178,22 @@ export const ToolPalette = memo(function ToolPalette({
         {DIVIDER}
 
         {/* STEM & geometry */}
-        <IconButton icon={Spline} label="Line and shapes" active={settings.tool === 'line'} onClick={() => pick('line')} data-palette-tool="line" />
+        <div className="relative">
+          <IconButton
+            icon={Spline}
+            label={lineLabel(settings.lineCurve)}
+            hint={lineActive ? 'press again for paths and patterns' : undefined}
+            active={lineActive}
+            hasPopover
+            tooltipDisabled={flyout === 'line'}
+            onClick={() => (lineActive ? toggle('line') : pick('line'))}
+            data-palette-tool="line"
+            data-line-curve={settings.lineCurve}
+          />
+          <Popover open={flyout === 'line'} onClose={close} label="Line path and pattern" side="top" align="center">
+            <LineOptions settings={settings} onSettingsChange={onSettingsChange} />
+          </Popover>
+        </div>
         <div className="relative">
           <IconButton
             icon={Axis3d}

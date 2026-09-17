@@ -5,8 +5,12 @@ import { Tooltip } from '../../ui/Tooltip';
 import {
   AXIS_LABEL_PRESETS,
   COLOR_PALETTE,
+  MAX_CURVE_AMPLITUDE,
+  MAX_CURVE_CYCLES,
   MAX_HIGHLIGHTER_OPACITY,
   MAX_STROKE_SIZE,
+  MIN_CURVE_AMPLITUDE,
+  MIN_CURVE_CYCLES,
   MIN_HIGHLIGHTER_OPACITY,
   MIN_STROKE_SIZE,
   STROKE_PATTERNS,
@@ -301,6 +305,101 @@ export function StrokeOptions({ settings, onSettingsChange }: PanelProps) {
           onClick={() => onSettingsChange({ holdToSnap: !settings.holdToSnap })}
         >
           Hold to snap
+        </Chip>
+      </Row>
+    </div>
+  );
+}
+
+const CURVES: readonly { readonly id: ToolSettings['lineCurve']; readonly label: string; readonly hint: string }[] = [
+  { id: 'straight', label: 'Straight', hint: 'A plain segment between the two ends of the drag' },
+  { id: 'parabola', label: 'Parabola', hint: 'A quadratic Bézier bowed out from the midpoint' },
+  { id: 'wave', label: 'Wave', hint: 'A sine wave laid along the drag' },
+  { id: 'zigzag', label: 'Zigzag', hint: 'Sharp alternating peaks along the drag' },
+];
+
+/**
+ * Everything the line tool draws with: which path the drag lays down, how it
+ * is dashed, and the aids that go with it. The pattern lives here rather than
+ * only in the shared stroke options because choosing a dotted line is part of
+ * choosing a line, not a separate errand.
+ */
+export function LineOptions({ settings, onSettingsChange }: PanelProps) {
+  const curved = settings.lineCurve !== 'straight';
+  const periodic = settings.lineCurve === 'wave' || settings.lineCurve === 'zigzag';
+  return (
+    <div className="flex w-[min(19rem,calc(100vw-2.5rem))] flex-col gap-1" data-line-options>
+      <Row label="Path">
+        {CURVES.map((curve) => (
+          <Chip
+            key={curve.id}
+            active={settings.lineCurve === curve.id}
+            label={curve.hint}
+            onClick={() => onSettingsChange({ lineCurve: curve.id })}
+          >
+            <span data-line-curve={curve.id}>{curve.label}</span>
+          </Chip>
+        ))}
+      </Row>
+      <Row label="Line pattern">
+        <select
+          className={SELECT}
+          aria-label="Line pattern"
+          value={settings.pattern}
+          onChange={(e) => onSettingsChange({ pattern: e.target.value as StrokePattern })}
+          data-line-pattern-select
+        >
+          {STROKE_PATTERNS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        <Chip
+          active={settings.arrowheads !== 'none'}
+          label={ARROW_LABEL[settings.arrowheads]}
+          onClick={() => onSettingsChange({ arrowheads: NEXT_ARROW[settings.arrowheads] })}
+        >
+          {settings.arrowheads === 'none' ? 'No arrow' : settings.arrowheads === 'end' ? 'End →' : 'Both ↔'}
+        </Chip>
+      </Row>
+      <Row label="Depth">
+        <input
+          type="range"
+          className="h-1 w-28 accent-blue-600 disabled:opacity-40"
+          min={MIN_CURVE_AMPLITUDE}
+          max={MAX_CURVE_AMPLITUDE}
+          step={0.01}
+          disabled={!curved}
+          value={settings.curveAmplitude}
+          aria-label="Curve depth"
+          onChange={(e) => onSettingsChange({ curveAmplitude: Number(e.target.value) })}
+          data-curve-amplitude
+        />
+        <Chip active={settings.curveFlip} disabled={!curved} label="Mirror the curve" onClick={() => onSettingsChange({ curveFlip: !settings.curveFlip })}>
+          Flip
+        </Chip>
+      </Row>
+      <Row label="Cycles">
+        <input
+          type="number"
+          className={`${SELECT} w-16 disabled:opacity-40`}
+          min={MIN_CURVE_CYCLES}
+          max={MAX_CURVE_CYCLES}
+          step={1}
+          disabled={!periodic}
+          value={settings.curveCycles}
+          aria-label="Curve cycles"
+          onChange={(e) => {
+            const value = Math.round(Number(e.target.value));
+            if (Number.isFinite(value)) {
+              onSettingsChange({ curveCycles: Math.min(MAX_CURVE_CYCLES, Math.max(MIN_CURVE_CYCLES, value)) });
+            }
+          }}
+          data-curve-cycles
+        />
+        <Chip active={settings.angleSnap} label="Snap to 15 degrees" onClick={() => onSettingsChange({ angleSnap: !settings.angleSnap })}>
+          15°
         </Chip>
       </Row>
     </div>
