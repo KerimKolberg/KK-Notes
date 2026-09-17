@@ -119,3 +119,8 @@ export function pdfRectToPageBox(rect: readonly number[], viewBox: PdfViewBox, p
   const scale = pageDimensions.width / displaySizePoints(viewBox, rotation).width;
   return pdfRectToPageBoxScaled(rect, viewBox, rotation, scale);
 }
+
+/** Quantise raster widths so zooming doesn't re-render a PDF page on every step. */
+export function backgroundWidthBucket(cssWidth: number, dpr: number): number {
+  return Math.min(4096, Math.max(128, Math.ceil((cssWidth * dpr) / 128) * 128));
+}

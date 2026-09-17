@@ -1,4 +1,4 @@
-import type { CoordinatePlaneConfig, StrokePattern, ToolSettings } from './types';
+import type { CoordinatePlaneConfig, StrokePattern, StylusSettings, ToolSettings } from './types';
 
 /** Pressure substituted when a device reports `0` (mouse, many touch digitisers). */
 export const DEFAULT_PRESSURE = 0.5;
@@ -79,6 +79,11 @@ export const AXIS_LABEL_PRESETS: readonly { readonly x: string; readonly y: stri
   { x: 'f', y: '|H(f)|' },
 ];
 
+export const DEFAULT_STYLUS_SETTINGS: Readonly<StylusSettings> = {
+  barrelButton: 'eraser-stroke',
+  eraserEnd: 'eraser-stroke',
+};
+
 export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   tool: 'pen',
   color: '#1f1f24',
@@ -89,6 +94,7 @@ export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   angleSnap: false,
   holdToSnap: true,
   coordinatePlane: DEFAULT_COORDINATE_PLANE,
+  stylus: DEFAULT_STYLUS_SETTINGS,
 };
 
 /** Quick-pick swatches shown in the toolbar. */

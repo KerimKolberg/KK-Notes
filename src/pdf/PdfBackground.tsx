@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import type { Page } from '../document/types';
-import { backgroundWidthBucket, renderPdfPageBitmap } from './pdfRenderer';
+import { backgroundWidthBucket } from './pdfCoords';
 
 export interface PdfBackgroundProps {
   page: Page;
@@ -27,7 +27,9 @@ export const PdfBackground = memo(function PdfBackground({ page, cssWidth }: Pdf
   useEffect(() => {
     if (!ref) return;
     let cancelled = false;
-    renderPdfPageBitmap(ref, targetWidth)
+    // Lazy: keeps PDF.js out of the initial bundle until a PDF page is on screen.
+    import('./pdfRenderer')
+      .then((renderer) => renderer.renderPdfPageBitmap(ref, targetWidth))
       .then((b) => {
         if (!cancelled) setBitmap(b);
       })

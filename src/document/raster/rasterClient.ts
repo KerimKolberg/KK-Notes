@@ -2,10 +2,19 @@
  * Front door for rasterisation: a module Worker when the platform allows it,
  * otherwise a serial main-thread queue that yields between jobs.
  */
-import { renderPdfPageBitmap } from '../../pdf/pdfRenderer';
 import type { PageVisual } from '../types';
 import type { RasterWorkerRequest, RasterWorkerResponse } from './protocol';
 import { rasterizePage } from './rasterize';
+
+/**
+ * PDF.js is ~2 MB and only needed once a PDF page exists, so the renderer
+ * module is loaded on first use and never sits in the entry chunk.
+ */
+let pdfRendererModule: Promise<typeof import('../../pdf/pdfRenderer')> | null = null;
+function loadPdfRenderer(): Promise<typeof import('../../pdf/pdfRenderer')> {
+  pdfRendererModule ??= import('../../pdf/pdfRenderer');
+  return pdfRendererModule;
+}
 
 /** The worker never needs PDF bytes; strip them so the message stays small. */
 function forWorker(page: PageVisual): PageVisual {
@@ -49,7 +58,8 @@ export class RasterClient {
     const ref = page.pdf;
     if (!ref) return this.requestOnMainThread(page, targetWidth);
     const job = this.queue
-      .then(() => renderPdfPageBitmap(ref, targetWidth))
+      .then(() => loadPdfRenderer())
+      .then((renderer) => renderer.renderPdfPageBitmap(ref, targetWidth))
       .then((background) => rasterizePage(page, targetWidth, background));
     this.queue = job.catch(() => undefined);
     return job;

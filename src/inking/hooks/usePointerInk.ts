@@ -8,6 +8,7 @@ import {
 import { buildLineHud, geometricSegments, type AngleArc } from '../engine/angleHud';
 import { strokeHitBySegment } from '../engine/hitTest';
 import {
+  isBarrelPress,
   isPointerAccepted,
   normalizePointerType,
   normalizePressure,
@@ -57,6 +58,8 @@ export interface UsePointerInkOptions {
   contentScaleRef?: RefObject<number>;
   /** Fired when an accepted pointer starts any session (used to activate a page). */
   onInteractionStart?: () => void;
+  /** The pen's barrel button is mapped to select mode and was pressed on the surface. */
+  onBarrelSelect?: () => void;
   onCommitStroke: (stroke: Stroke) => void;
   onEraseStrokes: (ids: ReadonlySet<string>) => void;
   /** Full replay of the committed layer (honours `hiddenIdsRef`). */
@@ -459,9 +462,14 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         else return;
       }
 
-      const tool = resolveEffectiveTool(settings.tool, pointerType, e.button, e.buttons);
-      // The select tool leaves the surface to the media / form layers.
-      if (tool === null || tool === 'select') return;
+      const tool = resolveEffectiveTool(settings.tool, pointerType, e.button, e.buttons, settings.stylus);
+      if (tool === null) return;
+      // The select tool leaves the surface to the media / form layers. When a
+      // barrel press asked for it, let the host switch tools for the duration.
+      if (tool === 'select') {
+        if (settings.tool !== 'select' && isBarrelPress(pointerType, e.button, e.buttons)) opts.onBarrelSelect?.();
+        return;
+      }
 
       const canvas = e.currentTarget;
       const rect = canvas.getBoundingClientRect();

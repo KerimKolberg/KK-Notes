@@ -57,6 +57,11 @@ export interface DocumentStore {
   /** True while a PDF export is being assembled. */
   exporting: boolean;
   selectedImage: ImageSelection | null;
+  /** Native path of the open `.notex` file, if any. */
+  filePath: string | null;
+  /** Content as of the last save / load; view state (zoom, scroll) is not part of it. */
+  savedPages: readonly Page[] | null;
+  savedTitle: string | null;
 
   // navigation / view
   setActivePage: (index: number) => void;
@@ -95,7 +100,17 @@ export interface DocumentStore {
   sendImageToBack: (pageId: string, imageId: string) => void;
   selectImage: (selection: ImageSelection | null) => void;
 
-  loadDocument: (doc: Document) => void;
+  /** Replace the document; `path` is the native file it came from. Marks it clean. */
+  loadDocument: (doc: Document, path?: string | null) => void;
+  newDocument: () => void;
+  setFilePath: (path: string | null) => void;
+  /** Record the current content as saved. */
+  markSaved: (path?: string | null) => void;
+}
+
+/** True when the document content differs from the last saved / loaded state. */
+export function selectIsDirty(s: DocumentStore): boolean {
+  return s.document.pages !== s.savedPages || s.document.title !== s.savedTitle;
 }
 
 function clampZoom(zoom: number): number {
@@ -124,13 +139,18 @@ function updateTargets(doc: Document, target: PageTarget, fn: (page: Page) => Pa
   return { ...doc, pages };
 }
 
+const initialDocument = createDocument(1);
+
 export const useDocumentStore = create<DocumentStore>()((set) => ({
-  document: createDocument(1),
+  document: initialDocument,
   scrollRequest: 0,
   arrangerOpen: false,
   importDialogOpen: false,
   exporting: false,
   selectedImage: null,
+  filePath: null,
+  savedPages: initialDocument.pages,
+  savedTitle: initialDocument.title,
 
   setActivePage: (index) =>
     set((s) => {
@@ -295,7 +315,22 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
       (s.selectedImage?.pageId === selection?.pageId && s.selectedImage?.imageId === selection?.imageId) ? s : { selectedImage: selection },
     ),
 
-  loadDocument: (doc) => set({ document: doc, scrollRequest: 0, selectedImage: null }),
+  loadDocument: (doc, path = null) =>
+    set({ document: doc, scrollRequest: 0, selectedImage: null, filePath: path, savedPages: doc.pages, savedTitle: doc.title }),
+
+  newDocument: () => {
+    const doc = createDocument(1);
+    set({ document: doc, scrollRequest: 0, selectedImage: null, filePath: null, savedPages: doc.pages, savedTitle: doc.title });
+  },
+
+  setFilePath: (path) => set({ filePath: path }),
+
+  markSaved: (path) =>
+    set((s) => ({
+      savedPages: s.document.pages,
+      savedTitle: s.document.title,
+      ...(path !== undefined ? { filePath: path } : {}),
+    })),
 }));
 
 /** Convenience selector for the active page. */

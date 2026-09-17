@@ -5,6 +5,8 @@
 import { RasterCache } from '../document/raster/rasterCache';
 import type { PdfPageRef } from '../document/types';
 import { displaySizePoints } from './pdfCoords';
+
+export { backgroundWidthBucket } from './pdfCoords';
 import { ANNOTATION_MODE_FORMS, openPdfDocument, type PDFDocumentProxy } from './pdfjs';
 
 const documents = new Map<string, Promise<PDFDocumentProxy>>();
@@ -24,11 +26,6 @@ export function getPdfDocument(ref: Pick<PdfPageRef, 'sourceId' | 'data'>): Prom
     documents.set(ref.sourceId, pending);
   }
   return pending;
-}
-
-/** Quantise widths so zooming doesn't re-render on every step. */
-export function backgroundWidthBucket(cssWidth: number, dpr: number): number {
-  return Math.min(4096, Math.max(128, Math.ceil((cssWidth * dpr) / 128) * 128));
 }
 
 export function pdfBackgroundKey(ref: PdfPageRef, targetWidth: number): string {

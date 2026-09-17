@@ -6,6 +6,7 @@ import { PdfBackground } from '../../pdf/PdfBackground';
 import type { PageLayout } from '../layout';
 import { useDocumentStore } from '../store';
 import { templateSvgDataUrl } from '../templates';
+import { beginTemporaryTool } from '../toolStore';
 import type { Page } from '../types';
 import { MediaLayer } from './MediaLayer';
 import { PageSnapshot } from './PageSnapshot';
@@ -55,6 +56,7 @@ export const PageFrame = memo(function PageFrame({
   const onCommit = useCallback((stroke: Stroke) => commitStroke(page.id, stroke), [commitStroke, page.id]);
   const onErase = useCallback((ids: ReadonlySet<string>) => eraseStrokes(page.id, ids), [eraseStrokes, page.id]);
   const onInteractionStart = useCallback(() => setActivePage(index), [setActivePage, index]);
+  const onBarrelSelect = useCallback(() => beginTemporaryTool('select'), []);
 
   return (
     <div
@@ -90,6 +92,7 @@ export const PageFrame = memo(function PageFrame({
               onCommitStroke={onCommit}
               onEraseStrokes={onErase}
               onInteractionStart={onInteractionStart}
+              onBarrelSelect={onBarrelSelect}
               currentTool={currentTool}
               interactive={currentTool !== 'select'}
               ariaLabel={`Page ${page.pageNumber} drawing surface`}

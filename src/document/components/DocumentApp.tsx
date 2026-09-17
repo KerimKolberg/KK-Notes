@@ -1,11 +1,13 @@
-import { useCallback, useEffect } from 'react';
+import { Suspense, lazy, useCallback, useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useLatestRef } from '../../inking/hooks/useLatestRef';
 import { useUndoRedoShortcuts } from '../../inking/hooks/useUndoRedoShortcuts';
 import { InkingToolbar } from '../../inking/InkingToolbar';
-import { buildPdfPages, loadPdfFile } from '../../pdf/import';
-import { ImportPdfDialog } from '../../pdf/ImportPdfDialog';
+import { useDesktopIntegration } from '../../desktop/useDesktopIntegration';
 import { useMediaInput } from '../hooks/useMediaInput';
+
+/** PDF.js only loads when the import dialog is actually opened. */
+const ImportPdfDialog = lazy(() => import('../../pdf/ImportPdfDialog').then((m) => ({ default: m.ImportPdfDialog })));
 import { useDocumentStore } from '../store';
 import { useToolStore } from '../toolStore';
 import { DocumentViewer } from './DocumentViewer';
@@ -41,10 +43,14 @@ export function DocumentApp() {
   const redoActive = useCallback(() => redo(activePageId), [redo, activePageId]);
   const clearActive = useCallback(() => clearPage(activePageId), [clearPage, activePageId]);
   useUndoRedoShortcuts(undoActive, redoActive);
+  useDesktopIntegration();
+
+  const importDialogOpen = useDocumentStore((s) => s.importDialogOpen);
 
   // Dropped PDFs import all their pages at the end of the document.
   const importDroppedPdf = useCallback((file: File) => {
     void (async () => {
+      const { loadPdfFile, buildPdfPages } = await import('../../pdf/import');
       const loaded = await loadPdfFile(file);
       const pages = await buildPdfPages(loaded, loaded.pages.map((p) => p.index), { sizeMode: 'preserve' });
       useDocumentStore.getState().appendPages(pages);
@@ -84,7 +90,11 @@ export function DocumentApp() {
         />
       </div>
       <PageArranger />
-      <ImportPdfDialog />
+      {importDialogOpen && (
+        <Suspense fallback={null}>
+          <ImportPdfDialog />
+        </Suspense>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { memo, useId } from 'react';
+import { memo, useId, useState } from 'react';
 import {
   AXIS_LABEL_PRESETS,
   COLOR_PALETTE,
@@ -7,7 +7,15 @@ import {
   STROKE_PATTERNS,
 } from './constants';
 import styles from './InkingCanvas.module.css';
-import type { ArrowheadMode, CoordinatePlaneConfig, StrokePattern, ToolSettings, ToolType } from './types';
+import type {
+  ArrowheadMode,
+  BarrelButtonAction,
+  CoordinatePlaneConfig,
+  EraserEndAction,
+  StrokePattern,
+  ToolSettings,
+  ToolType,
+} from './types';
 
 export interface InkingToolbarProps {
   settings: Readonly<ToolSettings>;
@@ -56,7 +64,10 @@ export const InkingToolbar = memo(function InkingToolbar({
   onRedo,
   onClear,
 }: InkingToolbarProps) {
+  const [stylusOpen, setStylusOpen] = useState(false);
   const ids = {
+    barrel: useId(),
+    eraserEnd: useId(),
     size: useId(),
     color: useId(),
     touch: useId(),
@@ -200,6 +211,17 @@ export const InkingToolbar = memo(function InkingToolbar({
           Touch Draw
         </label>
 
+        <button
+          type="button"
+          className={styles.button}
+          aria-pressed={stylusOpen}
+          aria-controls="stylus-settings"
+          title="Pen hardware button mappings"
+          onClick={() => setStylusOpen((v) => !v)}
+        >
+          Stylus
+        </button>
+
         <span className={styles.divider} aria-hidden="true" />
 
         <div className={styles.group}>
@@ -220,6 +242,38 @@ export const InkingToolbar = memo(function InkingToolbar({
           </button>
         </div>
       </div>
+
+      {stylusOpen && (
+        <div id="stylus-settings" className={styles.row} role="group" aria-label="Stylus buttons">
+          <label htmlFor={ids.barrel} className={styles.sizeLabel}>
+            Barrel button
+            <select
+              id={ids.barrel}
+              className={styles.select}
+              value={settings.stylus.barrelButton}
+              onChange={(e) =>
+                onSettingsChange({ stylus: { ...settings.stylus, barrelButton: e.target.value as BarrelButtonAction } })
+              }
+            >
+              <option value="eraser-stroke">Stroke eraser (while held)</option>
+              <option value="eraser-pixel">Pixel eraser (while held)</option>
+              <option value="select">Select / lasso (while held)</option>
+            </select>
+          </label>
+          <label htmlFor={ids.eraserEnd} className={styles.sizeLabel}>
+            Eraser end
+            <select
+              id={ids.eraserEnd}
+              className={styles.select}
+              value={settings.stylus.eraserEnd}
+              onChange={(e) => onSettingsChange({ stylus: { ...settings.stylus, eraserEnd: e.target.value as EraserEndAction } })}
+            >
+              <option value="eraser-stroke">Stroke eraser</option>
+              <option value="eraser-pixel">Pixel eraser</option>
+            </select>
+          </label>
+        </div>
+      )}
 
       {settings.tool === 'coordinate-plane' && (
         <div className={styles.row} role="group" aria-label="Coordinate plane">

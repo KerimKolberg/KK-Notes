@@ -10,11 +10,90 @@ with Tailwind CSS and follows the system light/dark theme.
 
 ```bash
 npm install
-npm run dev        # Vite dev server
-npm test           # unit tests (vitest)
-npm run typecheck  # strict tsc
-npm run build      # typecheck + production bundle
+npm run dev            # Vite dev server (web)
+npm test               # unit tests (vitest)
+npm run typecheck      # strict tsc
+npm run build          # typecheck + production bundle + bundle guard
+npm run check:bundle   # assert pdf.js / pdf-lib are lazy chunks
+npm run check:rust     # cargo check of the Tauri shell (Windows MSVC target)
+npm run desktop:dev    # Tauri v2 desktop shell, hot reloading
+npm run desktop:build  # NSIS / MSI installers (run on Windows)
 ```
+
+## Desktop shell (Tauri v2, `src-tauri/`, `src/desktop/`)
+
+**Setup (Windows 2-in-1 target).** Install Node 22, Rust via
+[rustup](https://rustup.rs) (the MSVC toolchain, which needs the *Desktop
+development with C++* workload of the Visual Studio Build Tools) and make sure
+the WebView2 runtime is present (it ships with Windows 11; the NSIS/MSI
+bundles download it otherwise). Then:
+
+```bash
+npm install                 # installs @tauri-apps/api, plugin-dialog, plugin-fs, @tauri-apps/cli
+npm run desktop:dev         # starts Vite and the Tauri window
+npm run desktop:build       # installers in src-tauri/target/release/bundle/
+npx tauri icon my-icon.png  # replace the generated placeholder icons in src-tauri/icons/
+```
+
+From a non-Windows host the Rust side can still be verified without the
+GTK/WebKit libraries: `npm run check:rust` runs `cargo check` for the
+`x86_64-pc-windows-msvc` target (add it with `rustup target add`).
+
+**Configuration** (`src-tauri/tauri.conf.json`). One maximized, resizable,
+natively-decorated window that follows the system theme like the web UI;
+WebView2 launched with hardware-accelerated rasterisation
+(`--enable-gpu-rasterization --enable-zero-copy`) and Edge UI features off;
+`dragDropEnabled: false` so HTML5 image/PDF drops keep reaching the page;
+zoom hotkeys off; a CSP that permits the pdf.js worker, wasm codecs, data and
+blob URLs and the IPC origin; `.notex` registered as a file association.
+`src-tauri/capabilities/default.json` grants `dialog:default`, `fs:default`
+with read/write scope under `$APPDATA`, and the window permissions used for
+fullscreen, maximize and title updates.
+
+**Rust commands** (`src-tauri/src/commands.rs`), all with atomic temp-file +
+rename writes:
+
+| Command | Purpose |
+| --- | --- |
+| `save_document(path, contents)` / `open_document(path)` | `.notex` JSON on disk |
+| `write_binary_file` | raw IPC body → file (PDF export lands on disk without a blob download); destination in the percent-encoded `x-path` header |
+| `save_draft` / `load_draft` / `clear_draft` | autosave in `app_data_dir/drafts/autosave.notex` |
+| `list_recent` / `add_recent` / `remove_recent` | last five documents in `app_data_dir/recent.json`, de-duplicated, pruned when files vanish |
+| `get_startup_file` | the `.notex` passed on the command line (file association), handed out once |
+
+**`.notex` format** (`src/desktop/notex.ts`). A versioned envelope
+`{ format: 'notex', version: 1, savedAt, app, document }` around the document
+serialization: title, view mode, zoom, pages with dimensions, template and
+config, background colour, stroke arrays (freehand and geometric), image
+layers as data URLs, AcroForm fields and values, and PDF sources stored once
+as base64. A bare serialized document (`.json`) is also accepted. Undo history
+is not persisted.
+
+**Frontend integration** (`src/desktop/`). `tauri.ts` detects the shell and
+lazy-loads the `@tauri-apps/*` modules so the web build never pays for them.
+`fileService.ts` implements Save / Save As / Open / Export PDF / drafts /
+recents / fullscreen over the Rust commands and native dialogs, with browser
+fallbacks (downloads, a file input, `localStorage` drafts). `fileActions.ts`
+holds the File-menu actions (with an unsaved-changes prompt),
+`useDesktopIntegration.ts` opens a startup file or offers the autosaved draft,
+debounces autosave 1.5 s after content edits, keeps the window title in sync
+with a dirty marker, binds `Ctrl+N/O/S/Shift+S/E` and `F11`, and suppresses
+the WebView context menu outside text fields (Windows Ink press-and-hold would
+otherwise open it mid-stroke). Dirty tracking compares the page array and
+title against the last saved snapshot, so scrolling and zooming never count as
+edits.
+
+**Stylus buttons.** `resolveEffectiveTool` maps hardware buttons per the
+*Stylus* settings in the toolbar: the eraser end (`button 5` / `buttons & 32`)
+routes to the stroke or pixel eraser without touching the toolbar, and the
+barrel button (`buttons & 2` while touching) acts as a stroke eraser, pixel
+eraser, or temporary Select mode that restores the previous tool when the pen
+lifts. A barrel press while merely hovering is ignored.
+
+**Bundle.** pdf.js and pdf-lib are only reached through dynamic `import()`
+(raster client, PDF background, exporter, `React.lazy` import dialog), so the
+entry chunk is ~330 kB instead of ~1.2 MB; `scripts/check-bundle.mjs` fails
+the build if either library ends up in the critical path.
 
 ## Document system (`src/document/`)
 
@@ -80,6 +159,18 @@ src/document/
 ├── hooks/              useRasterBitmap, usePointerReorder, useMediaInput
 └── components/         DocumentApp, TopBar, DocumentViewer, PageFrame, PageSnapshot,
                         PageArranger, PageThumbnail, MediaLayer
+
+src/desktop/
+├── notex.ts            .notex envelope encode / decode
+├── tauri.ts            shell detection, lazy @tauri-apps imports
+├── fileService.ts      save / open / export / drafts / recents / window (desktop + browser)
+├── fileActions.ts      File menu actions shared by menu and shortcuts
+├── useDesktopIntegration.ts  startup file, draft restore, autosave, title, shortcuts
+└── FileMenu.tsx  desktopStore.ts
+
+src-tauri/
+├── Cargo.toml  build.rs  tauri.conf.json  capabilities/default.json  icons/
+└── src/  main.rs  lib.rs  commands.rs
 
 src/pdf/
 ├── pdfjs.ts            PDF.js bootstrap (legacy build, worker URL, asset paths)

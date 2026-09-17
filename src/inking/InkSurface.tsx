@@ -21,6 +21,8 @@ export interface InkSurfaceProps {
   onEraseStrokes: (ids: ReadonlySet<string>) => void;
   /** An accepted pointer began a stroke / erase / drag on this surface. */
   onInteractionStart?: () => void;
+  /** Barrel button mapped to select was pressed: switch tools temporarily. */
+  onBarrelSelect?: () => void;
   currentTool: ToolSettings['tool'];
   /** When false the surface ignores pointer input (e.g. the select tool is active). Default true. */
   interactive?: boolean;
@@ -54,6 +56,7 @@ export const InkSurface = memo(function InkSurface({
   onCommitStroke,
   onEraseStrokes,
   onInteractionStart,
+  onBarrelSelect,
   currentTool,
   interactive = true,
   ariaLabel = 'Drawing surface',
@@ -103,6 +106,7 @@ export const InkSurface = memo(function InkSurface({
     allowMouse,
     contentScaleRef: zoomRef,
     ...(onInteractionStart ? { onInteractionStart } : {}),
+    ...(onBarrelSelect ? { onBarrelSelect } : {}),
     onCommitStroke,
     onEraseStrokes,
     redrawCommitted,

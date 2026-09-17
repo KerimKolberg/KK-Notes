@@ -209,6 +209,16 @@ export type Stroke = FreehandStroke | GeometricStroke;
 // Settings / history / component API
 // ---------------------------------------------------------------------------
 
+/** What a pen's barrel (side) button does while held (tool ids). */
+export type BarrelButtonAction = 'eraser-stroke' | 'eraser-pixel' | 'select';
+/** What the pen's eraser end (inverted stylus) does (tool ids). */
+export type EraserEndAction = 'eraser-stroke' | 'eraser-pixel';
+
+export interface StylusSettings {
+  readonly barrelButton: BarrelButtonAction;
+  readonly eraserEnd: EraserEndAction;
+}
+
 /** User-adjustable tool state surfaced by the toolbar. */
 export interface ToolSettings {
   tool: ToolType;
@@ -225,6 +235,8 @@ export interface ToolSettings {
   /** Hold the pointer still at the end of a stroke to convert it to a shape. */
   holdToSnap: boolean;
   coordinatePlane: CoordinatePlaneConfig;
+  /** Hardware stylus button mappings (Windows Ink / W3C Pointer Events). */
+  stylus: StylusSettings;
 }
 
 /** A stroke together with the index it occupied before removal. */

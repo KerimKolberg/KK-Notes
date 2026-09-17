@@ -6,3 +6,5 @@ coverage
 .DS_Store
 npm-debug.log*
 public/pdfjs
+src-tauri/target
+src-tauri/gen/schemas
