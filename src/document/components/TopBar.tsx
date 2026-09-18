@@ -6,6 +6,7 @@ import {
   Columns3,
   FileDown,
   FileUp,
+  House,
   Layers,
   Lock,
   LockOpen,
@@ -17,6 +18,7 @@ import {
   ZoomOut,
   type LucideIcon,
 } from 'lucide-react';
+import { useRouteStore } from '../../library/routeStore';
 import { useDesktopStore } from '../../desktop/desktopStore';
 import { actionExportPdf } from '../../desktop/fileActions';
 import { FileMenu } from '../../desktop/FileMenu';
@@ -45,6 +47,7 @@ const VIEW_MODES: readonly ViewModeDescriptor[] = [
  * as the window narrows, and the icons stay.
  */
 export function TopBar() {
+  const backToLibrary = useRouteStore((s) => s.backToLibrary);
   const { title, pageCount, activePageIndex, viewMode, zoom, arrangerOpen, exporting, readOnly, dirty, canUndo, canRedo, activePageId } =
     useDocumentStore(
       useShallow((s) => {
@@ -113,6 +116,16 @@ export function TopBar() {
     >
       {/* Group 1: document and history. */}
       <div className="flex items-center gap-0.5" role="group" aria-label="Document and history">
+        {/* Out of the document and back to the library. Leftmost, because it
+            is the way back up and that is where a back control belongs. */}
+        <IconButton
+          icon={House}
+          label="Back to library"
+          hint="closes this document"
+          onClick={backToLibrary}
+          tooltipSide="bottom"
+          data-back-to-library
+        />
         <FileMenu />
         <IconButton
           icon={Layers}

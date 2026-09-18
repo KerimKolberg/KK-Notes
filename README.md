@@ -3,7 +3,9 @@
 A React + TypeScript notes app for 2-in-1 pen/touch laptops: a low-latency
 inking engine (`src/inking/`) with palm rejection, pressure-sensitive strokes
 via [perfect-freehand], STEM shape tools and hold-to-snap, hosted in a
-multi-page document system (`src/document/`) with procedural page templates,
+multi-page document system (`src/document/`) behind a document library home
+screen with folders and cross-device sync (`src/library/`,
+`src-tauri/notes-sync/`), with procedural page templates,
 canvas virtualisation, a Samsung Notes-style page arranger, a media layer of
 images, sticky notes and tables, a lasso selection tool, two-finger pan / pinch-zoom navigation, a read-only
 lock, a disappearing laser pointer, notebook covers, vertical *and*
@@ -21,6 +23,7 @@ npm run typecheck      # strict tsc
 npm run build          # typecheck + production bundle + bundle guard
 npm run check:bundle   # assert pdf.js / pdf-lib are lazy chunks
 npm run check:rust     # cargo check of the Tauri shell (Windows MSVC target)
+npm run test:rust      # the sync engine's own tests (no webview needed)
 npm run check:android  # assert the Android project carries this repo's customizations
 npm run desktop:dev    # Tauri v2 desktop shell, hot reloading
 npm run desktop:build  # NSIS / MSI installers (run on Windows)
@@ -111,6 +114,111 @@ lifts. A barrel press while merely hovering is ignored.
 (raster client, PDF background, exporter, `React.lazy` import dialog), so the
 entry chunk is ~330 kB instead of ~1.2 MB; `scripts/check-bundle.mjs` fails
 the build if either library ends up in the critical path.
+
+## Document library and sync (`src/library/`, `src-tauri/notes-sync/`)
+
+The app opens on a **library**, not a document: folders and cards for
+everything written, in a grid or a list, sorted by name, date modified or date
+created. Opening a card routes to the document; *Back to library* in its top
+bar routes back.
+
+**Routing** is a three-line reducer (`routeStore.ts`) rather than a router
+dependency, because there are exactly two views and one of them has no URL to
+speak of. `nextRoute` is pure, so the navigation rules are tested without
+mounting anything, and it returns the *same object* when nothing changes so a
+no-op navigation cannot re-render the tree it was meant to leave alone. A
+document remembers the folder it was opened from, so going back lands where it
+started rather than at the root; *Home* goes to the root, which is the way out
+of a library navigated deep into.
+
+Leaving a document **releases it**. A document is the largest thing the app
+holds — every page's strokes, every embedded image as a data URL, any imported
+PDF — with decoded page bitmaps in the raster cache on top, and `ImageBitmap`
+holds memory outside the JS heap, so dropping the reference is not enough.
+`releaseDocument` resets the store and clears the cache, closing each bitmap.
+The two views are swapped rather than both kept mounted behind a CSS toggle,
+for the same reason.
+
+**Thumbnails come out of the file, not out of the document.** A library of a
+hundred notebooks cannot parse a hundred documents to draw a hundred cards.
+`notes-sync`'s `read_thumbnail_source` deserialises a `.notex` straight into a
+struct that keeps page one: `serde_json` reading into typed structs is a
+streaming parser, so the fields the target does not declare — the other pages,
+and `pdfSources`, which carries whole imported PDFs as base64 and is routinely
+the largest thing in the file — are consumed as `IgnoredAny`, advancing over
+the tokens without building a value. A custom `FirstOf<T>` visitor does the
+same for the pages array. The file is read once and the peak retained memory
+is one page. The frontend then hydrates that page alone and rasterises it with
+the same renderer the page snapshots use, and only for cards actually on
+screen (an `IntersectionObserver` gates the work). A page that references a
+PDF is drawn without it: fetching the source to fill a 200 px card would undo
+the whole point.
+
+**Folders** are real directories and filing a note is a real move — drag a
+card onto a folder. Nothing overwrites: a name already taken gets a numbered
+suffix, because dragging a file onto a folder is not a request to destroy
+what was already called that. Every path from the frontend is checked against
+the library root before it is used, since one `..` in a folder name is all it
+takes to write somewhere else by accident.
+
+### The sync engine
+
+`src-tauri/notes-sync/` is a workspace crate with **no Tauri dependency**. The
+shell cannot be compiled — let alone tested — without a platform webview, and
+none of this needs one, so `npm run test:rust` runs the engine's 54 tests
+anywhere. The Tauri side (`library_commands.rs`) is a thin IPC surface over it.
+
+**Watching.** A `notify` watcher over the library feeds a thread that waits
+for a burst to settle before reporting: an atomic save is a create, a write, a
+flush and a rename — four events for one edit — and the autosave fires every
+1.5 s while someone is writing. Temp files and hidden files are filtered out,
+so a half-written document is never uploaded. Watching is best-effort by
+nature — every backend has a window where a file created inside a directory
+that was itself just created is missed, and inotify drops events when its
+queue overflows — so it is an optimisation that makes sync feel immediate,
+never the only trigger: the library asks for a pass when it opens, which
+reconciles anything missed.
+
+**Deciding** is three-way, not two. Comparing local against remote only says
+*that* they differ, never which way to move: a file edited here looks exactly
+like a file edited there. What distinguishes them is the digest recorded at
+the last successful sync — the base. Against that, one side having moved means
+copy it over, both sides having moved to the same content means agree on a new
+base, and both having moved differently means ask. A two-way comparison is how
+sync tools silently eat a page of notes. Decisions are made on SHA-256 of the
+content, never on timestamps: a clock that runs fast, a tool that preserves
+mtimes, a cloud client that rewrites a file byte for byte, all produce
+timestamps that say "changed" about a file that did not.
+
+**Conflicts stop the engine** rather than being guessed. Both copies are left
+exactly as they are and the frontend shows a modal. *Keep both* leads, because
+it is the only one of the three answers that cannot throw away work: the
+incoming copy lands beside the local one as `Week 1 (conflicted copy from
+<device>).notex` — the device name is there because the point of keeping both
+is being able to tell them apart afterwards, and "copy 2" does not — and is
+uploaded too, so both devices end up holding both versions. A deletion on one
+side and an edit on the other is a conflict as well; deleting someone's edit
+without asking is the one thing a sync engine must never do.
+
+**`CloudProvider`** is the seam a real backend plugs into. Nothing in the
+crate talks to a network; the trait is deliberately the intersection of WebDAV
+(`PROPFIND`, `GET`, `PUT`, `DELETE`) and Google Drive (`files.list`,
+`files.get`, `files.create`, `files.update`) — a flat listing keyed by relative
+path, whole-file get and put, delete — so adding one is a new implementation
+rather than a rewrite. Drive's file ids and WebDAV's collections are each
+provider's own problem. Until an account is connected, `OfflineProvider`
+refuses every operation rather than pretending one succeeded, and the status
+pill reads *Offline*, which is a truthful state and not an error.
+
+The status pill in the library's top bar shows Offline / Syncing / Up to date
+/ Needs attention, pushed from Rust over a `sync://status` event after each
+pass rather than polled.
+
+**In a browser** there is no filesystem and no Rust, so `browserLibrary.ts`
+keeps the same interface over `localStorage` — otherwise `npm run dev` would
+be useless for working on the library itself. It is a fallback, not a second
+product: there is no sync, the status stays `offline` truthfully, and a
+`localStorage` quota failure is surfaced rather than swallowed.
 
 ## Document system (`src/document/`)
 
@@ -1109,6 +1217,26 @@ src/debug/
 ├── profiler.ts             fps, ink latency, draw time, React commits; inert when off
 ├── DebugOverlay.tsx        the corner read-out
 └── RenderProfiler.tsx      always-mounted <Profiler> boundary
+
+src/library/
+├── routeStore.ts           pure route reducer + the store that releases a document
+├── useBoot.ts              file association / draft restore decides the first view
+├── libraryService.ts       one interface over the Tauri IPC and the browser fallback
+├── browserLibrary.ts       localStorage library for the web build
+├── sorting.ts              the ordering, mirroring notes-sync's
+├── thumbnail.ts            first page → card image, without the document
+├── LibraryView.tsx         grid / list, folders, sorting, sync status
+├── DocumentCard.tsx        lazily rendered card, drag to file
+├── SyncIndicator.tsx       Offline / Syncing / Up to date / Needs attention
+└── ConflictDialog.tsx      keep local, keep remote, keep both
+
+src-tauri/notes-sync/src/
+├── digest.rs               SHA-256 content fingerprints
+├── library.rs              listing, sorting, folders, path containment
+├── thumb.rs                streaming first-page extraction
+├── conflict.rs             the three-way decision and conflict naming
+├── provider.rs             the CloudProvider trait (WebDAV / Drive shaped)
+└── manager.rs              notify watcher, passes, conflict resolution
 ```
 
 [perfect-freehand]: https://github.com/steveruizok/perfect-freehand

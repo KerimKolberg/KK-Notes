@@ -1,8 +1,7 @@
 import { useEffect } from 'react';
 import { selectIsDirty, useDocumentStore } from '../document/store';
-import { useDesktopStore } from './desktopStore';
-import { actionExportPdf, actionNew, actionOpen, actionOpenPath, actionSave, actionSaveAs, actionToggleFullscreen, refreshRecent } from './fileActions';
-import { clearDraft, getStartupFile, loadDraft, saveDraft, setWindowTitle } from './fileService';
+import { actionExportPdf, actionNew, actionOpen, actionSave, actionSaveAs, actionToggleFullscreen, refreshRecent } from './fileActions';
+import { saveDraft, setWindowTitle } from './fileService';
 import { isTauri } from './tauri';
 
 export const AUTOSAVE_DEBOUNCE_MS = 1500;
@@ -13,48 +12,19 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * Desktop shell glue: startup file / draft restore, debounced autosave,
- * window title with dirty marker, File shortcuts, and WebView context-menu
- * suppression (Windows Ink press-and-hold would otherwise open it mid-stroke).
+ * Desktop shell glue for an *open document*: debounced autosave, window title
+ * with dirty marker, File shortcuts, and WebView context-menu suppression
+ * (Windows Ink press-and-hold would otherwise open it mid-stroke).
+ *
+ * Mounted with the document, so none of it is armed while the library is on
+ * screen — there is nothing to autosave and no title to mark dirty.
  */
 export function useDesktopIntegration(): void {
-  // Startup: a file association argument wins; otherwise offer the autosaved draft.
+  // Startup — the file association and the draft restore — happens above the
+  // router now (`useBoot`), because it decides *which view opens*: with the
+  // library as the home screen this component is not even mounted at boot.
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const startup = await getStartupFile();
-        if (cancelled) return;
-        if (startup) {
-          await actionOpenPath(startup);
-          return;
-        }
-        const draft = await loadDraft();
-        if (cancelled || !draft) return;
-        const store = useDocumentStore.getState();
-        if (selectIsDirty(store)) return; // the user already started working
-        store.loadDocument(draft.document, null);
-        // A restored draft is unsaved work: mark it dirty so Save / autosave stay armed.
-        useDocumentStore.setState({ savedPages: null, savedTitle: null });
-        useDesktopStore.getState().setNotice({
-          text: draft.savedAt ? `Restored autosaved draft from ${new Date(draft.savedAt).toLocaleString()}` : 'Restored autosaved draft',
-          action: {
-            label: 'Discard',
-            run: () => {
-              useDocumentStore.getState().newDocument();
-              void clearDraft();
-              useDesktopStore.getState().setNotice(null);
-            },
-          },
-        });
-      } catch {
-        /* no draft / startup file */
-      }
-    })();
     void refreshRecent();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   // Debounced autosave of dirty content.

@@ -85,7 +85,7 @@ fn describe(path: &Path) -> Result<FileInfo, String> {
 }
 
 /// Write `bytes` to `path` via a sibling temp file and an atomic rename.
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<FileInfo, String> {
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<FileInfo, String> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;

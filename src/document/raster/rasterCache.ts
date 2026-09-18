@@ -83,6 +83,19 @@ export class RasterCache {
   get size(): number {
     return this.entries.size;
   }
+
+  /**
+   * Drop every bitmap, closing each one.
+   *
+   * `ImageBitmap` holds memory outside the JS heap, so letting the map go out
+   * of scope is not enough — the pages of a closed document would sit in
+   * graphics memory until the GC eventually noticed. Called when a document
+   * is released.
+   */
+  clear(): void {
+    for (const bitmap of this.entries.values()) bitmap.close();
+    this.entries.clear();
+  }
 }
 
 export const rasterCache = new RasterCache();
