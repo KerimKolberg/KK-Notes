@@ -71,6 +71,7 @@ export function styleForTool(
         },
       };
     case 'line':
+      // The shape tool's dash and arrowheads are its own, not the pen's.
       return {
         color: settings.color,
         size: settings.size,
@@ -82,8 +83,8 @@ export function styleForTool(
         simulatePressure: false,
         taperStart: 0,
         taperEnd: 0,
-        pattern: settings.pattern,
-        arrowheads: settings.arrowheads,
+        pattern: settings.linePattern,
+        arrowheads: settings.lineArrowheads,
       };
     case 'coordinate-plane':
       return {

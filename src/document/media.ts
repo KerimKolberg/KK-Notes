@@ -18,13 +18,16 @@ import {
   MAX_TABLE_ROWS,
   MIN_IMAGE_SIZE,
   MIN_TRACK_FRACTION,
+  NOTE_BUBBLE_RADIUS,
   NOTE_DEFAULT_SIZE,
   NOTE_GRIP_HEIGHT,
   NOTE_PADDING,
+  NOTE_TAIL_HEIGHT,
+  NOTE_TAIL_WIDTH,
   TABLE_CELL_SIZE,
   TABLE_GRIP_HEIGHT,
 } from './constants';
-import type { ImageLayer, MediaBox, MediaObject, PageDimensions, StickyNote, TableLayer } from './types';
+import type { ImageLayer, MediaBox, MediaObject, NoteShape, PageDimensions, StickyNote, TableLayer } from './types';
 
 export type ResizeHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 export const RESIZE_HANDLES: readonly ResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -253,10 +256,27 @@ function placement(page: PageDimensions, width: number, height: number, at?: Poi
   return { x: centre.x - width / 2, y: centre.y - height / 2 };
 }
 
-export function createStickyNote(page: PageDimensions, zIndex: number, at?: Point, color = DEFAULT_NOTE_COLOR): StickyNote {
+export interface NoteInit {
+  readonly color?: string;
+  readonly shape?: NoteShape;
+}
+
+export function createStickyNote(page: PageDimensions, zIndex: number, at?: Point, init: NoteInit = {}): StickyNote {
   const { width, height } = NOTE_DEFAULT_SIZE;
   const { x, y } = placement(page, width, height, at);
-  return { kind: 'note', id: `note_${createStrokeId()}`, x, y, width, height, rotation: 0, zIndex, text: '', color };
+  return {
+    kind: 'note',
+    id: `note_${createStrokeId()}`,
+    x,
+    y,
+    width,
+    height,
+    rotation: 0,
+    zIndex,
+    text: '',
+    color: init.color ?? DEFAULT_NOTE_COLOR,
+    shape: init.shape ?? 'rectangle',
+  };
 }
 
 export interface TableInit {
@@ -414,14 +434,98 @@ export function wrapText(text: string, maxWidth: number, measure: (s: string) =>
   return lines;
 }
 
-/** The text area inside a note's card, below its grip and inside its padding. */
-export function noteTextBox(note: StickyNote): { x: number; y: number; width: number; height: number } {
+// ---------------------------------------------------------------------------
+// Note shapes
+// ---------------------------------------------------------------------------
+
+/** The outline of a note, defaulting to the rectangle older notes are. */
+export function noteShapeOf(note: StickyNote): NoteShape {
+  return note.shape ?? 'rectangle';
+}
+
+/**
+ * The drag lip across the top of the card — rectangles only.
+ *
+ * A full-width bar clipped to an ellipse comes out as a lens-shaped sliver
+ * and reads as a rendering bug. The other two shapes are dragged by the grip
+ * every placed object carries anyway, so they simply have no lip and give
+ * that height back to the text.
+ */
+export function noteLipHeight(note: StickyNote): number {
+  return noteShapeOf(note) === 'rectangle' ? NOTE_GRIP_HEIGHT : 0;
+}
+
+/** A bubble's tail, scaled down on a small note so it stays a tail. */
+export function noteTailSize(note: StickyNote): { width: number; height: number } {
   return {
-    x: note.x + NOTE_PADDING,
-    y: note.y + NOTE_GRIP_HEIGHT + NOTE_PADDING,
-    width: Math.max(1, note.width - NOTE_PADDING * 2),
-    height: Math.max(1, note.height - NOTE_GRIP_HEIGHT - NOTE_PADDING * 2),
+    width: Math.min(NOTE_TAIL_WIDTH, note.width * 0.35),
+    height: Math.min(NOTE_TAIL_HEIGHT, note.height * 0.25),
   };
+}
+
+/**
+ * The filled body of the note in its own frame (origin at its top-left). For
+ * a bubble this stops above the tail; for the other two it is the whole box.
+ */
+export function noteBodyBox(note: StickyNote): { x: number; y: number; width: number; height: number } {
+  const tail = noteShapeOf(note) === 'bubble' ? noteTailSize(note).height : 0;
+  return { x: 0, y: 0, width: note.width, height: Math.max(1, note.height - tail) };
+}
+
+/**
+ * The three corners of a bubble's tail in the note's own frame: it hangs from
+ * the lower left of the body, the way a speech balloon points back at whoever
+ * is speaking.
+ */
+export function noteTailPoints(note: StickyNote): [Point, Point, Point] {
+  const body = noteBodyBox(note);
+  const tail = noteTailSize(note);
+  const left = Math.min(body.width - tail.width, Math.max(0, body.width * 0.18));
+  return [
+    { x: left, y: body.height - 1 },
+    { x: left + tail.width, y: body.height - 1 },
+    { x: left + tail.width * 0.25, y: body.height + tail.height },
+  ];
+}
+
+/**
+ * The text area in the note's own frame: below the lip, inside the padding,
+ * and pulled in far enough that a line of text cannot poke out through the
+ * curve of the shape.
+ *
+ * For an ellipse that means the inscribed rectangle — the largest axis-aligned
+ * box that fits inside it, half the ellipse's size times the square root of
+ * two — which is why an oval note holds noticeably less than the rectangle of
+ * the same footprint. Anything roomier would clip mid-word at the sides.
+ */
+export function noteTextLocalBox(note: StickyNote): { x: number; y: number; width: number; height: number } {
+  const shape = noteShapeOf(note);
+  if (shape === 'ellipse') {
+    const halfW = (note.width / 2) * Math.SQRT1_2;
+    const halfH = (note.height / 2) * Math.SQRT1_2;
+    return {
+      x: note.width / 2 - halfW + NOTE_PADDING,
+      y: note.height / 2 - halfH + NOTE_PADDING,
+      width: Math.max(1, halfW * 2 - NOTE_PADDING * 2),
+      height: Math.max(1, halfH * 2 - NOTE_PADDING * 2),
+    };
+  }
+  const body = noteBodyBox(note);
+  // A bubble's corners are rounded, so its text starts inside the radius.
+  const inset = NOTE_PADDING + (shape === 'bubble' ? NOTE_BUBBLE_RADIUS * 0.4 : 0);
+  const top = noteLipHeight(note) + inset;
+  return {
+    x: inset,
+    y: top,
+    width: Math.max(1, body.width - inset * 2),
+    height: Math.max(1, body.height - top - inset),
+  };
+}
+
+/** The text area inside a note's card, in page coordinates. */
+export function noteTextBox(note: StickyNote): { x: number; y: number; width: number; height: number } {
+  const local = noteTextLocalBox(note);
+  return { x: note.x + local.x, y: note.y + local.y, width: local.width, height: local.height };
 }
 
 /** The grid area of a table, below its grip. */

@@ -1,13 +1,27 @@
 import { memo, useCallback, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Lock, LockOpen } from 'lucide-react';
-import { DEFAULT_TABLE_LINE_OPACITY, DEFAULT_TABLE_LINE_WIDTH, NOTE_COLORS } from '../constants';
+import {
+  DEFAULT_TABLE_LINE_OPACITY,
+  DEFAULT_TABLE_LINE_WIDTH,
+  NOTE_BUBBLE_RADIUS,
+  NOTE_COLORS,
+  NOTE_FONT_SIZE,
+  NOTE_LINE_HEIGHT,
+  NOTE_SHAPES,
+} from '../constants';
 import {
   RESIZE_HANDLES,
   addTableColumn,
   addTableRow,
   columnFractions,
   handlePositions,
+  noteBodyBox,
+  noteLipHeight,
+  noteShapeOf,
+  noteTailPoints,
+  noteTailSize,
+  noteTextLocalBox,
   imageCenter,
   isLocked,
   moveImage,
@@ -27,7 +41,7 @@ import {
   type ResizeHandle,
 } from '../media';
 import { useDocumentStore } from '../store';
-import type { MediaObject, Page, StickyNote, TableLayer } from '../types';
+import type { MediaObject, NoteShape, Page, StickyNote, TableLayer } from '../types';
 
 export interface MediaLayerProps {
   page: Page;
@@ -59,8 +73,7 @@ const HANDLE_CURSORS: Record<ResizeHandle, string> = {
 };
 
 const ROTATION_HANDLE_OFFSET = 28;
-/** The lip a note or a table is dragged by, page units. */
-const NOTE_LIP = 18;
+/** The lip a table is dragged by, page units. A note's comes from its shape. */
 const TABLE_LIP = 14;
 /** How wide the divider's invisible grab strip is, page units. */
 const DIVIDER_GRAB = 7;
@@ -394,31 +407,80 @@ interface NoteCardProps {
 }
 
 /**
- * A sticky note. The card is dragged by its lip; the textarea below it takes
- * the pointer for text, because a note whose body you cannot click into is
- * not a note.
+ * A sticky note.
+ *
+ * The card is drawn as an absolutely-placed body inside the object's box
+ * rather than as the box itself, so a shape that does not fill its box — a
+ * speech bubble, whose tail hangs below the body — still has one rectangle
+ * for the transform handles to work with. The outline is CSS: a border radius
+ * for the rectangle and the ellipse, and a clipped triangle for the tail.
+ *
+ * The textarea is placed at the shape's own text box rather than filling the
+ * card, which is what keeps a line of text from running out through the
+ * curve of an oval.
  */
 function NoteCard({ note, box, editable, onDragBody, onText }: NoteCardProps) {
+  const shape = noteShapeOf(note);
+  const body = noteBodyBox(note);
+  const text = noteTextLocalBox(note);
+  const lip = noteLipHeight(note);
+  const tail = noteTailSize(note);
+  const tailPoints = noteTailPoints(note);
+  const radius = shape === 'ellipse' ? '50%' : shape === 'bubble' ? `${NOTE_BUBBLE_RADIUS}px` : '2px';
   return (
     <div
       data-media-id={note.id}
       data-media-kind="note"
-      style={{
-        ...box,
-        background: note.color,
-        borderRadius: 2,
-        boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-      }}
+      data-note-shape={shape}
+      // Visible overflow so a bubble's tail is not clipped away by its own card.
+      style={{ ...box, overflow: 'visible' }}
     >
       <div
         aria-hidden="true"
-        title="Drag to move"
-        style={{ height: NOTE_LIP, flexShrink: 0, cursor: editable ? 'move' : 'default', background: 'rgba(0,0,0,0.06)' }}
-        {...onDragBody}
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          width: body.width,
+          height: body.height,
+          background: note.color,
+          borderRadius: radius,
+          boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+        }}
       />
+      {shape === 'bubble' && (
+        <div
+          aria-hidden="true"
+          data-note-tail
+          style={{
+            position: 'absolute',
+            left: tailPoints[0].x,
+            top: body.height - 1,
+            width: tail.width,
+            height: tail.height + 1,
+            background: note.color,
+            clipPath: 'polygon(0% 0%, 100% 0%, 25% 100%)',
+          }}
+        />
+      )}
+      {lip > 0 && (
+        <div
+          aria-hidden="true"
+          title="Drag to move"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: '100%',
+            height: lip,
+            borderTopLeftRadius: radius,
+            borderTopRightRadius: radius,
+            cursor: editable ? 'move' : 'default',
+            background: 'rgba(0,0,0,0.06)',
+          }}
+          {...onDragBody}
+        />
+      )}
       <textarea
         aria-label="Sticky note text"
         data-note-text
@@ -428,15 +490,17 @@ function NoteCard({ note, box, editable, onDragBody, onText }: NoteCardProps) {
         onChange={(e) => onText(e.target.value)}
         onPointerDown={(e) => e.stopPropagation()}
         style={{
-          flex: 1,
-          minHeight: 0,
-          width: '100%',
+          position: 'absolute',
+          left: text.x,
+          top: text.y,
+          width: text.width,
+          height: text.height,
           resize: 'none',
           border: 'none',
           outline: 'none',
           background: 'transparent',
-          padding: '6px 8px',
-          font: '15px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+          padding: 0,
+          font: `${NOTE_FONT_SIZE}px/${NOTE_LINE_HEIGHT} system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`,
           color: '#27272a',
           overflow: 'auto',
         }}
@@ -626,6 +690,31 @@ function TrackDivider({ axis, index, edge, zoom, length, onResize }: TrackDivide
   );
 }
 
+/** A miniature of a note shape, for the pickers. */
+export function NoteShapeGlyph({ shape, size = 13 }: { shape: NoteShape; size?: number }) {
+  const common = { width: size, height: size, viewBox: '0 0 16 16', 'aria-hidden': true } as const;
+  if (shape === 'ellipse') {
+    return (
+      <svg {...common}>
+        <ellipse cx="8" cy="8" rx="7" ry="5.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      </svg>
+    );
+  }
+  if (shape === 'bubble') {
+    return (
+      <svg {...common}>
+        <rect x="1" y="2" width="14" height="9" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M5 11 L8 11 L5.5 15 Z" fill="currentColor" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 interface TransformBoxProps {
   item: MediaObject;
   zoom: number;
@@ -744,19 +833,38 @@ function TransformBox({ item, zoom, onBegin, onMove, onEnd, onDelete, onFront, o
           {locked ? <Lock size={14} aria-hidden="true" /> : <LockOpen size={14} aria-hidden="true" />}
         </button>
         {item.kind === 'note' && (
-          <div className="flex items-center gap-0.5" role="group" aria-label="Note colour">
-            {NOTE_COLORS.map((color) => (
-              <button
-                key={color}
-                type="button"
-                className="h-5 w-5 rounded-full ring-1 ring-white/40 hover:ring-white focus-visible:outline-2 focus-visible:outline-blue-300"
-                style={{ background: color }}
-                onClick={() => onPatch({ color } as Partial<MediaObject>)}
-                title={`Note colour ${color}`}
-                aria-label={`Note colour ${color}`}
-              />
-            ))}
-          </div>
+          <>
+            <div className="flex items-center gap-0.5" role="group" aria-label="Note colour">
+              {NOTE_COLORS.map((color) => (
+                <button
+                  key={color}
+                  type="button"
+                  className="h-5 w-5 rounded-full ring-1 ring-white/40 hover:ring-white focus-visible:outline-2 focus-visible:outline-blue-300"
+                  style={{ background: color }}
+                  onClick={() => onPatch({ color } as Partial<MediaObject>)}
+                  title={`Note colour ${color}`}
+                  aria-label={`Note colour ${color}`}
+                />
+              ))}
+            </div>
+            <span className="mx-0.5 h-5 w-px bg-white/20" aria-hidden="true" />
+            <div className="flex items-center gap-0.5" role="group" aria-label="Note shape">
+              {NOTE_SHAPES.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={`${toolbarButton} ${noteShapeOf(item) === option.id ? 'bg-blue-500 hover:bg-blue-500' : ''}`}
+                  aria-pressed={noteShapeOf(item) === option.id}
+                  data-note-shape-option={option.id}
+                  onClick={() => onPatch({ shape: option.id } as Partial<MediaObject>)}
+                  title={option.hint}
+                  aria-label={option.hint}
+                >
+                  <NoteShapeGlyph shape={option.id} />
+                </button>
+              ))}
+            </div>
+          </>
         )}
         {item.kind === 'table' && (
           <div className="flex items-center gap-0.5" role="group" aria-label="Rows and columns">

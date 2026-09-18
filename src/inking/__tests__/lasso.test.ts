@@ -181,7 +181,10 @@ describe('isStrokeEnclosed / selectStrokesInLasso', () => {
   it('returns ids in document order and skips pixel-eraser strokes', () => {
     const eraser = makeStroke([[20, 20], [40, 40]], { tool: 'eraser-pixel' });
     const strokes: Stroke[] = [outside, inside, eraser, mostlyIn];
-    expect(selectStrokesInLasso(strokes, lasso)).toEqual([inside.id, mostlyIn.id]);
+    // The default mode wants the whole stroke, so `mostlyIn` — five of its
+    // six samples inside, the last one out past the right edge — is left.
+    expect(selectStrokesInLasso(strokes, lasso)).toEqual([inside.id]);
+    expect(selectStrokesInLasso(strokes, lasso, { mode: 'touch' })).toEqual([inside.id, mostlyIn.id]);
     expect(selectStrokesInLasso(strokes, [])).toEqual([]);
   });
 

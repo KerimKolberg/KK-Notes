@@ -1,5 +1,6 @@
 import { DEFAULT_BRUSH } from './engine/brushes';
 import { ERASE_EVERYTHING } from './engine/eraseFilter';
+import { LASSO_ALL_LAYERS } from './engine/lassoFilter';
 import type { CoordinatePlaneConfig, StrokePattern, StylusSettings, ToolSettings } from './types';
 
 /** Pressure substituted when a device reports `0` (mouse, many touch digitisers). */
@@ -117,6 +118,8 @@ export const STROKE_PATTERNS: readonly { readonly id: StrokePattern; readonly la
   { id: 'long-dash', label: 'Long dash' },
 ];
 
+export const DEFAULT_AXIS_STEP = 1;
+
 export const DEFAULT_COORDINATE_PLANE: Readonly<CoordinatePlaneConfig> = {
   mode: 'four-quadrant',
   divisions: 5,
@@ -124,7 +127,13 @@ export const DEFAULT_COORDINATE_PLANE: Readonly<CoordinatePlaneConfig> = {
   tickLabels: false,
   xLabel: 'x',
   yLabel: 'y',
+  stepX: DEFAULT_AXIS_STEP,
+  stepY: DEFAULT_AXIS_STEP,
 };
+
+/** What one grid cell is worth when nothing says otherwise. */
+export const MIN_AXIS_STEP = 0.0001;
+export const MAX_AXIS_STEP = 100000;
 
 /** Quick axis-label pairs for common STEM diagrams. */
 export const AXIS_LABEL_PRESETS: readonly { readonly x: string; readonly y: string }[] = [
@@ -180,11 +189,16 @@ export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   laserRainbow: false,
   pattern: 'solid',
   arrowheads: 'none',
+  angleSnap: false,
   lineCurve: 'straight',
   curveAmplitude: DEFAULT_CURVE_AMPLITUDE,
   curveCycles: DEFAULT_CURVE_CYCLES,
   curveFlip: false,
-  angleSnap: false,
+  linePattern: 'solid',
+  lineArrowheads: 'none',
+  lineAngleSnap: false,
+  lassoFilter: LASSO_ALL_LAYERS,
+  lassoMode: 'enclose',
   holdToSnap: true,
   coordinatePlane: DEFAULT_COORDINATE_PLANE,
   stylus: DEFAULT_STYLUS_SETTINGS,

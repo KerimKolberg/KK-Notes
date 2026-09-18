@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { Image as ImageIcon, StickyNote, Table } from 'lucide-react';
 import { Chip, Row } from '../../inking/palette/parts';
+import { NoteShapeGlyph } from './MediaLayer';
 import {
   DEFAULT_TABLE_COLUMNS,
   DEFAULT_TABLE_LINE_OPACITY,
@@ -12,13 +13,15 @@ import {
   MAX_TABLE_ROWS,
   MIN_TABLE_LINE_OPACITY,
   MIN_TABLE_LINE_WIDTH,
+  NOTE_SHAPES,
 } from '../constants';
-import type { TableInit } from '../media';
+import type { NoteInit, TableInit } from '../media';
+import type { NoteShape } from '../types';
 
 export interface InsertMenuProps {
   /** Opens the file picker and places the chosen image. */
   onInsertImage: () => void;
-  onInsertNote: () => void;
+  onInsertNote: (init: NoteInit) => void;
   onInsertTable: (init: TableInit) => void;
   /** Closes the popover the menu is rendered in. */
   onDone: () => void;
@@ -40,6 +43,7 @@ const COLUMNS = Array.from({ length: MAX_TABLE_COLUMNS }, (_, i) => i + 1);
  * the table is for (a faint grid to write over, or a hard-ruled one).
  */
 export function InsertMenu({ onInsertImage, onInsertNote, onInsertTable, onDone }: InsertMenuProps) {
+  const [noteShape, setNoteShape] = useState<NoteShape>('rectangle');
   const [rows, setRows] = useState(DEFAULT_TABLE_ROWS);
   const [columns, setColumns] = useState(DEFAULT_TABLE_COLUMNS);
   // What the pointer is currently over, so the grid previews a size before it
@@ -69,18 +73,44 @@ export function InsertMenu({ onInsertImage, onInsertNote, onInsertTable, onDone 
         <ImageIcon size={18} aria-hidden="true" />
         Image
       </button>
-      <button
-        type="button"
-        className={ENTRY}
-        data-insert-note
-        onClick={() => {
-          onInsertNote();
-          onDone();
-        }}
-      >
-        <StickyNote size={18} aria-hidden="true" />
-        Sticky note
-      </button>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          className={ENTRY}
+          data-insert-note
+          onClick={() => {
+            onInsertNote({ shape: noteShape });
+            onDone();
+          }}
+        >
+          <StickyNote size={18} aria-hidden="true" />
+          Sticky note
+        </button>
+        {/* The shape is picked before the note exists, next to the button that
+            places it — and can still be changed afterwards from the note's own
+            toolbar, since which outline suits a note is often only obvious
+            once there is something written in it. */}
+        <div className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Sticky note shape">
+          {NOTE_SHAPES.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              aria-pressed={noteShape === option.id}
+              aria-label={option.hint}
+              title={option.hint}
+              data-note-shape-option={option.id}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                noteShape === option.id
+                  ? 'bg-blue-600 text-white'
+                  : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
+              }`}
+              onClick={() => setNoteShape(option.id)}
+            >
+              <NoteShapeGlyph shape={option.id} size={16} />
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="mt-1 border-t border-zinc-200 pt-1 dark:border-zinc-700">
         <div className="flex items-center gap-2 px-1 pb-1">

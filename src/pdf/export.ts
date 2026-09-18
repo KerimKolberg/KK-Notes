@@ -37,7 +37,10 @@ import type { Point } from '../inking/types';
 import {
   columnFractions,
   dataUrlToBytes,
-  noteTextBox,
+  noteBodyBox,
+  noteShapeOf,
+  noteTailPoints,
+  noteTextLocalBox,
   rowFractions,
   sortedByZ,
   tableCell,
@@ -48,9 +51,7 @@ import {
   DEFAULT_TABLE_LINE_OPACITY,
   DEFAULT_TABLE_LINE_WIDTH,
   NOTE_FONT_SIZE,
-  NOTE_GRIP_HEIGHT,
   NOTE_LINE_HEIGHT,
-  NOTE_PADDING,
   TABLE_CELL_PADDING,
   TABLE_FONT_SIZE,
   TABLE_GRIP_HEIGHT,
@@ -58,7 +59,7 @@ import {
 import { templateLines } from '../document/templates';
 import type { Document, FormField, FormValues, ImageLayer, MediaBox, Page, StickyNote, TableLayer } from '../document/types';
 import { pagePointToPdf, PX_PER_POINT } from './pdfCoords';
-import { cssColorToPdf, strokeToPdfOps, type PdfOp, type PdfProjection, type RgbColor } from './pdfOps';
+import { cssColorToPdf, fmt, strokeToPdfOps, type PdfOp, type PdfProjection, type RgbColor } from './pdfOps';
 
 export interface ExportOptions {
   /** Draw template grids / rules for non-PDF pages. Default true. */
@@ -264,44 +265,83 @@ function placeBox(item: MediaBox, projection: PdfProjection): { x: number; y: nu
 }
 
 /**
- * A sticky note: its card, then its text wrapped to the same box the DOM
- * wraps it to, measured with the PDF font so the line breaks match.
+ * A sticky note: its card, cut to its shape, then its text wrapped to the
+ * same box the DOM wraps it to, measured with the PDF font so the line breaks
+ * match.
+ *
+ * A bubble's body is drawn square-cornered. pdf-lib's rectangle carries no
+ * corner radius, and hand-building the path would give up its rotation
+ * handling — the tail is what makes a bubble read as one, and that is drawn
+ * exactly.
  */
 function drawNote(target: PDFPage, note: StickyNote, projection: PdfProjection, fonts: Fonts): void {
   const box = placeBox(note, projection);
   const card = cssColorToPdf(note.color);
-  target.drawRectangle({
-    x: box.x,
-    y: box.y,
-    width: box.width,
-    height: box.height,
-    rotate: degrees(box.rotateDeg),
-    color: toColor(card),
-    opacity: card.alpha,
-    borderColor: toColor(cssColorToPdf('#00000022')),
-    borderWidth: 0.5,
-  });
+  const shape = noteShapeOf(note);
+  const rad = (box.rotateDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  /** A point in the note's own frame, in PDF units (x right, y down from its top). */
+  const at = (localX: number, localY: number): { x: number; y: number } => {
+    const fromBottom = box.height - localY;
+    return { x: box.x + localX * cos - fromBottom * sin, y: box.y + localX * sin + fromBottom * cos };
+  };
+  const body = noteBodyBox(note);
+  const bodyHeight = body.height * projection.scale;
+  const edge = toColor(cssColorToPdf('#00000022'));
+
+  if (shape === 'ellipse') {
+    const centre = projection.toPdf({ x: note.x + note.width / 2, y: note.y + note.height / 2 });
+    target.drawEllipse({
+      x: centre.x,
+      y: centre.y,
+      xScale: box.width / 2,
+      yScale: box.height / 2,
+      rotate: degrees(box.rotateDeg),
+      color: toColor(card),
+      opacity: card.alpha,
+      borderColor: edge,
+      borderWidth: 0.5,
+    });
+  } else {
+    // The body sits at the top of the box, so a bubble's rectangle starts
+    // above its tail rather than at the box's own bottom edge.
+    const corner = at(0, bodyHeight);
+    target.drawRectangle({
+      x: corner.x,
+      y: corner.y,
+      width: box.width,
+      height: bodyHeight,
+      rotate: degrees(box.rotateDeg),
+      color: toColor(card),
+      opacity: card.alpha,
+      borderColor: edge,
+      borderWidth: 0.5,
+    });
+    if (shape === 'bubble') {
+      const [a, b, tip] = noteTailPoints(note).map((p) => at(p.x * projection.scale, p.y * projection.scale));
+      if (a && b && tip) {
+        // Relative to `a`, and flipped back into PDF's y-up before drawing.
+        const d = `M 0 0 L ${fmt(b.x - a.x)} ${fmt(a.y - b.y)} L ${fmt(tip.x - a.x)} ${fmt(a.y - tip.y)} Z`;
+        target.drawSvgPath(d, { x: a.x, y: a.y, color: toColor(card), opacity: card.alpha, borderWidth: 0 });
+      }
+    }
+  }
   if (note.text === '') return;
 
   const size = NOTE_FONT_SIZE * projection.scale;
   const lineHeight = size * NOTE_LINE_HEIGHT;
-  const text = noteTextBox(note);
+  const text = noteTextLocalBox(note);
   const width = text.width * projection.scale;
   const lines = wrapText(note.text, width, (t) => fonts.regular.widthOfTextAtSize(sanitizeText(t), size));
   // Only as many lines as the card has room for; the live note scrolls, and
   // paper cannot.
   const maxLines = Math.max(0, Math.floor((text.height * projection.scale) / lineHeight));
-  const rad = (box.rotateDeg * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
   lines.slice(0, maxLines).forEach((line, i) => {
-    // Offset from the box's bottom-left, in the note's own frame, then rotated
-    // into the page's: x to the right, y down from the top of the text area.
-    const localX = NOTE_PADDING * projection.scale;
-    const localY = box.height - (NOTE_GRIP_HEIGHT + NOTE_PADDING) * projection.scale - lineHeight * (i + 0.8);
+    const p = at(text.x * projection.scale, text.y * projection.scale + lineHeight * (i + 0.8));
     target.drawText(sanitizeText(line), {
-      x: box.x + localX * cos - localY * sin,
-      y: box.y + localX * sin + localY * cos,
+      x: p.x,
+      y: p.y,
       size,
       font: fonts.regular,
       color: toColor(cssColorToPdf('#27272a')),

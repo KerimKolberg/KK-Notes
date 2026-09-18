@@ -6,6 +6,7 @@
 import type { BBox, GeometricStroke, Point, Shape, Stroke, StrokePattern } from '../types';
 import { createStrokeId } from './ids';
 import { bboxFromPoints, bboxIntersects, bboxUnion, EMPTY_BBOX } from './geometry';
+import { inLassoFilter, LASSO_ALL_LAYERS, type LassoFilter } from './lassoFilter';
 import { curveParams, isEditableCurve, reshapeCurve, shapeBBox, shapeToPolylines, type CurveEdit } from './shapes';
 import { freehandBBox } from './strokeBuilder';
 
@@ -115,6 +116,33 @@ export function strokeSamplePoints(stroke: Stroke, maxSamples = 64): Point[] {
 export const LASSO_MIN_INSIDE_FRACTION = 0.5;
 
 /**
+ * How much of a stroke the lasso has to catch.
+ *
+ * `enclose` is the careful one: the whole stroke has to be inside the loop,
+ * so a lasso drawn around a word takes the word and not the line it sits on.
+ * `touch` selects anything the loop so much as crosses, which makes a stroke
+ * dragged straight through a diagram a valid selection gesture — far quicker
+ * on a phone, where drawing an accurate loop around something small is the
+ * hard part.
+ */
+export type LassoMode = 'enclose' | 'touch';
+
+export const LASSO_MODES: readonly { readonly id: LassoMode; readonly label: string; readonly hint: string }[] = [
+  { id: 'enclose', label: 'Enclose entirely', hint: 'Only strokes that fall completely inside the loop' },
+  { id: 'touch', label: 'Partial touch', hint: 'Anything the loop crosses — draw a line through it to select it' },
+];
+
+export interface LassoOptions {
+  readonly mode?: LassoMode;
+  readonly filter?: LassoFilter;
+}
+
+/** Is `box` wholly within `outer`? */
+function bboxContains(outer: BBox, box: BBox): boolean {
+  return box.minX >= outer.minX && box.minY >= outer.minY && box.maxX <= outer.maxX && box.maxY <= outer.maxY;
+}
+
+/**
  * Is a stroke enclosed by the lasso? Bounding boxes reject quickly; the
  * verdict comes from the share of sampled vertices inside the polygon.
  */
@@ -133,17 +161,118 @@ export function isStrokeEnclosed(
   return inside / samples.length >= minInsideFraction;
 }
 
-/** Ids of the strokes the lasso encloses, in document order. */
+/**
+ * Is a stroke *completely* inside the lasso? The padded bounding box has to
+ * fit inside the loop's own box — a cheap reject that also catches a stroke
+ * poking out of a loop that merely overlaps it — and then every sample point
+ * has to be inside the polygon itself, since a box says nothing about a
+ * concave loop.
+ */
+export function isStrokeWhollyInside(
+  stroke: Stroke,
+  polygon: readonly Point[],
+  lassoBounds: BBox = polygonBBox(polygon),
+): boolean {
+  if (polygon.length < 3) return false;
+  if (!bboxContains(lassoBounds, stroke.bbox)) return false;
+  const samples = strokeSamplePoints(stroke);
+  if (samples.length === 0) return false;
+  for (const p of samples) if (!pointInPolygon(p, polygon)) return false;
+  return true;
+}
+
+/** Which side of the line a→b the point c falls on: >0 left, <0 right, 0 collinear. */
+function cross(a: Point, b: Point, c: Point): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+/** Is `p` inside the bounding box of segment a–b, given it is already collinear with it? */
+function withinSegment(a: Point, b: Point, p: Point): boolean {
+  return (
+    p.x >= Math.min(a.x, b.x) && p.x <= Math.max(a.x, b.x) && p.y >= Math.min(a.y, b.y) && p.y <= Math.max(a.y, b.y)
+  );
+}
+
+/**
+ * Do the closed segments a–b and c–d meet?
+ *
+ * The usual orientation test: the segments cross when each straddles the
+ * other's line. A zero orientation means a point lies *on* the other line, so
+ * the collinear and touching-endpoint cases are settled by asking whether it
+ * also lies within that segment's extent — which matters here, because a
+ * lasso drawn exactly along a ruled line is a real gesture, not a degenerate
+ * one to be swept under an epsilon.
+ */
+export function segmentsIntersect(a: Point, b: Point, c: Point, d: Point): boolean {
+  const d1 = cross(c, d, a);
+  const d2 = cross(c, d, b);
+  const d3 = cross(a, b, c);
+  const d4 = cross(a, b, d);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  if (d1 === 0 && withinSegment(c, d, a)) return true;
+  if (d2 === 0 && withinSegment(c, d, b)) return true;
+  if (d3 === 0 && withinSegment(a, b, c)) return true;
+  if (d4 === 0 && withinSegment(a, b, d)) return true;
+  return false;
+}
+
+/** Does the polyline cross the closed polygon's outline anywhere? */
+export function polylineCrossesPolygon(points: readonly Point[], polygon: readonly Point[]): boolean {
+  if (points.length < 2 || polygon.length < 2) return false;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (!a || !b) continue;
+    for (let j = 0, k = polygon.length - 1; j < polygon.length; k = j++) {
+      const c = polygon[k];
+      const e = polygon[j];
+      if (!c || !e) continue;
+      if (segmentsIntersect(a, b, c, e)) return true;
+    }
+  }
+  return false;
+}
+
+/** How finely the lasso loop itself is sampled for the crossing test. */
+const LASSO_EDGE_SAMPLES = 160;
+
+/**
+ * Does the lasso touch this stroke at all?
+ *
+ * Two ways to qualify, because neither covers the other: a point of the
+ * stroke inside the loop catches a small stroke swallowed whole by a big
+ * loop, and a crossing catches a big shape that a small loop was dragged
+ * across — there, every sample of the shape is outside the loop and only the
+ * segments give it away.
+ */
+export function strokeTouchesLasso(
+  stroke: Stroke,
+  polygon: readonly Point[],
+  lassoBounds: BBox = polygonBBox(polygon),
+): boolean {
+  if (polygon.length < 2) return false;
+  if (!bboxIntersects(stroke.bbox, lassoBounds)) return false;
+  const samples = strokeSamplePoints(stroke);
+  if (samples.length === 0) return false;
+  if (polygon.length >= 3) {
+    for (const p of samples) if (pointInPolygon(p, polygon)) return true;
+  }
+  return polylineCrossesPolygon(samples, subsample(polygon, LASSO_EDGE_SAMPLES));
+}
+
+/** Ids of the strokes the lasso caught, in document order. */
 export function selectStrokesInLasso(
   strokes: readonly Stroke[],
   polygon: readonly Point[],
-  minInsideFraction = LASSO_MIN_INSIDE_FRACTION,
+  options: LassoOptions = {},
 ): string[] {
+  const { mode = 'enclose', filter = LASSO_ALL_LAYERS } = options;
   const bounds = polygonBBox(polygon);
   const ids: string[] = [];
   for (const stroke of strokes) {
-    if (stroke.kind === 'freehand' && stroke.tool === 'eraser-pixel') continue;
-    if (isStrokeEnclosed(stroke, polygon, bounds, minInsideFraction)) ids.push(stroke.id);
+    if (!inLassoFilter(stroke, filter)) continue;
+    const caught = mode === 'touch' ? strokeTouchesLasso(stroke, polygon, bounds) : isStrokeWhollyInside(stroke, polygon, bounds);
+    if (caught) ids.push(stroke.id);
   }
   return ids;
 }

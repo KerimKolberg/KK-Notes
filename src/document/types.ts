@@ -105,11 +105,16 @@ export interface ImageLayer extends MediaBox {
 }
 
 /** A coloured card with free text on it. */
+/** The outline a sticky note is cut to. */
+export type NoteShape = 'rectangle' | 'ellipse' | 'bubble';
+
 export interface StickyNote extends MediaBox {
   readonly kind: 'note';
   readonly text: string;
   /** CSS colour of the card. */
   readonly color: string;
+  /** Missing on notes written before shapes existed, which are rectangles. */
+  readonly shape?: NoteShape;
 }
 
 /**

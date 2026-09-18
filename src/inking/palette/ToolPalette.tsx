@@ -16,6 +16,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { filterIsActive } from '../engine/eraseFilter';
+import { lassoFilterIsOpen } from '../engine/lassoFilter';
 import { IconButton } from '../../ui/IconButton';
 import { Popover } from '../../ui/Popover';
 import { Tooltip } from '../../ui/Tooltip';
@@ -27,6 +28,7 @@ import {
   BrushFlyout,
   EraserOptions,
   HighlighterOptions,
+  LassoOptions,
   LineOptions,
   PaletteSettings,
   PlaneOptions,
@@ -59,7 +61,18 @@ export interface ToolPaletteProps {
   hidden?: boolean;
 }
 
-type Flyout = 'insert' | 'brush' | 'highlighter' | 'washi' | 'line' | 'stroke' | 'plane' | 'eraser' | 'settings' | null;
+type Flyout =
+  | 'insert'
+  | 'lasso'
+  | 'brush'
+  | 'highlighter'
+  | 'washi'
+  | 'line'
+  | 'stroke'
+  | 'plane'
+  | 'eraser'
+  | 'settings'
+  | null;
 
 const ERASERS: readonly ToolType[] = ['eraser-stroke', 'eraser-pixel'];
 
@@ -124,6 +137,7 @@ export const ToolPalette = memo(function ToolPalette({
   const eraserIsArea = settings.eraserMode === 'area';
 
   const BrushIcon = BRUSH_ICONS[settings.brush];
+  const lassoActive = settings.tool === 'lasso';
   const penActive = settings.tool === 'pen';
   const highlighterActive = settings.tool === 'highlighter';
   const lineActive = settings.tool === 'line';
@@ -169,7 +183,23 @@ export const ToolPalette = memo(function ToolPalette({
 
         {/* Actions */}
         <IconButton icon={MousePointer2} label="Select" active={settings.tool === 'select'} onClick={() => pick('select')} data-palette-tool="select" />
-        <IconButton icon={Lasso} label="Lasso select" active={settings.tool === 'lasso'} onClick={() => pick('lasso')} data-palette-tool="lasso" />
+        <div className="relative">
+          <IconButton
+            icon={Lasso}
+            label="Lasso select"
+            hint={lassoActive ? 'press again for layers and mode' : undefined}
+            active={lassoActive}
+            hasPopover
+            tooltipDisabled={flyout === 'lasso'}
+            onClick={() => (lassoActive ? toggle('lasso') : pick('lasso'))}
+            data-palette-tool="lasso"
+            data-lasso-mode={settings.lassoMode}
+            data-lasso-filtered={lassoFilterIsOpen(settings.lassoFilter) ? undefined : 'true'}
+          />
+          <Popover open={flyout === 'lasso'} onClose={close} label="Lasso selection" side="top" align="center">
+            <LassoOptions settings={settings} onSettingsChange={onSettingsChange} />
+          </Popover>
+        </div>
         <IconButton icon={Zap} label="Laser pointer" active={laser} onClick={() => pick('laser-pointer')} data-palette-tool="laser-pointer" />
         {insertMenu && (
           <div className="relative">

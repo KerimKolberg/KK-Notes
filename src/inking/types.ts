@@ -6,6 +6,8 @@
  * transform, so stored strokes are independent of `devicePixelRatio`.
  */
 import type { EraseFilter } from './engine/eraseFilter';
+import type { LassoMode } from './engine/lasso';
+import type { LassoFilter } from './engine/lassoFilter';
 import type { TapePattern, TapeStyle } from './engine/tape';
 
 export type { EraseFilter, TapePattern, TapeStyle };
@@ -164,6 +166,14 @@ export interface CoordinatePlaneConfig {
   readonly tickLabels: boolean;
   readonly xLabel: string;
   readonly yLabel: string;
+  /**
+   * What one grid cell is worth on each axis. A plane drawn before these
+   * existed carries neither and counts in whole cells, which is a step of 1.
+   * Fractional steps are the point of them: 0.25 numbers the ticks 0.25, 0.5,
+   * 0.75, 1 without changing how the plane is drawn.
+   */
+  readonly stepX?: number;
+  readonly stepY?: number;
 }
 
 export interface LineShape {
@@ -337,8 +347,17 @@ export interface ToolSettings {
   laserColor: string;
   /** Laser pointer: cycle the hue along the trail instead of using `laserColor`. */
   laserRainbow: boolean;
+  /**
+   * Dash pattern, arrowheads and 15° snapping for the freehand tools (pen and
+   * highlighter). The shape tool keeps its own copies below: the two are
+   * different jobs — a dashed construction line is not a reason for the next
+   * pen stroke to come out dashed — and sharing one field meant configuring
+   * either one silently reconfigured the other.
+   */
   pattern: StrokePattern;
   arrowheads: ArrowheadMode;
+  /** Snap a recognised shape's edges to 15° increments while hold-to-snap is on. */
+  angleSnap: boolean;
   /** Line tool: a straight segment, or which procedural curve to lay down. */
   lineCurve: 'straight' | CurveKind;
   /** Curve depth as a fraction of the drag's length. */
@@ -347,8 +366,14 @@ export interface ToolSettings {
   curveCycles: number;
   /** Mirror a curve onto the other side of the drag. */
   curveFlip: boolean;
-  /** Snap straight lines / vectors to 15° increments. */
-  angleSnap: boolean;
+  /** The shape tool's own dash pattern, arrowheads and 15° snapping. */
+  linePattern: StrokePattern;
+  lineArrowheads: ArrowheadMode;
+  lineAngleSnap: boolean;
+  /** Which layers the lasso may pick up. */
+  lassoFilter: LassoFilter;
+  /** How much of a stroke the lasso has to catch to select it. */
+  lassoMode: LassoMode;
   /** Hold the pointer still at the end of a stroke to convert it to a shape. */
   holdToSnap: boolean;
   coordinatePlane: CoordinatePlaneConfig;

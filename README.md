@@ -254,12 +254,23 @@ the title truncates; the icons stay, so nothing becomes unreachable.
 groups the tools (select, lasso, laser, add · pen, highlighter, washi tape ·
 line, coordinate system, stroke options · eraser · settings) and the second
 carries the colour swatches and the thickness slider. Tools that have more
-to say open a flyout when their own button is pressed again: the pen's five
-brushes, the highlighter's width, opacity and gradient, the tape's patterns,
-the coordinate plane's quadrants and labels. The eraser is one button with
+to say open a flyout when their own button is pressed again: the lasso's
+layers and mode, the pen's five brushes, the highlighter's width, opacity and
+gradient, the tape's patterns, the shape tool's paths and dashes, the
+coordinate plane's quadrants, steps and labels. The eraser is one button with
 two modes, the pattern / snapping and the input / stylus settings each live
 behind a popover, and everything the old text toolbar could do is still
 there.
+
+**Each tool's settings are its own.** The shape tool used to share the dash
+pattern, arrowheads and 15° snapping with the pen and the highlighter, which
+meant dashing a construction line also dashed the next pen stroke — two
+different jobs reading one field. It keeps `linePattern`, `lineArrowheads`
+and `lineAngleSnap` now, alongside the curve settings (`lineCurve`,
+`curveAmplitude`, `curveCycles`, `curveFlip`) that were already its alone;
+the shared `pattern` / `arrowheads` / `angleSnap` belong to the freehand
+tools, and the stroke-options popover says so rather than sitting there
+greyed out with no explanation.
 
 Everything that can be *placed* on a page — an image, a sticky note, a table
 — sits behind one **Add** button rather than three of its own, because they
@@ -327,16 +338,15 @@ broader and lighter, the way graphite spread over more paper does.
 
 ## Lasso selection and touch navigation
 
-**Lasso tool** (`src/inking/engine/lasso.ts`, `SelectionLayer.tsx`). The
-`lasso` tool mode draws a freehand loop on the live canvas (pen or mouse).
-When the loop closes, every stroke on the page is tested with a ray-casting
-point-in-polygon check: the stroke's bounding box must intersect the loop's,
-and at least half of its sample points — the raw samples of a freehand
-stroke, or points spread evenly along the flattened outline of a geometric
-shape — must fall inside the polygon. Both `FreehandStroke` and
-`GeometricStroke` are selectable; pixel-eraser strokes are skipped. The
-selection (`lassoSelection` in the store: page id + stroke ids) shows up as
-a dashed box on a z-25 layer between the ink and the form widgets:
+**Lasso tool** (`src/inking/engine/lasso.ts`, `lassoFilter.ts`,
+`SelectionLayer.tsx`). The `lasso` tool mode draws a freehand loop on the
+live canvas (pen or mouse). A stroke's *sample points* are the raw samples of
+a freehand stroke, or points spread evenly along the flattened outline of a
+geometric shape, so the verdict reflects how much of the outline is caught
+rather than how many corners happen to be. Pressing the lasso button again
+opens what it is hunting for — the layers and the mode below. The selection
+(`lassoSelection` in the store: page id + stroke ids) shows up as a dashed
+box on a z-25 layer between the ink and the form widgets:
 
 - **drag the box** to translate, **drag a corner handle** to scale about the
   opposite corner (uniform by default, Shift for free aspect; line widths
@@ -348,6 +358,33 @@ a dashed box on a z-25 layer between the ink and the form widgets:
 - **curve settings**, when the selection holds a line or a curve: the four
   paths (straight / parabola / wave / zigzag), the dash pattern, a depth
   slider, Flip and a cycle count.
+
+**What the loop catches** is two settings. *Enclose entirely* wants the whole
+stroke: the padded bounding box has to fit inside the loop's — a cheap reject
+that also catches a stroke poking out of a loop that merely overlaps it — and
+then every sample point has to pass the ray-casting point-in-polygon test,
+since a box says nothing about a concave loop. *Partial touch* takes anything
+the loop so much as crosses, which makes a stroke dragged straight through a
+diagram a valid selection gesture — far quicker on a phone, where drawing an
+accurate loop around something small is the hard part. It qualifies two ways,
+because neither covers the other: a sample point inside the loop catches a
+small stroke swallowed whole by a big one, and a segment crossing catches a
+big shape a small loop was dragged across, where every sample of the shape is
+outside the loop and only the segments give it away. Crossings use the usual
+orientation test, with the collinear and touching-endpoint cases settled
+rather than swept under an epsilon — a lasso drawn exactly along a ruled line
+is a real gesture.
+
+**Which layers it may take** is four switches: standard ink (pen), the
+highlighter, washi tape, and shapes / lines. Deliberately the opposite
+polarity to the eraser's filter, where all off means "take everything":
+here every layer starts checked and unchecking one puts it out of reach,
+which is what a *selection* filter has to mean if "the writing but not the
+highlighting I drew over it" is to be expressible. Clearing all four leaves
+the lasso with nothing to find, which the popover says outright rather than
+quietly re-including a layer that was just switched off. Pixel-eraser strokes
+are never selectable under any setting: selecting one would hand the user a
+hole to drag around.
 
 While a drag is in flight the originals are hidden on the committed layer
 (`hiddenStrokeIds`) and transformed copies are drawn on the selection
@@ -642,6 +679,27 @@ export values, options, max length and alignment. Values live in
 `page.formValues`: checkboxes are booleans, radio groups store the selected
 export value under the group name, everything else is a string.
 
+**Note shapes.** A sticky note is a rectangle, an oval or a speech bubble.
+The card is drawn as an absolutely-placed body *inside* the object's box
+rather than as the box itself, so a shape that does not fill its box — a
+bubble, whose tail hangs below the body — still leaves one rectangle for the
+transform handles to work with. The outline is CSS: a border radius for the
+rectangle and the oval, a clipped triangle for the tail.
+
+The textarea is placed at the shape's own text box rather than filling the
+card, which is what keeps a line of text from running out through the curve
+of an oval: for an ellipse that box is the *inscribed rectangle* — half the
+ellipse's size times √2, the largest axis-aligned box that fits inside it —
+so an oval note holds noticeably less than the rectangle of the same
+footprint, and anything roomier would clip mid-word at the sides. A bubble's
+text stops above the tail and inside the corner radius. The drag lip across
+the top belongs to the rectangle alone: a full-width bar clipped to an
+ellipse comes out as a lens-shaped sliver and reads as a rendering bug, and
+the other two are dragged by the grip every placed object carries anyway.
+One set of helpers in `media.ts` (`noteBodyBox`, `noteTailPoints`,
+`noteTextLocalBox`) drives the live card, the snapshot raster and the PDF
+export, so all three wrap the text identically.
+
 **Media** (`media.ts`, `MediaLayer.tsx`, `useMediaInput.ts`). Paste
 (`Ctrl+V`) or drop images onto a page (dropped PDFs import), or place an
 image, a sticky note or a table from the palette's Add menu. All three share
@@ -737,7 +795,7 @@ Keyboard: `Ctrl/⌘+Z` undo, `Ctrl/⌘+Shift+Z` or `Ctrl+Y` redo.
 
 | Tool | Gesture | Output |
 | --- | --- | --- |
-| Lasso | freehand loop | selects enclosed strokes (see above) |
+| Lasso | freehand loop, or a line through something | selects by layer and mode (see above) |
 | Pen | freehand | pressure-thinned perfect-freehand polygon |
 | Highlighter | freehand | constant width, `multiply`, opacity and gradient from its own popover |
 | Washi tape | freehand | wide translucent band filled with a repeating pattern |
@@ -842,6 +900,19 @@ ticks and the axis labels (with presets such as `t / y`, `σ / jω`, `Re / Im`,
 `Q / P`). Axes, ticks, arrowheads and labels are drawn as vectors and text
 directly on the canvas.
 
+**Step size** (`stepX` / `stepY`) is what one grid cell is *worth*, kept
+apart from the pixels-per-cell the extents give it: changing it renumbers the
+plane without redrawing a line of it. Each axis carries its own, whole or
+fractional, so a plane can read in tenths across and hundreds up. A tick's
+text is `index × step` — which is exactly the arithmetic binary floating
+point is worst at, since three steps of 0.1 lands on 0.30000000000000004 and
+a plane labelled that way is unusable. `formatTickValue` rounds through
+`toPrecision(12)` and back: twelve significant figures is far more than any
+step a person types and far fewer than the seventeen it takes to expose the
+representation, and `parseFloat` then strips the zeros `toPrecision` leaves
+behind. A plane saved before steps existed carries neither field and counts
+in whole cells.
+
 ## How it works
 
 **Two stacked canvases.** `committed` holds finished strokes and is only
@@ -923,7 +994,7 @@ src/inking/
 ├── engine/                 framework-free, unit-tested core
 │   ├── strokeOutline.ts    perfect-freehand integration → Path2D
 │   ├── renderer.ts         fills vs. stroked paths, dashes, arrowheads, plane, HUD
-│   ├── shapes.ts           primitives, drag construction, curve editing, plane layout, flattening
+│   ├── shapes.ts           primitives, drag construction, curve editing, plane layout and numbering
 │   ├── shapeRecognition.ts hold-to-snap classifier (RDP, PCA ellipse, corners, heart)
 │   ├── simplify.ts         Ramer–Douglas–Peucker, arc-length resampling, tangents
 │   ├── angles.ts           15° snapping, math-convention read-outs
@@ -931,7 +1002,8 @@ src/inking/
 │   ├── hitTest.ts          stroke-eraser geometry for both stroke kinds
 │   ├── history.ts          undo/redo reducer
 │   ├── pointerPolicy.ts    palm rejection, pressure, button mapping
-│   ├── lasso.ts            point-in-polygon selection, stroke transforms, reshaping, handles
+│   ├── lasso.ts            selection modes, stroke transforms, reshaping, handle geometry
+│   ├── lassoFilter.ts      which layers the lasso may pick up
 │   ├── brushes.ts          pen presets: perfect-freehand params, tilt, grain, tapers
 │   ├── laser.ts            disappearing pointer trail: fade, rainbow, run batching
 │   ├── gestureState.ts     shared two-finger-gesture flag and pen presence

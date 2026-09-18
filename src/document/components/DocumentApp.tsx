@@ -7,7 +7,7 @@ import { ToolPalette } from '../../inking/palette/ToolPalette';
 import { ToolConfigRow } from '../../inking/palette/parts';
 import { useDesktopIntegration } from '../../desktop/useDesktopIntegration';
 import { useMediaInput } from '../hooks/useMediaInput';
-import { createStickyNote, createTable, nextZIndex, type TableInit } from '../media';
+import { createStickyNote, createTable, nextZIndex, type NoteInit, type TableInit } from '../media';
 import type { MediaObject, Page } from '../types';
 import { InsertMenu } from './InsertMenu';
 
@@ -53,7 +53,7 @@ export function DocumentApp() {
     [updateSettings],
   );
   const insertNote = useCallback(
-    () => insertMedia((page, z) => createStickyNote(page.dimensions, z)),
+    (init: NoteInit) => insertMedia((page, z) => createStickyNote(page.dimensions, z, undefined, init)),
     [insertMedia],
   );
   const insertTable = useCallback(

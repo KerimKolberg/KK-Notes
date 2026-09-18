@@ -5,6 +5,9 @@ import { Tooltip } from '../../ui/Tooltip';
 import {
   AXIS_LABEL_PRESETS,
   COLOR_PALETTE,
+  DEFAULT_AXIS_STEP,
+  MAX_AXIS_STEP,
+  MIN_AXIS_STEP,
   DEFAULT_WASHI_ACCENT,
   MAX_CURVE_AMPLITUDE,
   MAX_CURVE_CYCLES,
@@ -25,6 +28,9 @@ import {
   STROKE_PATTERNS,
 } from '../constants';
 import { ERASE_FILTERS, filterIsActive } from '../engine/eraseFilter';
+import { LASSO_MODES, type LassoMode } from '../engine/lasso';
+import { LASSO_LAYERS, lassoFilterIsEmpty } from '../engine/lassoFilter';
+import { formatTickValue } from '../engine/shapes';
 import { TAPE_PATTERNS } from '../engine/tape';
 import { BRUSHES } from '../engine/brushes';
 import type {
@@ -258,9 +264,16 @@ export function BrushFlyout({ settings, onSettingsChange, onPick }: PanelProps &
 const NEXT_ARROW: Record<ArrowheadMode, ArrowheadMode> = { none: 'end', end: 'both', both: 'none' };
 const ARROW_LABEL: Record<ArrowheadMode, string> = { none: 'No arrowheads', end: 'Arrow at the end', both: 'Arrows at both ends' };
 
-/** Dash pattern, arrowheads and the two snapping aids. */
+/**
+ * Dash pattern, arrowheads and snapping — for the *freehand* tools.
+ *
+ * The shape tool used to share these fields, which meant dashing a
+ * construction line also dashed the next pen stroke. It keeps its own copies
+ * now, in its own popover, and this panel says so rather than sitting there
+ * greyed out with no explanation.
+ */
 export function StrokeOptions({ settings, onSettingsChange }: PanelProps) {
-  const patterned = settings.tool === 'pen' || settings.tool === 'highlighter' || settings.tool === 'line';
+  const patterned = settings.tool === 'pen' || settings.tool === 'highlighter';
   return (
     <div className="flex w-[min(16rem,calc(100vw-2.5rem))] flex-col gap-1" data-stroke-options>
       <Row label="Line pattern">
@@ -295,13 +308,17 @@ export function StrokeOptions({ settings, onSettingsChange }: PanelProps) {
         </Chip>
         <Chip
           active={settings.holdToSnap}
-          disabled={settings.tool !== 'pen' && settings.tool !== 'highlighter'}
+          disabled={!patterned}
           label="Hold to snap to a shape"
           onClick={() => onSettingsChange({ holdToSnap: !settings.holdToSnap })}
         >
           Hold to snap
         </Chip>
       </Row>
+      <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-stroke-options-note>
+        Applies to the pen and highlighter. The shape tool keeps its own dash,
+        arrowheads and snapping in its own settings.
+      </p>
     </div>
   );
 }
@@ -340,8 +357,8 @@ export function LineOptions({ settings, onSettingsChange }: PanelProps) {
         <select
           className={SELECT}
           aria-label="Line pattern"
-          value={settings.pattern}
-          onChange={(e) => onSettingsChange({ pattern: e.target.value as StrokePattern })}
+          value={settings.linePattern}
+          onChange={(e) => onSettingsChange({ linePattern: e.target.value as StrokePattern })}
           data-line-pattern-select
         >
           {STROKE_PATTERNS.map((p) => (
@@ -351,11 +368,11 @@ export function LineOptions({ settings, onSettingsChange }: PanelProps) {
           ))}
         </select>
         <Chip
-          active={settings.arrowheads !== 'none'}
-          label={ARROW_LABEL[settings.arrowheads]}
-          onClick={() => onSettingsChange({ arrowheads: NEXT_ARROW[settings.arrowheads] })}
+          active={settings.lineArrowheads !== 'none'}
+          label={ARROW_LABEL[settings.lineArrowheads]}
+          onClick={() => onSettingsChange({ lineArrowheads: NEXT_ARROW[settings.lineArrowheads] })}
         >
-          {settings.arrowheads === 'none' ? 'No arrow' : settings.arrowheads === 'end' ? 'End →' : 'Both ↔'}
+          {settings.lineArrowheads === 'none' ? 'No arrow' : settings.lineArrowheads === 'end' ? 'End →' : 'Both ↔'}
         </Chip>
       </Row>
       <Row label="Depth">
@@ -393,10 +410,81 @@ export function LineOptions({ settings, onSettingsChange }: PanelProps) {
           }}
           data-curve-cycles
         />
-        <Chip active={settings.angleSnap} label="Snap to 15 degrees" onClick={() => onSettingsChange({ angleSnap: !settings.angleSnap })}>
+        <Chip
+          active={settings.lineAngleSnap}
+          label="Snap to 15 degrees"
+          onClick={() => onSettingsChange({ lineAngleSnap: !settings.lineAngleSnap })}
+        >
           15°
         </Chip>
       </Row>
+      <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-line-options-note>
+        These belong to the shape tool alone; the pen and highlighter keep
+        their own.
+      </p>
+    </div>
+  );
+}
+
+const LASSO_MODE_HINT: Readonly<Record<LassoMode, string>> = {
+  enclose: 'Only strokes that fall completely inside the loop',
+  touch: 'Anything the loop crosses — draw a line through it to select it',
+};
+
+/**
+ * What the lasso is hunting for: which layers it may pick up, and how much of
+ * a stroke it has to catch.
+ *
+ * The layers are switches rather than a single choice because a page is
+ * layered: "the writing but not the highlighting I drew over it" is a real
+ * request and a one-of-four picker cannot say it. Clearing all four leaves
+ * the lasso with nothing to find, which the panel says outright rather than
+ * quietly re-including a layer that was just switched off.
+ */
+export function LassoOptions({ settings, onSettingsChange }: PanelProps) {
+  const filter = settings.lassoFilter;
+  const empty = lassoFilterIsEmpty(filter);
+  return (
+    <div className="flex w-[min(19rem,calc(100vw-2.5rem))] flex-col gap-1" data-lasso-options>
+      <Row label="Select">
+        <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Selectable layers">
+          {LASSO_LAYERS.map((layer) => (
+            <Chip
+              key={layer.key}
+              active={filter[layer.key]}
+              label={layer.hint}
+              onClick={() => onSettingsChange({ lassoFilter: { ...filter, [layer.key]: !filter[layer.key] } })}
+            >
+              <span data-lasso-layer={layer.key}>{layer.label}</span>
+            </Chip>
+          ))}
+        </div>
+      </Row>
+      <Row label="Catches">
+        <div className="flex flex-wrap items-center gap-1" role="radiogroup" aria-label="Selection mode">
+          {LASSO_MODES.map((mode) => (
+            <button
+              key={mode.id}
+              type="button"
+              role="radio"
+              aria-checked={settings.lassoMode === mode.id}
+              aria-label={LASSO_MODE_HINT[mode.id]}
+              data-lasso-mode={mode.id}
+              className={`${CHIP} ${settings.lassoMode === mode.id ? CHIP_ON : ''}`}
+              onClick={() => onSettingsChange({ lassoMode: mode.id })}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+      </Row>
+      <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-lasso-note>
+        {empty
+          ? 'Nothing is selectable: switch at least one layer back on.'
+          : settings.lassoMode === 'touch'
+            ? 'A stroke counts the moment the loop crosses it, so a line dragged through something selects it.'
+            : 'A stroke counts only when all of it is inside the loop.'}
+      </p>
     </div>
   );
 }
@@ -699,6 +787,23 @@ function presetIndex(plane: CoordinatePlaneConfig): number {
   return AXIS_LABEL_PRESETS.findIndex((p) => p.x === plane.xLabel && p.y === plane.yLabel);
 }
 
+/**
+ * A typed step, kept usable. An empty or half-typed field ("0.", "-") reads
+ * as NaN, which would wipe the plane's numbering while the user is still
+ * typing, so it falls back to whole cells instead.
+ */
+function clampStep(raw: string): number {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_AXIS_STEP;
+  return Math.min(MAX_AXIS_STEP, Math.max(MIN_AXIS_STEP, value));
+}
+
+/** The first few x ticks as they would actually print, for the hint line. */
+function tickPreview(plane: CoordinatePlaneConfig): string {
+  const step = plane.stepX ?? DEFAULT_AXIS_STEP;
+  return [1, 2, 3].map((i) => formatTickValue(i, step)).join(', ');
+}
+
 /** Quadrants, divisions, grid and axis labels for the coordinate plane tool. */
 export function PlaneOptions({ settings, onSettingsChange }: PanelProps) {
   const plane = settings.coordinatePlane;
@@ -735,6 +840,37 @@ export function PlaneOptions({ settings, onSettingsChange }: PanelProps) {
           Numbers
         </Switch>
       </Row>
+      <Row label="Step per cell">
+        <input
+          type="number"
+          className={`${SELECT} w-20`}
+          min={MIN_AXIS_STEP}
+          max={MAX_AXIS_STEP}
+          step="any"
+          aria-label="Horizontal step size"
+          data-plane-step-x
+          value={plane.stepX ?? DEFAULT_AXIS_STEP}
+          onChange={(e) => patch({ stepX: clampStep(e.target.value) })}
+        />
+        <input
+          type="number"
+          className={`${SELECT} w-20`}
+          min={MIN_AXIS_STEP}
+          max={MAX_AXIS_STEP}
+          step="any"
+          aria-label="Vertical step size"
+          data-plane-step-y
+          value={plane.stepY ?? DEFAULT_AXIS_STEP}
+          onChange={(e) => patch({ stepY: clampStep(e.target.value) })}
+        />
+      </Row>
+      <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-plane-step-note>
+        What one grid cell is worth, whole or fractional. The plane is drawn
+        the same either way; only the numbers change — these ticks read{' '}
+        <span className="tabular-nums" data-plane-step-preview>
+          {tickPreview(plane)}…
+        </span>
+      </p>
       <Row label="Axis labels">
         <select
           className={SELECT}

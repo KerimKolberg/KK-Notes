@@ -1,4 +1,4 @@
-import type { Cover, PageDimensions, PageTemplate, TemplateConfig } from './types';
+import type { Cover, NoteShape, PageDimensions, PageTemplate, TemplateConfig } from './types';
 
 /** A4 at 96 DPI. */
 export const A4_DIMENSIONS: PageDimensions = { width: 794, height: 1123 };
@@ -118,6 +118,22 @@ export const NOTE_COLORS: readonly string[] = ['#fef08a', '#bbf7d0', '#bfdbfe', 
  * so that what is typed, what is scrolled past and what is printed agree.
  */
 export const NOTE_GRIP_HEIGHT = 18;
+/**
+ * The speech bubble's tail: how far below the body it hangs, and how wide its
+ * base is. Both are capped against the note's own size further down, so a
+ * bubble shrunk to a stamp keeps a tail instead of becoming all tail.
+ */
+export const NOTE_TAIL_HEIGHT = 22;
+export const NOTE_TAIL_WIDTH = 26;
+/** Corner rounding of a bubble's body. */
+export const NOTE_BUBBLE_RADIUS = 18;
+
+/** The outlines offered for a note, in the order the pickers show them. */
+export const NOTE_SHAPES: readonly { readonly id: NoteShape; readonly label: string; readonly hint: string }[] = [
+  { id: 'rectangle', label: 'Rectangle', hint: 'The usual card, dragged by the lip across its top' },
+  { id: 'ellipse', label: 'Oval', hint: 'A rounded card; text wraps to the widest rectangle inside it' },
+  { id: 'bubble', label: 'Speech bubble', hint: 'A rounded card with a tail hanging from its lower left' },
+];
 export const NOTE_PADDING = 8;
 export const NOTE_FONT_SIZE = 15;
 export const NOTE_LINE_HEIGHT = 1.35;

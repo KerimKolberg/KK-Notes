@@ -21,7 +21,7 @@ import type {
   Shape,
   StrokeStyle,
 } from '../types';
-import { DEFAULT_CURVE_AMPLITUDE, DEFAULT_CURVE_CYCLES } from '../constants';
+import { DEFAULT_AXIS_STEP, DEFAULT_CURVE_AMPLITUDE, DEFAULT_CURVE_CYCLES } from '../constants';
 import { snapLineEnd } from './angles';
 import { EMPTY_BBOX, bboxFromPoints, bboxUnion, expandBBox } from './geometry';
 import { createStrokeId } from './ids';
@@ -268,6 +268,29 @@ export interface CoordinatePlaneGeometry {
   readonly fontPx: number;
 }
 
+/**
+ * A tick's printed value.
+ *
+ * `index * step` is exactly the arithmetic binary floating point is worst at:
+ * three steps of 0.1 lands on 0.30000000000000004, and a plane labelled that
+ * way is unusable. Rounding through `toPrecision(12)` and back drops the
+ * error — 12 significant figures is far more than any step a person types,
+ * and far fewer than the 17 it takes to expose the representation — and
+ * `parseFloat` then strips the trailing zeros `toPrecision` leaves behind.
+ */
+export function formatTickValue(index: number, step: number): string {
+  const value = index * step;
+  if (!Number.isFinite(value)) return '0';
+  return String(Number.parseFloat(value.toPrecision(12)));
+}
+
+/** A plane's step per grid cell, defaulting to whole cells for older shapes. */
+export function axisSteps(config: CoordinatePlaneConfig): { x: number; y: number } {
+  const usable = (step: number | undefined): number =>
+    step !== undefined && Number.isFinite(step) && step > 0 ? step : DEFAULT_AXIS_STEP;
+  return { x: usable(config.stepX), y: usable(config.stepY) };
+}
+
 export function coordinatePlaneGeometry(shape: CoordinatePlaneShape): CoordinatePlaneGeometry {
   const { origin: o, extentX, extentY, config } = shape;
   const four = config.mode === 'four-quadrant';
@@ -298,6 +321,9 @@ export function coordinatePlaneGeometry(shape: CoordinatePlaneShape): Coordinate
   const labels: TextLabel[] = [];
   const stepX = extentX / divisions;
   const stepY = extentY / divisions;
+  // Pixels per cell above; what a cell is *worth* here. The two are
+  // independent: changing the step renumbers the plane without redrawing it.
+  const steps = axisSteps(config);
 
   for (let i = four ? -divisions : 1; i <= divisions; i++) {
     if (i === 0) continue;
@@ -314,8 +340,8 @@ export function coordinatePlaneGeometry(shape: CoordinatePlaneShape): Coordinate
     );
     if (config.tickLabels) {
       labels.push(
-        { text: String(i), x, y: o.y + tick + 2, align: 'center', baseline: 'top', italic: false },
-        { text: String(i), x: o.x - tick - 3, y, align: 'right', baseline: 'middle', italic: false },
+        { text: formatTickValue(i, steps.x), x, y: o.y + tick + 2, align: 'center', baseline: 'top', italic: false },
+        { text: formatTickValue(i, steps.y), x: o.x - tick - 3, y, align: 'right', baseline: 'middle', italic: false },
       );
     }
   }

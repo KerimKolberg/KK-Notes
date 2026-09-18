@@ -78,10 +78,13 @@ export const PageFrame = memo(function PageFrame({
   const onLassoStart = useCallback(() => clearLassoSelection(), [clearLassoSelection]);
   const onLassoComplete = useCallback(
     (polygon: readonly Point[]) => {
-      const strokeIds = selectStrokesInLasso(pageRef.current.strokes, polygon);
+      // Read the live settings rather than a prop: the lasso's layers and mode
+      // can be changed while the loop is still being drawn.
+      const { lassoMode, lassoFilter } = settingsRef.current;
+      const strokeIds = selectStrokesInLasso(pageRef.current.strokes, polygon, { mode: lassoMode, filter: lassoFilter });
       setLassoSelection(strokeIds.length > 0 ? { pageId: page.id, strokeIds } : null);
     },
-    [pageRef, page.id, setLassoSelection],
+    [pageRef, settingsRef, page.id, setLassoSelection],
   );
   // Locked: the ink and media layers go inert so pointer input reaches the
   // scroll container (and the form widgets above them) untouched. The laser

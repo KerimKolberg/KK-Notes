@@ -8,15 +8,26 @@ import { drawStroke, type InkContext } from '../../inking/engine/renderer';
 import {
   DEFAULT_TABLE_LINE_OPACITY,
   DEFAULT_TABLE_LINE_WIDTH,
+  NOTE_BUBBLE_RADIUS,
   NOTE_FONT_SIZE,
-  NOTE_GRIP_HEIGHT,
   NOTE_LINE_HEIGHT,
-  NOTE_PADDING,
   TABLE_CELL_PADDING,
   TABLE_FONT_SIZE,
   TABLE_GRIP_HEIGHT,
 } from '../constants';
-import { columnFractions, noteTextBox, rowFractions, sortedByZ, tableCell, trackEdges, wrapText } from '../media';
+import {
+  columnFractions,
+  noteBodyBox,
+  noteLipHeight,
+  noteShapeOf,
+  noteTailPoints,
+  noteTextLocalBox,
+  rowFractions,
+  sortedByZ,
+  tableCell,
+  trackEdges,
+  wrapText,
+} from '../media';
 import { drawTemplate } from '../templates';
 import type { ImageLayer, MediaObject, PageDimensions, PageVisual, StickyNote, TableLayer } from '../types';
 
@@ -52,15 +63,52 @@ export function loadImageBitmap(src: string): Promise<ImageBitmap> {
 
 const MEDIA_FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 
-/** The card of a sticky note, with its text laid out the way the DOM lays it out. */
-function drawNote(ctx: InkContext, note: StickyNote): void {
+/** A rounded rectangle path, built from arcs so no `roundRect` is needed. */
+function roundRectPath(ctx: InkContext, x: number, y: number, w: number, h: number, r: number): void {
+  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+/** The card of a sticky note, cut to its shape. */
+function fillNoteCard(ctx: InkContext, note: StickyNote): void {
+  const shape = noteShapeOf(note);
+  const body = noteBodyBox(note);
   ctx.fillStyle = note.color;
+  if (shape === 'ellipse') {
+    ctx.beginPath();
+    ctx.ellipse(note.width / 2, note.height / 2, note.width / 2, note.height / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  if (shape === 'bubble') {
+    roundRectPath(ctx, 0, 0, body.width, body.height, NOTE_BUBBLE_RADIUS);
+    ctx.fill();
+    const [a, b, tip] = noteTailPoints(note);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.lineTo(tip.x, tip.y);
+    ctx.closePath();
+    ctx.fill();
+    return;
+  }
   ctx.fillRect(0, 0, note.width, note.height);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
-  ctx.fillRect(0, 0, note.width, NOTE_GRIP_HEIGHT);
+  ctx.fillRect(0, 0, note.width, noteLipHeight(note));
+}
+
+/** A sticky note, with its text laid out the way the DOM lays it out. */
+function drawNote(ctx: InkContext, note: StickyNote): void {
+  fillNoteCard(ctx, note);
   if (note.text === '') return;
 
-  const box = noteTextBox(note);
+  const box = noteTextLocalBox(note);
   ctx.font = `${NOTE_FONT_SIZE}px ${MEDIA_FONT}`;
   ctx.fillStyle = '#27272a';
   ctx.textAlign = 'left';
@@ -71,10 +119,10 @@ function drawNote(ctx: InkContext, note: StickyNote): void {
   // The live note scrolls its overflow; a snapshot has no scrollbar, so clip
   // instead of spilling text out over the page.
   ctx.beginPath();
-  ctx.rect(NOTE_PADDING, NOTE_GRIP_HEIGHT + NOTE_PADDING, box.width, box.height);
+  ctx.rect(box.x, box.y, box.width, box.height);
   ctx.clip();
   lines.forEach((line, i) => {
-    ctx.fillText(line, NOTE_PADDING, NOTE_GRIP_HEIGHT + NOTE_PADDING + lineHeight * (i + 0.8));
+    ctx.fillText(line, box.x, box.y + lineHeight * (i + 0.8));
   });
   ctx.restore();
 }

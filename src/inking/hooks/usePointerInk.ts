@@ -291,8 +291,13 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       }
     };
 
-    const angleSnapFor = (settings: ToolSettings): number | undefined =>
-      settings.angleSnap ? ANGLE_SNAP_INCREMENT_DEG : undefined;
+    /**
+     * 15° snapping, read from whichever tool is asking: the shape tool keeps
+     * its own switch, so a construction line locked to 15° does not also lock
+     * every shape the pen recognises.
+     */
+    const angleSnapFor = (settings: ToolSettings, shapeTool: boolean): number | undefined =>
+      (shapeTool ? settings.lineAngleSnap : settings.angleSnap) ? ANGLE_SNAP_INCREMENT_DEG : undefined;
 
     /** Angle overlay for a straight line against the committed segments. */
     const hudFor = (shape: Shape): AngleArc[] => {
@@ -392,7 +397,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         const points = session.builder.points;
         if (polylineLength(points) < MIN_SNAP_PATH_LENGTH_PX) return;
         const settings = optionsRef.current.settingsRef.current;
-        const snapDeg = angleSnapFor(settings);
+        const snapDeg = angleSnapFor(settings, false);
         const shape = recognizeShape(points, snapDeg === undefined ? {} : { angleSnapDeg: snapDeg });
         if (!shape) return;
         lockDwell(snap, shape, hudFor(shape));
@@ -612,7 +617,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         sessionRef.current = session;
         if (eraseSweep(session, point, point)) opts.redrawCommitted();
       } else if (tool === 'line' || tool === 'coordinate-plane') {
-        const angleSnapDeg = angleSnapFor(settings);
+        const angleSnapDeg = angleSnapFor(settings, true);
         const shape = buildDragShape(tool, point, point, angleSnapDeg, settings);
         sessionRef.current = {
           kind: 'shape',
