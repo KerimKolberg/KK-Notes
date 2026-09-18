@@ -629,7 +629,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           filter: settings.eraseFilter,
           pointerId: e.pointerId,
           pointerType,
-          radius: eraserRadius(settings),
+          radius: eraserRadius(settings, tool),
           hits: new Set<string>(),
           rect,
           scale,

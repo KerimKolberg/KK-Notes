@@ -1,7 +1,12 @@
-import { HIGHLIGHTER_OPACITY, MAX_HIGHLIGHTER_OPACITY, MIN_HIGHLIGHTER_OPACITY } from '../constants';
+import {
+  HIGHLIGHTER_OPACITY,
+  MAX_HIGHLIGHTER_OPACITY,
+  MIN_HIGHLIGHTER_OPACITY,
+  STROKE_ERASER_RADIUS,
+} from '../constants';
 import { brushStyle } from './brushes';
 import type { LaserStyle } from './laser';
-import type { InkPointerType, InkTool, StrokeStyle, ToolSettings } from '../types';
+import type { InkPointerType, InkTool, StrokeStyle, ToolSettings, ToolType } from '../types';
 
 /**
  * Build the frozen render style for a new stroke.
@@ -142,10 +147,12 @@ export function laserStyleFor(settings: Readonly<ToolSettings>): LaserStyle {
 }
 
 /**
- * Radius of the eraser's hit circle. Both erasers use it: the stroke eraser
- * to decide what it has crossed, and the area eraser as the width of the
- * band it cuts.
+ * Radius of the eraser's hit circle, for whichever eraser is asking.
+ *
+ * The area eraser's is the slider: it is the width of the band it cuts. The
+ * stroke eraser's is a fixed point, because it removes whole strokes and its
+ * size is a precision rather than a width — see `STROKE_ERASER_RADIUS`.
  */
-export function eraserRadius(settings: Readonly<ToolSettings>): number {
-  return settings.eraserSize / 2;
+export function eraserRadius(settings: Readonly<ToolSettings>, tool: ToolType): number {
+  return tool === 'eraser-stroke' ? STROKE_ERASER_RADIUS : settings.eraserSize / 2;
 }

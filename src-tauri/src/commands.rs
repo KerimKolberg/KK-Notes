@@ -9,6 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use notes_sync::is_content_uri;
 use serde::{Deserialize, Serialize};
 use tauri::{
     ipc::{InvokeBody, Request},
@@ -86,6 +87,12 @@ fn describe(path: &Path) -> Result<FileInfo, String> {
 
 /// Write `bytes` to `path` via a sibling temp file and an atomic rename.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<FileInfo, String> {
+    if is_content_uri(path) {
+        return Err(format!(
+            "{} is a Storage Access Framework URI, not a file path; it must be written through the fs plugin",
+            path.display()
+        ));
+    }
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|e| format!("Cannot create {}: {e}", parent.display()))?;

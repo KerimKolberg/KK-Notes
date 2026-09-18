@@ -91,6 +91,40 @@ const PERMISSIONS = `    <uses-permission android:name="android.permission.INTER
     <uses-feature android:name="android.hardware.touchscreen" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen.multitouch" android:required="true" />`;
 
+/**
+ * "Open with" support.
+ *
+ * Android routes a document to an app through intent filters, and matching a
+ * file needs more than one: `ACTION_VIEW` with the MIME type covers a file
+ * manager or a mail client that knows what it is holding, and the
+ * extension-matching filter below it covers the ones that hand over a
+ * `content://` URI typed `application/octet-stream`, which is common. The
+ * `pathPattern` has to escape its own dot — `\\\\.` in the manifest — or it
+ * matches any character before `pdf`.
+ *
+ * `.notex` gets the same treatment, since the app is the only thing that can
+ * open one.
+ */
+export const OPEN_WITH_FILTERS = `
+            <!-- notex: open-with. PDFs are imported as pages; .notex files open directly. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\\\.pdf" />
+                <data android:pathPattern=".*\\\\.notex" />
+            </intent-filter>`;
+
 edit('app/src/main/AndroidManifest.xml', (xml) => {
   let out = xml;
   if (!out.includes('xmlns:tools=')) {
@@ -110,6 +144,10 @@ edit('app/src/main/AndroidManifest.xml', (xml) => {
   // when the keyboard opens over an AcroForm field.
   if (!out.includes('android:windowSoftInputMode')) {
     out = out.replace('            android:launchMode="singleTask"\n', '            android:launchMode="singleTask"\n            android:windowSoftInputMode="adjustResize"\n');
+  }
+  // "Open with" from a file manager or a mail attachment.
+  if (!out.includes('notex: open-with')) {
+    out = out.replace('        </activity>', `${OPEN_WITH_FILTERS}\n        </activity>`);
   }
   return out;
 });
@@ -131,6 +169,7 @@ edit('app/build.gradle.kts', (gradle) => {
 const MAIN_ACTIVITY = `package ${IDENTIFIER}
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -139,6 +178,7 @@ import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import org.json.JSONObject
 
 class MainActivity : TauriActivity() {
   /**
@@ -159,11 +199,62 @@ class MainActivity : TauriActivity() {
     fun get(): String = insetsJson
   }
 
+  /**
+   * The document this launch was asked to open, as JSON, or null.
+   *
+   * Written when the intent arrives, read once by the page on startup. It is
+   * consumed on read: opening the app again later must not re-import the PDF
+   * someone opened days ago.
+   */
+  @Volatile
+  private var openWithJson: String? = null
+
+  @Volatile
+  private var webViewRef: WebView? = null
+
+  private inner class OpenWithBridge {
+    @JavascriptInterface
+    fun take(): String? {
+      val payload = openWithJson
+      openWithJson = null
+      return payload
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // Draw under the status bar and the gesture pill; the web layer pads itself
     // with the --safe-* CSS variables fed below.
     enableEdgeToEdge()
+    noteOpenWith(intent)
     super.onCreate(savedInstanceState)
+  }
+
+  // singleTask: a second "open with" while the app is already running arrives
+  // here rather than as a fresh onCreate.
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    noteOpenWith(intent)
+    pushOpenWith()
+  }
+
+  /** Remember the document this launch was asked to open, if any. */
+  private fun noteOpenWith(intent: Intent?) {
+    val uri = intent?.data ?: return
+    if (intent.action != Intent.ACTION_VIEW && intent.action != Intent.ACTION_SEND) return
+    // The MIME the sender declared, falling back to what the resolver knows.
+    val mime = intent.type ?: contentResolver.getType(uri) ?: ""
+    openWithJson = "{\"uri\":${'$'}{JSONObject.quote(uri.toString())},\"mime\":${'$'}{JSONObject.quote(mime)}}"
+  }
+
+  /** Push a later intent into a page that has already booted. */
+  private fun pushOpenWith() {
+    val payload = openWithJson ?: return
+    runOnUiThread {
+      webViewRef?.evaluateJavascript(
+        "window.dispatchEvent(new CustomEvent('notex-open-with', { detail: ${'$'}payload }));",
+        null,
+      )
+    }
   }
 
   @SuppressLint("SetJavaScriptEnabled")
@@ -194,6 +285,12 @@ class MainActivity : TauriActivity() {
     // the real window insets to CSS as --android-inset-*. The page reads
     // __notexInsets.get() on startup and this pushes every later change.
     webView.addJavascriptInterface(InsetBridge(), "__notexInsets")
+    // The document this launch was asked to open. Read once on startup, the
+    // same pull-then-push shape as the insets above: a JavaScript interface
+    // added here is only visible to the *next* navigation, so the page asks
+    // for it rather than waiting to be told.
+    webView.addJavascriptInterface(OpenWithBridge(), "__notexOpenWith")
+    webViewRef = webView
     ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
       val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
       val density = view.resources.displayMetrics.density
@@ -313,6 +410,14 @@ for (const permission of ['INTERNET', 'READ_MEDIA_IMAGES', 'READ_EXTERNAL_STORAG
 if (!manifest.includes('android:windowSoftInputMode="adjustResize"')) {
   problems.push('AndroidManifest.xml does not set windowSoftInputMode=adjustResize');
 }
+// "Open with": a PDF handed over by a file manager or a mail client.
+if (!manifest.includes('android:mimeType="application/pdf"')) {
+  problems.push('AndroidManifest.xml has no application/pdf intent filter');
+}
+if (!manifest.includes('android:pathPattern=".*\\\\.pdf"')) {
+  problems.push('AndroidManifest.xml has no .pdf pathPattern filter (senders that type files as octet-stream)');
+}
+
 
 const appGradle = existsSync(join(ANDROID, 'app/build.gradle.kts'))
   ? readFileSync(join(ANDROID, 'app/build.gradle.kts'), 'utf8')

@@ -30,14 +30,30 @@ export interface PageInit {
   readonly media?: readonly MediaObject[];
 }
 
+/**
+ * The layout a page starts with when the caller does not say.
+ *
+ * Injected rather than imported so `operations.ts` stays a pure module the
+ * tests can use without a store behind it; `DocumentApp` installs the real
+ * one from the preferences store on startup.
+ */
+let pageDefaults: (() => PageInit | null) | null = null;
+
+export function setPageDefaultsSource(source: (() => PageInit | null) | null): void {
+  pageDefaults = source;
+}
+
 export function createPage(init: PageInit = {}, pageNumber = 1): Page {
+  // The user's "Set as default" fills in only what this call left open, so an
+  // explicit template — a PDF import, a duplicated page — always wins.
+  const preferred = pageDefaults?.() ?? null;
   return {
     id: createPageId(),
     pageNumber,
     dimensions: init.dimensions ?? A4_DIMENSIONS,
-    template: init.template ?? 'blank',
-    templateConfig: init.templateConfig ?? DEFAULT_TEMPLATE_CONFIG,
-    backgroundColor: init.backgroundColor ?? LIGHT_PAGE_BACKGROUND,
+    template: init.template ?? preferred?.template ?? 'blank',
+    templateConfig: init.templateConfig ?? preferred?.templateConfig ?? DEFAULT_TEMPLATE_CONFIG,
+    backgroundColor: init.backgroundColor ?? preferred?.backgroundColor ?? LIGHT_PAGE_BACKGROUND,
     strokes: init.strokes ?? [],
     undoStack: [],
     redoStack: [],

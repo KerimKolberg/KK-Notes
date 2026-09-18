@@ -9,8 +9,8 @@
  * - **Straightening.** Real tape is straight because it is a strip pulled off
  *   a roll. An aggressive RDP pass collapses the wobble of a hand-drawn
  *   stroke into a few long segments, which reads as a strip laid down in one
- *   motion instead of a thick scribble. It is done here rather than at commit
- *   so the preview, the committed stroke and the export are the same geometry.
+ *   motion instead of a thick scribble. It runs *once*, when the pen lifts:
+ *   see `straightenTape`.
  * - **Two renderers, one pattern.** On a canvas the tile goes through
  *   `createPattern` and is clipped to the band. A PDF has no such fill, so
  *   the same tile is emitted as explicit marks placed inside the band. Both
@@ -48,18 +48,33 @@ export const TAPE_TILE = 16;
 const STRAIGHTEN_TOLERANCE = 0.45;
 
 /**
- * The path a tape stroke is actually built from. Straightening runs here, so
- * every consumer — preview, commit, snapshot, export — sees one geometry.
+ * Collapse a drawn path into straight strips. Run once, on lift-off.
+ *
+ * This used to run inside the renderer, which meant an RDP pass over the
+ * whole path on *every animation frame* of a drag — work that grows with the
+ * stroke, on the thread that has to produce the next frame, so the tape
+ * visibly stuttered worse the longer the strip got. It now runs when the pen
+ * lifts and the result is what gets committed, so the cost is paid once and
+ * the preview stays as cheap as any other stroke.
+ *
+ * The visible consequence is that the strip snaps straight at lift-off rather
+ * than straightening under the pen. That is also how tape behaves: you lay it
+ * down and then it is straight.
  */
-export function tapePath<T extends Point>(points: readonly T[], style: StrokeStyle): readonly T[] {
+export function straightenTape<T extends Point>(points: readonly T[], style: StrokeStyle): readonly T[] {
   if (!style.tape?.straighten || points.length < 3) return points;
   const simplified = simplifyRdp(points, Math.max(2, style.size * STRAIGHTEN_TOLERANCE));
   return simplified.length >= 2 ? simplified : points;
 }
 
-/** Tape ignores pressure: a strip is the width of the strip. */
-export function tapeSamples(points: readonly InkPoint[], style: StrokeStyle): InkPoint[] {
-  return tapePath(points, style).map((p) => ({ ...p, pressure: 0.5 }));
+/**
+ * Tape ignores pressure: a strip is the width of the strip.
+ *
+ * No straightening here — a committed stroke already holds the straightened
+ * path, and a live one is deliberately drawn as it was moved.
+ */
+export function tapeSamples(points: readonly InkPoint[]): InkPoint[] {
+  return points.map((p) => (p.pressure === 0.5 ? p : { ...p, pressure: 0.5 }));
 }
 
 /** One mark of a pattern tile, in tile-local units (0..TAPE_TILE). */

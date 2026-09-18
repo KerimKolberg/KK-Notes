@@ -172,6 +172,22 @@ pub fn list_directory(root: &Path, dir: &Path, key: SortKey, order: SortOrder) -
     })
 }
 
+/**
+ * Android's Storage Access Framework hands back `content://` URIs, not paths.
+ *
+ * Nothing built on `std::fs` can open one: it is treated as a relative path,
+ * and the temp-file-plus-rename an atomic write needs cannot exist beside it.
+ * Writing one anyway produced files *named* after the URI — which is what
+ * made every PDF exported on Android unopenable — so callers check this and
+ * route those through the platform's content resolver instead.
+ */
+pub fn is_content_uri(path: &Path) -> bool {
+    let text = path.to_string_lossy();
+    // Case-insensitively, and only the scheme: a real file called
+    // `content___notes.pdf` is a path like any other.
+    text.len() >= 10 && text[..10].eq_ignore_ascii_case("content://")
+}
+
 /// Refuse a path that escapes the library root.
 ///
 /// Every path the frontend sends is checked against this. The frontend is not
@@ -414,6 +430,18 @@ mod tests {
         let folder = create_folder(root.path(), root.path(), "Maths").unwrap();
         let inner = create_folder(root.path(), &folder, "Week 1").unwrap();
         assert!(move_entry(root.path(), &folder, &inner).is_err());
+    }
+
+    #[test]
+    fn a_storage_access_uri_is_not_a_path() {
+        assert!(is_content_uri(Path::new("content://com.android.providers.downloads/document/42")));
+        assert!(is_content_uri(Path::new("CONTENT://Upper/Case")));
+        // Real paths, including ones that merely start with the letters.
+        assert!(!is_content_uri(Path::new("/home/me/notes.pdf")));
+        assert!(!is_content_uri(Path::new("C:\\Users\\me\\notes.pdf")));
+        assert!(!is_content_uri(Path::new("content_notes.pdf")));
+        assert!(!is_content_uri(Path::new("content:/")));
+        assert!(!is_content_uri(Path::new("")));
     }
 
     #[test]

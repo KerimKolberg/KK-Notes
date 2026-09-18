@@ -11,6 +11,7 @@ import { brushPadding } from './brushes';
 import { bboxFromPoints } from './geometry';
 import { createStrokeId } from './ids';
 import { arrowheadLength } from './shapes';
+import { straightenTape } from './tape';
 
 /** Padding around a freehand path: widest half-width, arrowheads, anti-aliasing slop. */
 export function freehandPadding(style: StrokeStyle): number {
@@ -29,6 +30,20 @@ export function freehandBBox(points: readonly Point[], style: StrokeStyle): BBox
  * freezing. Ephemeral tools (the laser pointer) never use it — nothing they
  * draw may become a stroke.
  */
+function rawBounds(points: readonly Point[]): { minX: number; minY: number; maxX: number; maxY: number } {
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
 export class StrokeBuilder {
   readonly id: string = createStrokeId();
   readonly createdAt: number = performance.now();
@@ -63,19 +78,35 @@ export class StrokeBuilder {
     if (point.y > this.maxY) this.maxY = point.y;
   }
 
+  /**
+   * The finished stroke.
+   *
+   * Washi tape is straightened here and nowhere else: the RDP pass is the
+   * expensive part of that tool, and running it per frame during the drag
+   * made long strips stutter. Committing the straightened path means the
+   * stroke on the page, its snapshot and its PDF export all hold the same
+   * geometry without any of them re-deriving it.
+   */
   build(): FreehandStroke {
+    const points = straightenTape(this.samples, this.style);
     const pad = freehandPadding(this.style);
+    // Straightening drops points, so the bounds have to come from what is
+    // actually being committed rather than from what was drawn.
+    const bounds =
+      points === this.samples
+        ? { minX: this.minX, minY: this.minY, maxX: this.maxX, maxY: this.maxY }
+        : rawBounds(points);
     return {
       kind: 'freehand',
       id: this.id,
       tool: this.tool,
-      points: this.samples,
+      points,
       style: this.style,
       bbox: {
-        minX: this.minX - pad,
-        minY: this.minY - pad,
-        maxX: this.maxX + pad,
-        maxY: this.maxY + pad,
+        minX: bounds.minX - pad,
+        minY: bounds.minY - pad,
+        maxX: bounds.maxX + pad,
+        maxY: bounds.maxY + pad,
       },
       pointerType: this.pointerType,
       createdAt: this.createdAt,

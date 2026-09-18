@@ -9,6 +9,7 @@ import { useDesktopIntegration } from '../../desktop/useDesktopIntegration';
 import { DebugOverlay } from '../../debug/DebugOverlay';
 import { useMediaInput } from '../hooks/useMediaInput';
 import { createStickyNote, createTable, nextZIndex, type NoteInit, type TableInit } from '../media';
+import { usePageDefaultsSource } from '../../preferences/usePageDefaultsSource';
 import type { MediaObject, Page } from '../types';
 import { InsertMenu } from './InsertMenu';
 
@@ -76,6 +77,8 @@ export function DocumentApp() {
   const clearActive = useCallback(() => clearPage(activePageId), [clearPage, activePageId]);
   useUndoRedoShortcuts(undoActive, redoActive, !readOnly);
   useDesktopIntegration();
+  // New pages pick up whatever the user set as their default layout.
+  usePageDefaultsSource();
 
   const importDialogOpen = useDocumentStore((s) => s.importDialogOpen);
 

@@ -251,7 +251,7 @@ function tapeToPdfOps(stroke: FreehandStroke, project: PdfProjection): PdfOp[] {
   const style = stroke.style;
   const tape = style.tape;
   if (!tape) return [];
-  const outline = getStrokeOutline(tapeSamples(stroke.points, style), style, true).map(([x, y]) => ({ x, y }));
+  const outline = getStrokeOutline(tapeSamples(stroke.points), style, true).map(([x, y]) => ({ x, y }));
   if (outline.length < 3) return [];
   const color = cssColorToPdf(style.color);
   const opacity = style.opacity * color.alpha;

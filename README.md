@@ -452,7 +452,16 @@ broader and lighter, the way graphite spread over more paper does.
 live canvas (pen or mouse). A stroke's *sample points* are the raw samples of
 a freehand stroke, or points spread evenly along the flattened outline of a
 geometric shape, so the verdict reflects how much of the outline is caught
-rather than how many corners happen to be. Pressing the lasso button again
+rather than how many corners happen to be.
+
+Containment is **non-zero winding**, not the even–odd rule, and the loop is
+always closed by joining the last sample back to the first — the edge the
+user never draws, because they lift the pen where they lift it. Winding is
+what makes backtracking work: under even–odd, a loop that crosses its own
+path carves the overlap back out again, so running the stroke a little past
+where you began silently drops whatever is in that sliver. The two rules
+agree exactly on any loop that does not cross itself, so nothing about a
+careful lasso changes. Pressing the lasso button again
 opens what it is hunting for — the layers and the mode below. The selection
 (`lassoSelection` in the store: page id + stroke ids) shows up as a dashed
 box on a z-25 layer between the ink and the form widgets:
@@ -468,11 +477,17 @@ box on a z-25 layer between the ink and the form widgets:
   paths (straight / parabola / wave / zigzag), the dash pattern, a depth
   slider, Flip and a cycle count.
 
-**What the loop catches** is two settings. *Enclose entirely* wants the whole
-stroke: the padded bounding box has to fit inside the loop's — a cheap reject
-that also catches a stroke poking out of a loop that merely overlaps it — and
-then every sample point has to pass the ray-casting point-in-polygon test,
-since a box says nothing about a concave loop. *Partial touch* takes anything
+**What the loop catches** is two settings. *Enclose entirely* wants
+substantially the whole stroke: at least **85%** of its sample points inside
+the polygon. Not 100% — a lasso is drawn by hand around ink that has width,
+and the failure mode of a hard rule is brutal: loop a word, clip the tail of
+one descender by two pixels, and the whole word is left behind with nothing
+to say why. At 85% a near miss is forgiven while a stroke merely straddling
+the edge is still refused. The bounding box is only a cheap overlap reject
+now; it used to have to be *contained*, which meant the halo of padding
+around a thick stroke — half its width, plus any arrowhead — could veto a
+stroke whose every sample was well inside the loop. *Partial touch* takes
+anything
 the loop so much as crosses, which makes a stroke dragged straight through a
 diagram a valid selection gesture — far quicker on a phone, where drawing an
 accurate loop around something small is the hard part. It qualifies two ways,
@@ -629,6 +644,44 @@ reviewed and diffed. Three kinds of files live there:
 `src-tauri/tauri.android.conf.json` holds the Android-only configuration
 overrides; Tauri merges it on top of `tauri.conf.json` automatically for
 mobile builds.
+
+### Open with, and writing files
+
+Android's Storage Access Framework does not hand back a filesystem path. The
+save dialog returns a `content://` URI whose bytes are reachable only through
+the platform's ContentResolver, and everything that treats it as a path —
+`std::fs`, and the temp-file-plus-rename the native writer uses — either fails
+or quietly creates a file *named* after the URI. That is what made every PDF
+exported on the device unopenable. `writeBinary` now routes a content URI
+through the fs plugin (`writeFile`, which takes a `Uint8Array`, so the bytes
+stay bytes) and a real path through the native command, which sends them as
+the raw IPC body — no base64, no array-of-numbers JSON — and writes them
+atomically. `.notex` saves take the same fork, and `atomic_write` refuses a
+content URI outright rather than writing nonsense, so a regression is loud.
+The `.pdf` extension on the suggested name and the dialog filter is what
+Android turns into the intent's `application/pdf` MIME; without it the file is
+created as `application/octet-stream` and nothing offers to open it.
+
+**"Open with"** needs two intent filters, not one. `ACTION_VIEW` with
+`android:mimeType="application/pdf"` covers a sender that knows what it is
+holding; the extension-matching filter below it covers the ones that hand over
+a `content://` URI typed `application/octet-stream`, which is common. The
+`pathPattern` escapes its own dot, or it would match any character before
+`pdf`. `.notex` gets the same treatment, since the app is the only thing that
+can open one.
+
+The intent itself never reaches the process as an argument, so `MainActivity`
+catches it and exposes it through a bridge object — the same pull-then-push
+shape as the insets, and for the same reason: a JavaScript interface added to
+a WebView is only visible to the *next* navigation, so the page asks rather
+than waiting to be told. It is consumed on read, because opening the app a
+week later must not re-import the PDF someone opened once.
+
+Launched from a PDF, the app skips the library: it creates a new document with
+the PDF's pages imported at their own size and opens straight into it. Someone
+who tapped "open with" on a PDF wants to write on it, not to be shown a file
+list. Classification trusts the extension over the declared MIME type, and
+falls back to the MIME when a `content://` URI has no visible name at all.
 
 ### Permissions and storage
 
@@ -937,16 +990,29 @@ reading size.
 response, and its pattern (solid, stripes, checks, dots) frozen onto the
 stroke so it re-renders at any zoom and survives an export. *Straighten
 lines* runs an aggressive RDP pass over the path, which turns a wobbly drag
-into the straight strip a roll of tape actually produces. On a canvas the
+into the straight strip a roll of tape actually produces — **once, when the
+pen lifts**. It used to run inside the renderer, which meant re-simplifying
+the whole path on every animation frame of the drag: work that grows
+super-linearly with the stroke (measured here at 0.07 ms for a 200-point
+path and 4.3 ms at 2400, per frame) on the thread that owes the next frame.
+On a desktop that is survivable; on a tablet CPU it is the reported stutter,
+getting worse the longer the strip. `StrokeBuilder.build` straightens and the
+committed path is what everything downstream reads, so the preview is now as
+cheap as any other stroke and nothing re-derives the geometry. On a canvas the
 pattern is a `createPattern` tile clipped to the band; a PDF has no such
 fill, so the same tile is emitted as explicit marks placed wholly inside the
 band's outline.
 
 **The eraser** is one palette button. Pressing it selects whichever of the two
 erasers was last chosen; pressing it again opens everything else it can do:
-the mode (stroke or area), the area eraser's own size — separate from the pen
-width, because how thickly you write and how precisely you rub out are
-unrelated — the filters, and the bulk removals.
+the mode (stroke or area), the area eraser's own size, the filters, and the
+bulk removals.
+
+The size belongs to the **area** eraser alone. The stroke eraser has a fixed,
+small hit radius, because it lifts whole strokes: its size is a *precision*,
+not a width, and a wide one takes the neighbouring line as well and feels
+like it is guessing. Sharing one slider made the stroke eraser unusable the
+moment the area eraser had been set wide.
 
 *Only erase* narrows both erasers to the highlighter layer, the washi tape
 layer, or both. The two are independent switches rather than a three-way
@@ -1021,6 +1087,40 @@ step a person types and far fewer than the seventeen it takes to expose the
 representation, and `parseFloat` then strips the zeros `toPrecision` leaves
 behind. A plane saved before steps existed carries neither field and counts
 in whole cells.
+
+## Customisation (`src/preferences/`)
+
+Three things belong to the install rather than to a document, so they live in
+their own store and are written straight to `localStorage`: the palette you
+arranged should be the palette you get tomorrow, on whichever notebook you
+open.
+
+- **Palette order.** *Arrange icons* in the settings popover turns each tool
+  button into a drag handle (the same pointer-reorder hook the page arranger
+  uses, so pen, mouse and touch all work). It is a mode rather than an
+  always-on drag because the palette floats over a canvas someone is drawing
+  on, and a tool button that moved because the pen slipped would be worse
+  than one in the wrong place. Dividers are drawn before the slot that starts
+  each group, so the grouping survives a reorder instead of being pinned to
+  fixed positions.
+- **Quick colours.** Hold a swatch (or right-click it) to change it, with Add
+  and Remove beside the picker. A hold rather than a click, so the row stays a
+  row of colours for the pen; a press that became a hold does not also select
+  the colour it was editing.
+- **Page defaults.** *Set as default* in the arranger stores the selected
+  page's template, spacing and background, and new notes start that way.
+  `createPage` asks for them through an injected callback rather than
+  importing the store — pages are created from a dozen places and threading a
+  preference through each one means each one can forget it — and an explicit
+  template always wins, so a PDF import is still a PDF page.
+
+*Reset to defaults*, also in the settings popover, clears all three at once
+and says so. Everything read back off disk goes through `normalize`: this is
+user-editable storage that survives upgrades, so a slot that no longer exists,
+a colour that is not a colour, or a list that lost half its entries has to
+leave the app usable. A saved order missing a tool that did not exist when it
+was written *gains* that tool at its default position rather than hiding it,
+which is what keeps a future version from shipping an invisible feature.
 
 ## Performance overlay (`src/debug/`)
 
@@ -1217,6 +1317,11 @@ src/debug/
 ├── profiler.ts             fps, ink latency, draw time, React commits; inert when off
 ├── DebugOverlay.tsx        the corner read-out
 └── RenderProfiler.tsx      always-mounted <Profiler> boundary
+
+src/preferences/
+├── types.ts                palette slots, page defaults, the shapes
+├── store.ts                persisted store + normalisation of anything stored
+└── usePageDefaultsSource.ts  lets createPage see the preferred layout
 
 src/library/
 ├── routeStore.ts           pure route reducer + the store that releases a document

@@ -15,6 +15,10 @@ import {
   Undo2,
   Zap,
 } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
+import { usePointerReorder, type ReorderItemProps } from '../../document/hooks/usePointerReorder';
+import { usePreferencesStore } from '../../preferences/store';
+import { PALETTE_GROUP_STARTS, PALETTE_SLOT_LABELS, type PaletteSlot } from '../../preferences/types';
 import { filterIsActive } from '../engine/eraseFilter';
 import { lassoFilterIsOpen } from '../engine/lassoFilter';
 import { IconButton } from '../../ui/IconButton';
@@ -89,6 +93,58 @@ function lineLabel(curve: ToolSettings['lineCurve']): string {
 
 const DIVIDER = <span className="mx-0.5 h-8 w-px shrink-0 bg-zinc-200 dark:bg-zinc-700" aria-hidden="true" />;
 
+interface PaletteSlotButtonProps {
+  slot: PaletteSlot;
+  index: number;
+  arranging: boolean;
+  itemProps: ReorderItemProps;
+  dragging: boolean;
+  dropTarget: boolean;
+  divider: ReactNode;
+  children: ReactNode;
+}
+
+/**
+ * One position on the palette.
+ *
+ * Normally it is nothing at all — the tool's own button, rendered as it
+ * always was. While the palette is being arranged it becomes a drag handle
+ * *over* that button, swallowing the press so reordering cannot accidentally
+ * pick a tool, and carrying the tool's name for assistive tech since the icon
+ * underneath is inert.
+ */
+function PaletteSlotButton({ slot, index, arranging, itemProps, dragging, dropTarget, divider, children }: PaletteSlotButtonProps) {
+  const { ref, ...handlers } = itemProps;
+  if (!arranging) {
+    return (
+      <>
+        {divider}
+        {children}
+      </>
+    );
+  }
+  return (
+    <>
+      {divider}
+      <span
+        ref={ref as unknown as React.Ref<HTMLSpanElement>}
+        role="button"
+        tabIndex={0}
+        aria-label={`Move ${PALETTE_SLOT_LABELS[slot]}`}
+        data-palette-slot={slot}
+        data-palette-slot-index={index}
+        className={`relative inline-flex cursor-grab touch-none rounded-xl ring-2 transition-opacity ${
+          dropTarget ? 'ring-blue-500' : 'ring-dashed ring-zinc-300 dark:ring-zinc-600'
+        } ${dragging ? 'opacity-40' : ''}`}
+        {...handlers}
+      >
+        {/* Inert underneath: the handle owns the pointer while arranging. */}
+        <span className="pointer-events-none">{children}</span>
+      </span>
+    </>
+  );
+}
+
 /**
  * Floating, draggable tool palette.
  *
@@ -120,6 +176,22 @@ export const ToolPalette = memo(function ToolPalette({
     insets,
   });
 
+  // Arranging the icons is a mode, not something a stray drag can trigger:
+  // the palette sits over a canvas someone is drawing on, and a tool button
+  // that moved because the pen slipped would be worse than one in the wrong
+  // place. Entered from the settings popover.
+  const [arranging, setArranging] = useState(false);
+  const { paletteOrder, movePaletteSlot } = usePreferencesStore(
+    useShallow((s) => ({ paletteOrder: s.paletteOrder, movePaletteSlot: s.movePaletteSlot })),
+  );
+  const noSelect = useCallback(() => {}, []);
+  const { drag, getItemProps } = usePointerReorder({
+    count: paletteOrder.length,
+    onMove: movePaletteSlot,
+    onSelect: noSelect,
+    disabled: !arranging,
+  });
+
   const close = useCallback(() => setFlyout(null), []);
   const toggle = useCallback((next: Exclude<Flyout, null>) => setFlyout((current) => (current === next ? null : next)), []);
 
@@ -143,6 +215,186 @@ export const ToolPalette = memo(function ToolPalette({
   const lineActive = settings.tool === 'line';
   const washiActive = settings.tool === 'washi-tape';
   const planeActive = settings.tool === 'coordinate-plane';
+
+  const slots: Readonly<Record<PaletteSlot, ReactNode>> = {
+    select: (
+      <IconButton icon={MousePointer2} label="Select" active={settings.tool === 'select'} onClick={() => pick('select')} data-palette-tool="select" />
+    ),
+    lasso: (
+      <div className="relative">
+              <IconButton
+                icon={Lasso}
+                label="Lasso select"
+                hint={lassoActive ? 'press again for layers and mode' : undefined}
+                active={lassoActive}
+                hasPopover
+                tooltipDisabled={flyout === 'lasso'}
+                onClick={() => (lassoActive ? toggle('lasso') : pick('lasso'))}
+                data-palette-tool="lasso"
+                data-lasso-mode={settings.lassoMode}
+                data-lasso-filtered={lassoFilterIsOpen(settings.lassoFilter) ? undefined : 'true'}
+              />
+              <Popover open={flyout === 'lasso'} onClose={close} label="Lasso selection" side="top" align="center">
+                <LassoOptions settings={settings} onSettingsChange={onSettingsChange} />
+              </Popover>
+            </div>
+    ),
+    laser: (
+      <IconButton icon={Zap} label="Laser pointer" active={laser} onClick={() => pick('laser-pointer')} data-palette-tool="laser-pointer" />
+    ),
+    insert: insertMenu && (
+              <div className="relative">
+                <IconButton
+                  icon={Plus}
+                  label="Add to the page"
+                  hint="images, sticky notes and tables"
+                  active={flyout === 'insert'}
+                  aria-haspopup="dialog"
+                  aria-expanded={flyout === 'insert'}
+                  onClick={() => toggle('insert')}
+                  data-insert-trigger
+                />
+                <Popover open={flyout === 'insert'} onClose={close} label="Add to the page" side="top" align="center">
+                  {insertMenu(close)}
+                </Popover>
+              </div>
+            ),
+    pen: (
+      <div className="relative">
+              <IconButton
+                icon={BrushIcon}
+                label={brushLabel(settings.brush)}
+                hint={penActive ? 'press again for brushes' : undefined}
+                active={penActive}
+                hasPopover
+                tooltipDisabled={flyout === 'brush'}
+                onClick={() => (penActive ? toggle('brush') : pick('pen'))}
+                data-palette-tool="pen"
+              />
+              <Popover open={flyout === 'brush'} onClose={close} label="Pen brushes" side="top" align="center">
+                <BrushFlyout settings={settings} onSettingsChange={onSettingsChange} onPick={close} />
+              </Popover>
+            </div>
+    ),
+    highlighter: (
+      <div className="relative">
+              <IconButton
+                icon={Highlighter}
+                label="Highlighter"
+                hint={highlighterActive ? 'press again for width, ink and gradient' : undefined}
+                active={highlighterActive}
+                hasPopover
+                tooltipDisabled={flyout === 'highlighter'}
+                onClick={() => (highlighterActive ? toggle('highlighter') : pick('highlighter'))}
+                data-palette-tool="highlighter"
+                data-highlighter-gradient={settings.highlighterGradient}
+              />
+              <Popover open={flyout === 'highlighter'} onClose={close} label="Highlighter" side="top" align="center">
+                <HighlighterOptions settings={settings} onSettingsChange={onSettingsChange} />
+              </Popover>
+            </div>
+    ),
+    washi: (
+      <div className="relative">
+              <IconButton
+                icon={Ticket}
+                className="[&>svg]:-rotate-45"
+                label="Washi tape"
+                hint={washiActive ? 'press again for patterns' : undefined}
+                active={washiActive}
+                hasPopover
+                tooltipDisabled={flyout === 'washi'}
+                onClick={() => (washiActive ? toggle('washi') : pick('washi-tape'))}
+                data-palette-tool="washi-tape"
+              />
+              <Popover open={flyout === 'washi'} onClose={close} label="Washi tape" side="top" align="center">
+                <WashiOptions settings={settings} onSettingsChange={onSettingsChange} />
+              </Popover>
+            </div>
+    ),
+    line: (
+      <div className="relative">
+              <IconButton
+                icon={Spline}
+                label={lineLabel(settings.lineCurve)}
+                hint={lineActive ? 'press again for paths and patterns' : undefined}
+                active={lineActive}
+                hasPopover
+                tooltipDisabled={flyout === 'line'}
+                onClick={() => (lineActive ? toggle('line') : pick('line'))}
+                data-palette-tool="line"
+                data-line-curve={settings.lineCurve}
+              />
+              <Popover open={flyout === 'line'} onClose={close} label="Line path and pattern" side="top" align="center">
+                <LineOptions settings={settings} onSettingsChange={onSettingsChange} />
+              </Popover>
+            </div>
+    ),
+    plane: (
+      <div className="relative">
+              <IconButton
+                icon={Axis3d}
+                label="Coordinate system"
+                hint={planeActive ? 'press again for options' : undefined}
+                active={planeActive}
+                hasPopover
+                tooltipDisabled={flyout === 'plane'}
+                onClick={() => (planeActive ? toggle('plane') : pick('coordinate-plane'))}
+                data-palette-tool="coordinate-plane"
+              />
+              <Popover open={flyout === 'plane'} onClose={close} label="Coordinate plane options" side="top" align="center">
+                <PlaneOptions settings={settings} onSettingsChange={onSettingsChange} />
+              </Popover>
+            </div>
+    ),
+    stroke: (
+      <div className="relative">
+              <IconButton
+                icon={Ellipsis}
+                label="Line pattern and snapping"
+                active={flyout === 'stroke'}
+                aria-haspopup="dialog"
+                aria-expanded={flyout === 'stroke'}
+                onClick={() => toggle('stroke')}
+                data-stroke-options-trigger
+              />
+              <Popover open={flyout === 'stroke'} onClose={close} label="Line pattern and snapping" side="top" align="center">
+                <StrokeOptions settings={settings} onSettingsChange={onSettingsChange} />
+              </Popover>
+            </div>
+    ),
+    eraser: (
+      <div className="relative">
+              <IconButton
+                icon={Eraser}
+                label={eraserIsArea ? 'Area eraser' : 'Stroke eraser'}
+                hint={eraserActive ? 'press again for eraser options' : undefined}
+                active={eraserActive}
+                badge={eraserIsArea ? 'px' : undefined}
+                hasPopover
+                tooltipDisabled={flyout === 'eraser'}
+                onClick={() => (eraserActive ? toggle('eraser') : pick(eraserIsArea ? 'eraser-pixel' : 'eraser-stroke'))}
+                data-palette-tool="eraser"
+                data-eraser-mode={settings.eraserMode}
+                data-erase-filtered={filterIsActive(settings.eraseFilter) ? 'true' : undefined}
+              />
+              <Popover open={flyout === 'eraser'} onClose={close} label="Eraser" side="top" align="center">
+                <EraserOptions
+                  settings={settings}
+                  onSettingsChange={onSettingsChange}
+                  onClearPage={() => {
+                    onClearPageInk?.();
+                    close();
+                  }}
+                  onClearDocument={() => {
+                    onClearDocumentInk?.();
+                    close();
+                  }}
+                />
+              </Popover>
+            </div>
+    ),
+  };
 
   return (
     <div
@@ -181,177 +433,27 @@ export const ToolPalette = memo(function ToolPalette({
           </Tooltip>
         )}
 
-        {/* Actions */}
-        <IconButton icon={MousePointer2} label="Select" active={settings.tool === 'select'} onClick={() => pick('select')} data-palette-tool="select" />
-        <div className="relative">
-          <IconButton
-            icon={Lasso}
-            label="Lasso select"
-            hint={lassoActive ? 'press again for layers and mode' : undefined}
-            active={lassoActive}
-            hasPopover
-            tooltipDisabled={flyout === 'lasso'}
-            onClick={() => (lassoActive ? toggle('lasso') : pick('lasso'))}
-            data-palette-tool="lasso"
-            data-lasso-mode={settings.lassoMode}
-            data-lasso-filtered={lassoFilterIsOpen(settings.lassoFilter) ? undefined : 'true'}
-          />
-          <Popover open={flyout === 'lasso'} onClose={close} label="Lasso selection" side="top" align="center">
-            <LassoOptions settings={settings} onSettingsChange={onSettingsChange} />
-          </Popover>
-        </div>
-        <IconButton icon={Zap} label="Laser pointer" active={laser} onClick={() => pick('laser-pointer')} data-palette-tool="laser-pointer" />
-        {insertMenu && (
-          <div className="relative">
-            <IconButton
-              icon={Plus}
-              label="Add to the page"
-              hint="images, sticky notes and tables"
-              active={flyout === 'insert'}
-              aria-haspopup="dialog"
-              aria-expanded={flyout === 'insert'}
-              onClick={() => toggle('insert')}
-              data-insert-trigger
-            />
-            <Popover open={flyout === 'insert'} onClose={close} label="Add to the page" side="top" align="center">
-              {insertMenu(close)}
-            </Popover>
-          </div>
-        )}
-
-        {DIVIDER}
-
-        {/* Pens */}
-        <div className="relative">
-          <IconButton
-            icon={BrushIcon}
-            label={brushLabel(settings.brush)}
-            hint={penActive ? 'press again for brushes' : undefined}
-            active={penActive}
-            hasPopover
-            tooltipDisabled={flyout === 'brush'}
-            onClick={() => (penActive ? toggle('brush') : pick('pen'))}
-            data-palette-tool="pen"
-          />
-          <Popover open={flyout === 'brush'} onClose={close} label="Pen brushes" side="top" align="center">
-            <BrushFlyout settings={settings} onSettingsChange={onSettingsChange} onPick={close} />
-          </Popover>
-        </div>
-        <div className="relative">
-          <IconButton
-            icon={Highlighter}
-            label="Highlighter"
-            hint={highlighterActive ? 'press again for width, ink and gradient' : undefined}
-            active={highlighterActive}
-            hasPopover
-            tooltipDisabled={flyout === 'highlighter'}
-            onClick={() => (highlighterActive ? toggle('highlighter') : pick('highlighter'))}
-            data-palette-tool="highlighter"
-            data-highlighter-gradient={settings.highlighterGradient}
-          />
-          <Popover open={flyout === 'highlighter'} onClose={close} label="Highlighter" side="top" align="center">
-            <HighlighterOptions settings={settings} onSettingsChange={onSettingsChange} />
-          </Popover>
-        </div>
-        <div className="relative">
-          <IconButton
-            icon={Ticket}
-            className="[&>svg]:-rotate-45"
-            label="Washi tape"
-            hint={washiActive ? 'press again for patterns' : undefined}
-            active={washiActive}
-            hasPopover
-            tooltipDisabled={flyout === 'washi'}
-            onClick={() => (washiActive ? toggle('washi') : pick('washi-tape'))}
-            data-palette-tool="washi-tape"
-          />
-          <Popover open={flyout === 'washi'} onClose={close} label="Washi tape" side="top" align="center">
-            <WashiOptions settings={settings} onSettingsChange={onSettingsChange} />
-          </Popover>
-        </div>
-
-        {DIVIDER}
-
-        {/* STEM & geometry */}
-        <div className="relative">
-          <IconButton
-            icon={Spline}
-            label={lineLabel(settings.lineCurve)}
-            hint={lineActive ? 'press again for paths and patterns' : undefined}
-            active={lineActive}
-            hasPopover
-            tooltipDisabled={flyout === 'line'}
-            onClick={() => (lineActive ? toggle('line') : pick('line'))}
-            data-palette-tool="line"
-            data-line-curve={settings.lineCurve}
-          />
-          <Popover open={flyout === 'line'} onClose={close} label="Line path and pattern" side="top" align="center">
-            <LineOptions settings={settings} onSettingsChange={onSettingsChange} />
-          </Popover>
-        </div>
-        <div className="relative">
-          <IconButton
-            icon={Axis3d}
-            label="Coordinate system"
-            hint={planeActive ? 'press again for options' : undefined}
-            active={planeActive}
-            hasPopover
-            tooltipDisabled={flyout === 'plane'}
-            onClick={() => (planeActive ? toggle('plane') : pick('coordinate-plane'))}
-            data-palette-tool="coordinate-plane"
-          />
-          <Popover open={flyout === 'plane'} onClose={close} label="Coordinate plane options" side="top" align="center">
-            <PlaneOptions settings={settings} onSettingsChange={onSettingsChange} />
-          </Popover>
-        </div>
-        <div className="relative">
-          <IconButton
-            icon={Ellipsis}
-            label="Line pattern and snapping"
-            active={flyout === 'stroke'}
-            aria-haspopup="dialog"
-            aria-expanded={flyout === 'stroke'}
-            onClick={() => toggle('stroke')}
-            data-stroke-options-trigger
-          />
-          <Popover open={flyout === 'stroke'} onClose={close} label="Line pattern and snapping" side="top" align="center">
-            <StrokeOptions settings={settings} onSettingsChange={onSettingsChange} />
-          </Popover>
-        </div>
-
-        {DIVIDER}
-
-        {/* One eraser button. First press selects it in whichever mode was
-            last chosen; pressing it again opens everything else it can do. */}
-        <div className="relative">
-          <IconButton
-            icon={Eraser}
-            label={eraserIsArea ? 'Area eraser' : 'Stroke eraser'}
-            hint={eraserActive ? 'press again for eraser options' : undefined}
-            active={eraserActive}
-            badge={eraserIsArea ? 'px' : undefined}
-            hasPopover
-            tooltipDisabled={flyout === 'eraser'}
-            onClick={() => (eraserActive ? toggle('eraser') : pick(eraserIsArea ? 'eraser-pixel' : 'eraser-stroke'))}
-            data-palette-tool="eraser"
-            data-eraser-mode={settings.eraserMode}
-            data-erase-filtered={filterIsActive(settings.eraseFilter) ? 'true' : undefined}
-          />
-          <Popover open={flyout === 'eraser'} onClose={close} label="Eraser" side="top" align="center">
-            <EraserOptions
-              settings={settings}
-              onSettingsChange={onSettingsChange}
-              onClearPage={() => {
-                onClearPageInk?.();
-                close();
-              }}
-              onClearDocument={() => {
-                onClearDocumentInk?.();
-                close();
-              }}
-            />
-          </Popover>
-        </div>
+        {/* The tools, in whatever order the user arranged them. Dividers are
+            drawn before the slot that starts each group, so the grouping
+            survives a reorder rather than being pinned to fixed positions. */}
+        {paletteOrder.map((slot, index) => {
+          const content = slots[slot];
+          if (!content) return null;
+          return (
+            <PaletteSlotButton
+              key={slot}
+              slot={slot}
+              index={index}
+              arranging={arranging}
+              itemProps={getItemProps(index)}
+              dragging={drag?.from === index}
+              dropTarget={drag !== null && drag.over === index && drag.from !== index}
+              divider={index > 0 && PALETTE_GROUP_STARTS.includes(slot) ? DIVIDER : null}
+            >
+              {content}
+            </PaletteSlotButton>
+          );
+        })}
 
         {history && (
           <>
@@ -374,7 +476,13 @@ export const ToolPalette = memo(function ToolPalette({
             data-palette-settings-trigger
           />
           <Popover open={flyout === 'settings'} onClose={close} label="Input and page settings" side="top" align="end">
-            <PaletteSettings settings={settings} onSettingsChange={onSettingsChange} onClear={onClear} />
+            <PaletteSettings
+              settings={settings}
+              onSettingsChange={onSettingsChange}
+              onClear={onClear}
+              arranging={arranging}
+              onArrangingChange={setArranging}
+            />
           </Popover>
         </div>
       </div>

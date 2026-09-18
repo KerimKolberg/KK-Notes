@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_TOOL_SETTINGS } from '../constants';
-import { TAPE_PATTERNS, TAPE_TILE, tapePath, tapeSamples, tileMarksOver, tilePattern } from '../engine/tape';
+import { TAPE_PATTERNS, TAPE_TILE, straightenTape, tapeSamples, tileMarksOver, tilePattern } from '../engine/tape';
+import { StrokeBuilder } from '../engine/strokeBuilder';
 import { styleForTool } from '../engine/toolStyles';
 import type { InkPoint, StrokeStyle } from '../types';
 
@@ -37,9 +38,18 @@ describe('the tape style', () => {
   });
 });
 
+const straightStyle = style({ tape: { pattern: 'solid', accent: '#fff', straighten: true } });
+
+/** Feed a path through a builder, as the pointer pipeline does. */
+const commit = (points: readonly InkPoint[], s: StrokeStyle) => {
+  const builder = new StrokeBuilder('washi-tape', s, 'pen');
+  for (const point of points) builder.add(point);
+  return builder.build();
+};
+
 describe('straightening', () => {
   it('collapses hand shake into a few long segments', () => {
-    const straight = tapePath(wobbly, style({ tape: { pattern: 'solid', accent: '#fff', straighten: true } }));
+    const straight = straightenTape(wobbly, straightStyle);
     expect(straight.length).toBeLessThan(wobbly.length / 4);
     // RDP keeps a subset of the original samples, ends included, so the strip
     // still begins and ends exactly where the pen did.
@@ -48,18 +58,55 @@ describe('straightening', () => {
   });
 
   it('leaves the path alone when it is turned off', () => {
-    const asDrawn = tapePath(wobbly, style({ tape: { pattern: 'solid', accent: '#fff', straighten: false } }));
+    const asDrawn = straightenTape(wobbly, style({ tape: { pattern: 'solid', accent: '#fff', straighten: false } }));
     expect(asDrawn).toBe(wobbly);
   });
 
   it('never straightens a stroke down to nothing', () => {
     const tiny: InkPoint[] = [{ x: 0, y: 0, pressure: 0.5 }, { x: 1, y: 0, pressure: 0.5 }];
-    expect(tapePath(tiny, style()).length).toBeGreaterThanOrEqual(2);
+    expect(straightenTape(tiny, style()).length).toBeGreaterThanOrEqual(2);
   });
 
   it('flattens pressure, so the band does not taper like a pen stroke', () => {
-    const samples = tapeSamples(wobbly, style());
+    const samples = tapeSamples(wobbly);
     expect(new Set(samples.map((p) => p.pressure))).toEqual(new Set([0.5]));
+  });
+
+  it('does not touch the path while the pen is still down', () => {
+    // The whole point of moving the pass to lift-off: what the renderer is
+    // handed mid-drag is what was drawn, so no work grows with the stroke on
+    // the thread that owes the next frame.
+    const live = tapeSamples(wobbly);
+    expect(live).toHaveLength(wobbly.length);
+    expect(live.map((p) => p.x)).toEqual(wobbly.map((p) => p.x));
+  });
+
+  it('straightens once, when the stroke is committed', () => {
+    const stroke = commit(wobbly, straightStyle);
+    expect(stroke.points.length).toBeLessThan(wobbly.length / 4);
+    expect(stroke.points[0]).toBe(wobbly[0]);
+    // And the committed path is already straight, so nothing downstream —
+    // renderer, snapshot, PDF — has to redo it.
+    expect(tapeSamples(stroke.points)).toHaveLength(stroke.points.length);
+  });
+
+  it('bounds the committed stroke by what it actually kept', () => {
+    // Straightening drops points, so bounds taken from the drawn path could
+    // be wider than the strip that is really there.
+    const stroke = commit(wobbly, straightStyle);
+    const xs = stroke.points.map((p) => p.x);
+    const ys = stroke.points.map((p) => p.y);
+    const pad = stroke.style.size;
+    expect(stroke.bbox.minX).toBeLessThanOrEqual(Math.min(...xs));
+    expect(stroke.bbox.maxX).toBeGreaterThanOrEqual(Math.max(...xs));
+    expect(stroke.bbox.minY).toBeGreaterThanOrEqual(Math.min(...ys) - pad * 2);
+    expect(stroke.bbox.maxY).toBeLessThanOrEqual(Math.max(...ys) + pad * 2);
+  });
+
+  it('leaves an unstraightened tape stroke exactly as drawn', () => {
+    const loose = style({ tape: { pattern: 'solid', accent: '#fff', straighten: false } });
+    const stroke = commit(wobbly, loose);
+    expect(stroke.points).toHaveLength(wobbly.length);
   });
 });
 

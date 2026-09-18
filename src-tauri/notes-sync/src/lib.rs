@@ -17,7 +17,7 @@ pub mod thumb;
 
 pub use conflict::{ConflictResolution, SyncAction, SyncRecord, decide, resolve_name};
 pub use digest::{FileDigest, hash_bytes, now_ms};
-pub use library::{LibraryEntry, LibraryListing, SortKey, SortOrder, list_directory, sort_entries};
+pub use library::{LibraryEntry, LibraryListing, SortKey, SortOrder, is_content_uri, list_directory, sort_entries};
 pub use manager::{SyncManager, SyncPhase, SyncStatus};
 pub use provider::{CloudProvider, OfflineProvider, RemoteFile};
 pub use thumb::{ThumbnailSource, read_thumbnail_source};

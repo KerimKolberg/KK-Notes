@@ -73,9 +73,20 @@ export async function pickDocumentSavePath(title: string): Promise<string | null
   return save({ defaultPath: safeFilename(title, NOTEX_EXTENSION), filters: NOTEX_FILTERS });
 }
 
-/** Write the document to a known native path (atomic on the Rust side). */
+/**
+ * Write the document to a known native path (atomic on the Rust side).
+ *
+ * A SAF content URI takes the same detour as the PDF export does: it is not a
+ * path, and the native writer cannot open one.
+ */
 export async function saveDocumentToPath(doc: Document, path: string): Promise<FileInfo> {
-  return tauriInvoke<FileInfo>('save_document', { path, contents: encodeNotex(doc) });
+  const contents = encodeNotex(doc);
+  if (isContentUri(path)) {
+    const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+    await writeTextFile(path, contents);
+    return { path, bytes: contents.length, modifiedMs: Date.now() };
+  }
+  return tauriInvoke<FileInfo>('save_document', { path, contents });
 }
 
 /** Browser fallback: download the `.notex`. */
@@ -110,14 +121,51 @@ export async function openDocumentWithPicker(): Promise<OpenedDocument | null> {
  * through the raw IPC body. Browser: download. Resolves the written path, or
  * `null` (browser / cancelled).
  */
+/**
+ * A path handed back by Android's Storage Access Framework.
+ *
+ * On Android the save dialog does not return a filesystem path at all: it
+ * returns a `content://` URI for a document the user picked, whose bytes are
+ * reachable only through the platform's ContentResolver. Everything that
+ * treats it as a path — `std::fs`, and the temp-file-plus-rename the native
+ * writer uses — either fails or, worse, quietly creates a file *named* after
+ * the URI, which is what made every exported PDF unopenable.
+ */
+export function isContentUri(path: string): boolean {
+  return /^content:\/\//i.test(path);
+}
+
+/**
+ * Write raw bytes to wherever the save dialog pointed.
+ *
+ * Two routes, because there are two kinds of destination. A real filesystem
+ * path goes to the native command, which sends the bytes as the IPC body —
+ * no base64, no array-of-numbers JSON — and writes them atomically. A SAF
+ * content URI goes through the fs plugin, which is the only thing on Android
+ * that knows how to open one; `writeFile` takes a `Uint8Array` directly, so
+ * the bytes stay bytes there too.
+ */
+export async function writeBinary(path: string, bytes: Uint8Array): Promise<void> {
+  if (isContentUri(path)) {
+    const { writeFile } = await import('@tauri-apps/plugin-fs');
+    await writeFile(path, bytes);
+    return;
+  }
+  await tauriInvoke<FileInfo>('write_binary_file', bytes, { headers: { 'x-path': encodeURIComponent(path) } });
+}
+
 export async function exportPdf(doc: Document): Promise<string | null> {
   const { exportDocumentToPdf } = await import('../pdf/export');
   if (isTauri()) {
     const { save } = await tauriDialog();
+    // The `.pdf` extension on both the suggested name and the filter is what
+    // Android turns into the `application/pdf` MIME of the CREATE_DOCUMENT
+    // intent; without it the file is created as `application/octet-stream`
+    // and nothing on the device offers to open it.
     const path = await save({ defaultPath: safeFilename(doc.title, 'pdf'), filters: PDF_FILTERS });
     if (!path) return null;
     const bytes = await exportDocumentToPdf(doc);
-    await tauriInvoke<FileInfo>('write_binary_file', bytes, { headers: { 'x-path': encodeURIComponent(path) } });
+    await writeBinary(path, bytes);
     return path;
   }
   const bytes = await exportDocumentToPdf(doc);

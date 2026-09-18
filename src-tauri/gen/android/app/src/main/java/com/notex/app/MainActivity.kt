@@ -1,6 +1,7 @@
 package com.notex.app
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -9,6 +10,7 @@ import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import org.json.JSONObject
 
 class MainActivity : TauriActivity() {
   /**
@@ -29,11 +31,62 @@ class MainActivity : TauriActivity() {
     fun get(): String = insetsJson
   }
 
+  /**
+   * The document this launch was asked to open, as JSON, or null.
+   *
+   * Written when the intent arrives, read once by the page on startup. It is
+   * consumed on read: opening the app again later must not re-import the PDF
+   * someone opened days ago.
+   */
+  @Volatile
+  private var openWithJson: String? = null
+
+  @Volatile
+  private var webViewRef: WebView? = null
+
+  private inner class OpenWithBridge {
+    @JavascriptInterface
+    fun take(): String? {
+      val payload = openWithJson
+      openWithJson = null
+      return payload
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // Draw under the status bar and the gesture pill; the web layer pads itself
     // with the --safe-* CSS variables fed below.
     enableEdgeToEdge()
+    noteOpenWith(intent)
     super.onCreate(savedInstanceState)
+  }
+
+  // singleTask: a second "open with" while the app is already running arrives
+  // here rather than as a fresh onCreate.
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    noteOpenWith(intent)
+    pushOpenWith()
+  }
+
+  /** Remember the document this launch was asked to open, if any. */
+  private fun noteOpenWith(intent: Intent?) {
+    val uri = intent?.data ?: return
+    if (intent.action != Intent.ACTION_VIEW && intent.action != Intent.ACTION_SEND) return
+    // The MIME the sender declared, falling back to what the resolver knows.
+    val mime = intent.type ?: contentResolver.getType(uri) ?: ""
+    openWithJson = "{"uri":${JSONObject.quote(uri.toString())},"mime":${JSONObject.quote(mime)}}"
+  }
+
+  /** Push a later intent into a page that has already booted. */
+  private fun pushOpenWith() {
+    val payload = openWithJson ?: return
+    runOnUiThread {
+      webViewRef?.evaluateJavascript(
+        "window.dispatchEvent(new CustomEvent('notex-open-with', { detail: $payload }));",
+        null,
+      )
+    }
   }
 
   @SuppressLint("SetJavaScriptEnabled")
@@ -64,6 +117,12 @@ class MainActivity : TauriActivity() {
     // the real window insets to CSS as --android-inset-*. The page reads
     // __notexInsets.get() on startup and this pushes every later change.
     webView.addJavascriptInterface(InsetBridge(), "__notexInsets")
+    // The document this launch was asked to open. Read once on startup, the
+    // same pull-then-push shape as the insets above: a JavaScript interface
+    // added here is only visible to the *next* navigation, so the page asks
+    // for it rather than waiting to be told.
+    webView.addJavascriptInterface(OpenWithBridge(), "__notexOpenWith")
+    webViewRef = webView
     ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
       val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
       val density = view.resources.displayMetrics.density

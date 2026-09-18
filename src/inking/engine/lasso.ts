@@ -15,24 +15,60 @@ import { freehandBBox } from './strokeBuilder';
 // ---------------------------------------------------------------------------
 
 /**
- * Ray casting (even–odd rule): cast a ray from `p` towards +x and count edge
- * crossings. Handles horizontal edges and vertices by the half-open rule
- * (an edge counts when exactly one endpoint is above the ray).
+ * A lasso path as a closed polygon.
+ *
+ * The loop is closed by joining the last sample back to the first — the edge
+ * the user never draws, because they lift the pen where they lift it. Every
+ * containment test needs that edge to exist, so it is made explicit here
+ * rather than left to each caller to remember.
+ *
+ * A trailing duplicate of the first point is dropped: it would be a
+ * zero-length edge, and `closeLasso` is called on paths that may already have
+ * been closed.
+ */
+export function closeLasso(points: readonly Point[]): readonly Point[] {
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (!first || !last || points.length < 3) return points;
+  return first.x === last.x && first.y === last.y ? points.slice(0, -1) : points;
+}
+
+/**
+ * Ray casting, **non-zero winding**: cast a ray from `p` towards +x and sum
+ * the signed crossings of the closed loop. Inside means the total is not zero.
+ *
+ * Winding rather than the even–odd rule because a lasso is drawn by hand and
+ * hands backtrack. Under even–odd, a loop that crosses its own path carves
+ * the overlap back out again — draw a circle and let the end of the stroke
+ * run past the start, and the sliver you just double-enclosed counts as
+ * *outside*, so the strokes in it are silently not selected. Winding treats
+ * anything the path went round as enclosed however many times it went round
+ * it, which is what someone scribbling a loop means.
+ *
+ * The two rules agree exactly on any loop that does not cross itself, so
+ * nothing about a careful lasso changes.
+ *
+ * Crossings use the half-open rule (an edge counts when exactly one endpoint
+ * is above the ray), so a vertex exactly on the ray is counted once rather
+ * than twice.
  */
 export function pointInPolygon(p: Point, polygon: readonly Point[]): boolean {
-  const n = polygon.length;
+  const ring = closeLasso(polygon);
+  const n = ring.length;
   if (n < 3) return false;
-  let inside = false;
+  let winding = 0;
   for (let i = 0, j = n - 1; i < n; j = i++) {
-    const a = polygon[i];
-    const b = polygon[j];
+    const a = ring[i];
+    const b = ring[j];
     if (!a || !b) continue;
-    const crosses = a.y > p.y !== b.y > p.y;
-    if (!crosses) continue;
+    const upward = a.y <= p.y && b.y > p.y;
+    const downward = b.y <= p.y && a.y > p.y;
+    if (!upward && !downward) continue;
     const xAtY = ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x;
-    if (p.x < xAtY) inside = !inside;
+    if (p.x >= xAtY) continue;
+    winding += upward ? 1 : -1;
   }
-  return inside;
+  return winding !== 0;
 }
 
 export function polygonBBox(polygon: readonly Point[]): BBox {
@@ -128,18 +164,13 @@ export const LASSO_MIN_INSIDE_FRACTION = 0.5;
 export type LassoMode = 'enclose' | 'touch';
 
 export const LASSO_MODES: readonly { readonly id: LassoMode; readonly label: string; readonly hint: string }[] = [
-  { id: 'enclose', label: 'Enclose entirely', hint: 'Only strokes that fall completely inside the loop' },
+  { id: 'enclose', label: 'Enclose entirely', hint: 'Only strokes that fall (almost) completely inside the loop' },
   { id: 'touch', label: 'Partial touch', hint: 'Anything the loop crosses — draw a line through it to select it' },
 ];
 
 export interface LassoOptions {
   readonly mode?: LassoMode;
   readonly filter?: LassoFilter;
-}
-
-/** Is `box` wholly within `outer`? */
-function bboxContains(outer: BBox, box: BBox): boolean {
-  return box.minX >= outer.minX && box.minY >= outer.minY && box.maxX <= outer.maxX && box.maxY <= outer.maxY;
 }
 
 /**
@@ -162,23 +193,40 @@ export function isStrokeEnclosed(
 }
 
 /**
- * Is a stroke *completely* inside the lasso? The padded bounding box has to
- * fit inside the loop's own box — a cheap reject that also catches a stroke
- * poking out of a loop that merely overlaps it — and then every sample point
- * has to be inside the polygon itself, since a box says nothing about a
- * concave loop.
+ * How much of a stroke has to be inside for "enclose entirely" to take it.
+ *
+ * Not 1. Demanding every last sample point sounds like what "entirely" means,
+ * but a lasso is drawn by hand around ink that has width, and the failure mode
+ * is brutal: loop a word, clip the tail of one descender by two pixels, and
+ * the whole word is left behind with nothing to say why. At 85% a stroke has
+ * to be substantially inside — a stroke merely straddling the edge is still
+ * refused — while a near miss on one end is forgiven.
+ */
+export const LASSO_ENCLOSE_FRACTION = 0.85;
+
+/**
+ * Is a stroke enclosed by the lasso?
+ *
+ * The padded bounding box has to *overlap* the loop's, which is only a cheap
+ * reject; the verdict is the share of sample points inside the polygon
+ * itself, since a box says nothing about a concave loop. Note the box is not
+ * required to be contained: that was the old rule, and it meant the halo of
+ * padding around a thick stroke — half its width, plus any arrowhead — could
+ * fail a stroke whose every sample was well inside the loop.
  */
 export function isStrokeWhollyInside(
   stroke: Stroke,
   polygon: readonly Point[],
   lassoBounds: BBox = polygonBBox(polygon),
+  fraction = LASSO_ENCLOSE_FRACTION,
 ): boolean {
   if (polygon.length < 3) return false;
-  if (!bboxContains(lassoBounds, stroke.bbox)) return false;
+  if (!bboxIntersects(stroke.bbox, lassoBounds)) return false;
   const samples = strokeSamplePoints(stroke);
   if (samples.length === 0) return false;
-  for (const p of samples) if (!pointInPolygon(p, polygon)) return false;
-  return true;
+  let inside = 0;
+  for (const p of samples) if (pointInPolygon(p, polygon)) inside++;
+  return inside / samples.length >= fraction;
 }
 
 /** Which side of the line a→b the point c falls on: >0 left, <0 right, 0 collinear. */

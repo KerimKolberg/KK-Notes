@@ -108,11 +108,24 @@ describe('enclose-entirely selection', () => {
     expect(isStrokeWhollyInside(makeStroke([[10, 50], [30, 50], [50, 50], [70, 50], [90, 50], [110, 50]]), loop)).toBe(false);
   });
 
-  it('leaves one whose padded bounds overflow even when every sample is in', () => {
-    // Hugging the edge: the samples are inside, but the stroke is 40 px wide,
-    // so the ink itself would be cut by the loop.
+  it('takes a thick stroke whose samples are inside, padding or no padding', () => {
+    // A 40 px stroke hugging the edge: its padded bounding box spills well
+    // past the loop, but every sample of the path itself is inside it. The
+    // rule used to require the padded box to be contained, which meant the
+    // halo around any thick stroke — half its width, plus any arrowhead —
+    // could veto a stroke the user had clearly lassoed.
     const fat = makeStroke([[5, 50], [95, 50]], { style: { ...PEN_STYLE, size: 40 } });
-    expect(isStrokeWhollyInside(fat, loop)).toBe(false);
+    expect(fat.bbox.minX).toBeLessThan(0);
+    expect(isStrokeWhollyInside(fat, loop)).toBe(true);
+  });
+
+  it('forgives a near miss but not a straddle', () => {
+    // Nine of ten samples in — a descender clipped by a couple of pixels — is
+    // what the threshold exists for. Half in is not.
+    const nearMiss = makeStroke(Array.from({ length: 10 }, (_, i) => [10 + i * 9, 50] as [number, number]));
+    expect(isStrokeWhollyInside(nearMiss, loop)).toBe(true);
+    const straddling = makeStroke(Array.from({ length: 10 }, (_, i) => [50 + i * 9, 50] as [number, number]));
+    expect(isStrokeWhollyInside(straddling, loop)).toBe(false);
   });
 
   it('respects a concave loop: an arm is in, the notch is not', () => {

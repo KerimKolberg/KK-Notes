@@ -1,4 +1,5 @@
-import { useRef, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Brush, Pen, PenLine, PenTool, Pencil, Pipette, type LucideIcon } from 'lucide-react';
 import { IconButton } from '../../ui/IconButton';
 import { Tooltip } from '../../ui/Tooltip';
@@ -30,6 +31,8 @@ import {
 import { ERASE_FILTERS, filterIsActive } from '../engine/eraseFilter';
 import { LASSO_MODES, type LassoMode } from '../engine/lasso';
 import { LASSO_LAYERS, lassoFilterIsEmpty } from '../engine/lassoFilter';
+import { DEFAULT_PALETTE_ORDER, MAX_SWATCHES, MIN_SWATCHES } from '../../preferences/types';
+import { DEFAULT_PREFERENCES, usePreferencesStore } from '../../preferences/store';
 import { formatTickValue } from '../engine/shapes';
 import { TAPE_PATTERNS } from '../engine/tape';
 import { BRUSHES } from '../engine/brushes';
@@ -45,6 +48,9 @@ import type {
   ToolSettings,
   ToolType,
 } from '../types';
+
+/** How long a swatch must be held before it becomes editable, in ms. */
+const SWATCH_HOLD_MS = 550;
 
 /** Print colours offered for tape; white and black cover most real rolls. */
 const WASHI_ACCENTS: readonly string[] = [DEFAULT_WASHI_ACCENT, '#1f1f24', '#fde68a', '#bfdbfe', '#fbcfe8'];
@@ -143,29 +149,79 @@ export function usesColor(tool: ToolType): boolean {
  */
 export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
   const colorInputRef = useRef<HTMLInputElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
   const laser = settings.tool === 'laser-pointer';
   const activeColor = laser ? settings.laserColor : settings.color;
   const colorDisabled = !usesColor(settings.tool) || (laser && settings.laserRainbow);
   const setColor = (color: string): void => onSettingsChange(laser ? { laserColor: color } : { color });
 
+  const { swatches, setSwatch, addSwatch, removeSwatch } = usePreferencesStore(
+    useShallow((s) => ({
+      swatches: s.swatches,
+      setSwatch: s.setSwatch,
+      addSwatch: s.addSwatch,
+      removeSwatch: s.removeSwatch,
+    })),
+  );
+  // Which swatch a press is currently editing. Entered by a long press, so
+  // the row stays a row of colours for the pen and only becomes an editor
+  // when someone deliberately holds one down.
+  const [editing, setEditing] = useState<number | null>(null);
+  const holdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heldRef = useRef(false);
+
+  const beginHold = (index: number): void => {
+    heldRef.current = false;
+    holdRef.current = setTimeout(() => {
+      heldRef.current = true;
+      setEditing(index);
+      // Opening the picker from inside the timer keeps it inside the gesture,
+      // which is what browsers require for a colour input to open at all.
+      requestAnimationFrame(() => editInputRef.current?.click());
+    }, SWATCH_HOLD_MS);
+  };
+  const endHold = (): void => {
+    if (holdRef.current !== null) clearTimeout(holdRef.current);
+    holdRef.current = null;
+  };
+
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-xl bg-zinc-100/70 px-2 py-1.5 dark:bg-zinc-800/60" data-tool-config>
       <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Stroke colour">
-        {COLOR_PALETTE.map((color) => {
+        {swatches.map((color, index) => {
           const selected = activeColor.toLowerCase() === color.toLowerCase();
           return (
-            <Tooltip key={color} label={`Colour ${color}`} side="top">
+            <Tooltip key={`${color}-${index}`} label={`Colour ${color}`} hint="hold to change" side="top">
               <button
                 type="button"
                 aria-label={`Colour ${color}`}
                 aria-pressed={selected}
                 disabled={colorDisabled}
                 data-swatch={color}
+                data-swatch-index={index}
                 className={`h-6 w-6 rounded-full ring-1 ring-black/15 transition-transform disabled:opacity-30 dark:ring-white/25 ${
                   selected ? 'scale-110 outline-2 outline-offset-2 outline-blue-500' : 'hover:scale-105'
-                }`}
+                } ${editing === index ? 'outline-2 outline-offset-2 outline-amber-500' : ''}`}
                 style={{ background: color }}
-                onClick={() => setColor(color)}
+                onPointerDown={() => beginHold(index)}
+                onPointerUp={endHold}
+                onPointerLeave={endHold}
+                onPointerCancel={endHold}
+                onContextMenu={(e) => {
+                  // Right-click is the mouse's long press.
+                  e.preventDefault();
+                  setEditing(index);
+                  editInputRef.current?.click();
+                }}
+                onClick={() => {
+                  // A press that became a hold chose a colour to edit, not a
+                  // colour to draw with.
+                  if (heldRef.current) {
+                    heldRef.current = false;
+                    return;
+                  }
+                  setColor(color);
+                }}
               />
             </Tooltip>
           );
@@ -187,6 +243,51 @@ export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
           disabled={colorDisabled}
           onChange={(e) => setColor(e.target.value)}
         />
+        {/* The swatch editor's own picker, and the controls that go with it. */}
+        <input
+          ref={editInputRef}
+          type="color"
+          className="sr-only"
+          aria-label="Edit this swatch"
+          data-swatch-edit
+          value={editing !== null ? (swatches[editing] ?? '#000000') : '#000000'}
+          onChange={(e) => {
+            if (editing !== null) setSwatch(editing, e.target.value);
+          }}
+        />
+        {editing !== null && (
+          <span className="inline-flex items-center gap-1 rounded-lg bg-amber-100 px-1.5 py-0.5 dark:bg-amber-950/60" data-swatch-editor>
+            <button
+              type="button"
+              className="text-xs font-medium text-amber-900 hover:underline dark:text-amber-200"
+              onClick={() => addSwatch(swatches[editing] ?? '#000000')}
+              disabled={swatches.length >= MAX_SWATCHES}
+              data-swatch-add
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              className="text-xs font-medium text-rose-700 hover:underline disabled:opacity-40 dark:text-rose-300"
+              onClick={() => {
+                removeSwatch(editing);
+                setEditing(null);
+              }}
+              disabled={swatches.length <= MIN_SWATCHES}
+              data-swatch-remove
+            >
+              Remove
+            </button>
+            <button
+              type="button"
+              className="text-xs font-medium text-zinc-600 hover:underline dark:text-zinc-300"
+              onClick={() => setEditing(null)}
+              data-swatch-done
+            >
+              Done
+            </button>
+          </span>
+        )}
       </div>
 
       <span className="mx-0.5 h-6 w-px bg-zinc-300 dark:bg-zinc-600" aria-hidden="true" />
@@ -738,6 +839,12 @@ export function EraserOptions({ settings, onSettingsChange, onClearPage, onClear
           {Math.round(settings.eraserSize)}px
         </span>
       </Row>
+      {!area && (
+        <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-stroke-eraser-note>
+          The stroke eraser has no size: it lifts whole strokes, so it is a
+          fine point that takes the one line you touch and not its neighbours.
+        </p>
+      )}
       <Row label="Only erase">
         {ERASE_FILTERS.map((option) => (
           <Chip
@@ -913,12 +1020,35 @@ export function PlaneOptions({ settings, onSettingsChange }: PanelProps) {
   );
 }
 
-/** Input settings that are not a tool: touch drawing, stylus buttons, clear. */
+export interface PaletteSettingsProps extends PanelProps {
+  onClear: () => void;
+  /** True while the palette's icons can be dragged into a new order. */
+  arranging?: boolean;
+  onArrangingChange?: (value: boolean) => void;
+}
+
+/** Input settings that are not a tool: touch drawing, stylus buttons, layout, clear. */
 export function PaletteSettings({
   settings,
   onSettingsChange,
   onClear,
-}: PanelProps & { onClear: () => void }) {
+  arranging = false,
+  onArrangingChange,
+}: PaletteSettingsProps) {
+  const { paletteOrder, swatches, pageDefaults, resetPreferences } = usePreferencesStore(
+    useShallow((s) => ({
+      paletteOrder: s.paletteOrder,
+      swatches: s.swatches,
+      pageDefaults: s.pageDefaults,
+      resetPreferences: s.resetPreferences,
+    })),
+  );
+  // Subscribed rather than read once, so the button enables itself the moment
+  // something is customised rather than on the next unrelated re-render.
+  const customised =
+    pageDefaults !== null ||
+    paletteOrder.join() !== DEFAULT_PALETTE_ORDER.join() ||
+    swatches.join() !== DEFAULT_PREFERENCES.swatches.join();
   return (
     <div className="flex w-[min(18rem,calc(100vw-2.5rem))] flex-col gap-1" data-palette-settings>
       <Row label="Finger input">
@@ -961,6 +1091,23 @@ export function PaletteSettings({
           the counters.
         </p>
       )}
+      {onArrangingChange && (
+        <>
+          <Row label="Palette layout">
+            <Switch checked={arranging} onChange={onArrangingChange}>
+              <span data-palette-arrange>Arrange icons</span>
+            </Switch>
+          </Row>
+          {arranging && (
+            <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-palette-arrange-note>
+              Drag the tool icons into the order you want. They stay where you
+              put them next time. Pressing one picks it up rather than
+              selecting it, so switch this back off when you are done.
+            </p>
+          )}
+        </>
+      )}
+
       <div className="mt-1 border-t border-zinc-200 pt-1 dark:border-zinc-700">
         <button
           type="button"
@@ -971,6 +1118,24 @@ export function PaletteSettings({
         >
           Clear page
         </button>
+        <button
+          type="button"
+          aria-label="Reset customisations to defaults"
+          disabled={!customised}
+          className="inline-flex h-8 w-full items-center justify-center rounded-lg px-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          onClick={() => {
+            if (window.confirm('Reset the palette order, quick colours and page defaults?')) {
+              resetPreferences();
+              onArrangingChange?.(false);
+            }
+          }}
+          data-reset-preferences
+        >
+          Reset to defaults
+        </button>
+        <p className="px-1 pt-0.5 text-center text-[11px] text-zinc-400 dark:text-zinc-500">
+          {customised ? 'Clears custom colours, tool order and page defaults.' : 'Nothing has been customised yet.'}
+        </p>
       </div>
     </div>
   );

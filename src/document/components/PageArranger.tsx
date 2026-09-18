@@ -14,6 +14,7 @@ import {
 } from '../constants';
 import { usePointerReorder } from '../hooks/usePointerReorder';
 import { useDocumentStore } from '../store';
+import { usePreferencesStore } from '../../preferences/store';
 import type { PageTemplate } from '../types';
 import { PageThumbnail } from './PageThumbnail';
 
@@ -69,6 +70,10 @@ export function PageArranger() {
   const [applyToAll, setApplyToAll] = useState(false);
   const target = applyToAll ? ('all' as const) : activePageIndex;
   const selected = pages[activePageIndex];
+  // The layout a new note starts with, so a preferred template does not have
+  // to be re-chosen for every page.
+  const pageDefaults = usePreferencesStore((s) => s.pageDefaults);
+  const setPageDefaults = usePreferencesStore((s) => s.setPageDefaults);
   const spacing = selected?.templateConfig.spacing ?? 20;
   const spacingApplies = selected !== undefined && SPACED_TEMPLATES.includes(selected.template);
   const spacingLabel = selected?.template === 'ruled' ? 'Line spacing' : 'Box size';
@@ -181,6 +186,42 @@ export function PageArranger() {
               disabled={readOnly}
               onChange={(e) => setPageBackground(target, e.target.value)}
             />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-20 shrink-0 text-zinc-600 dark:text-zinc-300">Defaults</span>
+          <div className="flex flex-1 flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={readOnly || !selected}
+              data-set-page-default
+              className="inline-flex h-8 items-center rounded-lg bg-zinc-100 px-2.5 text-xs font-medium text-zinc-700 hover:bg-zinc-200 disabled:opacity-40 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+              onClick={() => {
+                if (!selected) return;
+                setPageDefaults({
+                  template: selected.template,
+                  templateConfig: selected.templateConfig,
+                  backgroundColor: selected.backgroundColor,
+                });
+              }}
+            >
+              Set as default
+            </button>
+            {pageDefaults !== null && (
+              <button
+                type="button"
+                data-clear-page-default
+                className="inline-flex h-8 items-center rounded-lg px-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                onClick={() => setPageDefaults(null)}
+              >
+                Clear
+              </button>
+            )}
+            <span className="text-xs text-zinc-500 dark:text-zinc-400" data-page-default-note>
+              {pageDefaults === null
+                ? 'New notes start blank.'
+                : `New notes start ${PAGE_TEMPLATES.find((t) => t.id === pageDefaults.template)?.label.toLowerCase() ?? pageDefaults.template}.`}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-2">

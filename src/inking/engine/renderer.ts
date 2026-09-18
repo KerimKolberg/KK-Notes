@@ -203,7 +203,7 @@ export function freehandCentreline(points: readonly InkPoint[], style: StrokeSty
 function freehandBody(points: readonly InkPoint[], style: StrokeStyle, complete: boolean): PlanPass[] {
   if (style.tape) {
     // A band: the flat colour, then the pattern clipped inside it.
-    const path = outlineToPath2D(getStrokeOutline(tapeSamples(points, style), style, complete), true);
+    const path = outlineToPath2D(getStrokeOutline(tapeSamples(points), style, complete), true);
     return style.tape.pattern === 'solid' ? [fillPass(path)] : [fillPass(path), { path, kind: 'tape', alpha: 1 }];
   }
   const brush = strokeBrush(style);

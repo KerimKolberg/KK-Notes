@@ -40,6 +40,19 @@ export const DEFAULT_HIGHLIGHTER_GRADIENT_TO = '#22d3ee';
  * multiple of the pen width, because how thick you write and how precisely
  * you want to rub something out are unrelated decisions.
  */
+/**
+ * The stroke eraser's hit radius, in page px.
+ *
+ * Fixed, and small on purpose. The stroke eraser removes whole strokes it
+ * crosses, so its size is not a brush width but a *precision*: a wide one
+ * takes the neighbouring stroke as well and feels like it is guessing. It is
+ * deliberately not the area eraser's size — how thickly you rub out a patch
+ * and how precisely you pick one line out of a diagram are unrelated, and
+ * sharing the slider made the stroke eraser unusable the moment the area
+ * eraser had been set wide.
+ */
+export const STROKE_ERASER_RADIUS = 3;
+
 export const MIN_ERASER_SIZE = 4;
 export const MAX_ERASER_SIZE = 96;
 export const DEFAULT_ERASER_SIZE = 16;
