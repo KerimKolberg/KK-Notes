@@ -160,7 +160,11 @@ export const AXIS_LABEL_PRESETS: readonly { readonly x: string; readonly y: stri
 ];
 
 export const DEFAULT_STYLUS_SETTINGS: Readonly<StylusSettings> = {
-  barrelButton: 'eraser-stroke',
+  // Pen ⇄ eraser is what the button is for on every tablet that has one.
+  clickToggle: ['pen', 'eraser-stroke'],
+  // A hold reaches for the lasso: the one tool you want for a single gesture
+  // and then never again, which is exactly what a temporary switch is for.
+  holdTool: 'lasso',
   eraserEnd: 'eraser-stroke',
 };
 

@@ -297,13 +297,19 @@ export type Stroke = FreehandStroke | GeometricStroke;
 // Settings / history / component API
 // ---------------------------------------------------------------------------
 
-/** What a pen's barrel (side) button does while held (tool ids). */
-export type BarrelButtonAction = 'eraser-stroke' | 'eraser-pixel' | 'select';
 /** What the pen's eraser end (inverted stylus) does (tool ids). */
 export type EraserEndAction = 'eraser-stroke' | 'eraser-pixel';
 
+/**
+ * The barrel button does two different things depending on how long it is
+ * held — see `engine/barrelButton.ts`. A quick click toggles between a pair
+ * of tools and leaves them there; a hold borrows one tool for the duration.
+ */
 export interface StylusSettings {
-  readonly barrelButton: BarrelButtonAction;
+  /** The two tools a *click* swaps between. */
+  readonly clickToggle: readonly [ToolType, ToolType];
+  /** The tool borrowed while the button is *held*. */
+  readonly holdTool: ToolType;
   readonly eraserEnd: EraserEndAction;
 }
 

@@ -93,9 +93,11 @@ export function isEraserEndPress(pointerType: InkPointerType, button: number, bu
  * buttons. Returns `null` when the press should not start anything.
  *
  * - Pen eraser end → `stylus.eraserEnd` (stroke or pixel eraser), no toolbar switch needed.
- * - Pen barrel button while touching → `stylus.barrelButton` (an eraser, or
- *   temporary select mode).
- * - Pen barrel pressed while merely hovering → ignored.
+ * - Pen barrel button while touching → `stylus.holdTool`. Drawing with the
+ *   button down *is* a hold, so it borrows the same tool the hold gesture
+ *   does rather than a second setting that could disagree with it.
+ * - Pen barrel pressed while merely hovering → ignored here; the click/hold
+ *   state machine in `barrelButton.ts` owns that case.
  * - Mouse: only the primary button draws.
  */
 export function resolveEffectiveTool(
@@ -110,12 +112,12 @@ export function resolveEffectiveTool(
       // Some drivers omit `buttons`; fall back to `button`.
       if (button === 0) return selected;
       if (button === 5) return stylus.eraserEnd;
-      if (button === 2) return stylus.barrelButton;
+      if (button === 2) return stylus.holdTool;
       return null;
     }
     if (buttons & POINTER_BUTTONS.ERASER) return stylus.eraserEnd;
     if (!(buttons & POINTER_BUTTONS.PRIMARY)) return null;
-    if (buttons & POINTER_BUTTONS.SECONDARY) return stylus.barrelButton;
+    if (buttons & POINTER_BUTTONS.SECONDARY) return stylus.holdTool;
     return selected;
   }
   if (pointerType === 'mouse') {

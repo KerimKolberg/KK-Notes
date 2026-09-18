@@ -33,12 +33,12 @@ import { LASSO_MODES, type LassoMode } from '../engine/lasso';
 import { LASSO_LAYERS, lassoFilterIsEmpty } from '../engine/lassoFilter';
 import { DEFAULT_PALETTE_ORDER, MAX_SWATCHES, MIN_SWATCHES } from '../../preferences/types';
 import { DEFAULT_PREFERENCES, usePreferencesStore } from '../../preferences/store';
+import { BARREL_CLICK_MS } from '../engine/barrelButton';
 import { formatTickValue } from '../engine/shapes';
 import { TAPE_PATTERNS } from '../engine/tape';
 import { BRUSHES } from '../engine/brushes';
 import type {
   ArrowheadMode,
-  BarrelButtonAction,
   BrushId,
   CoordinatePlaneConfig,
   EraserEndAction,
@@ -48,6 +48,24 @@ import type {
   ToolSettings,
   ToolType,
 } from '../types';
+
+/**
+ * Tools the barrel button can reach.
+ *
+ * Not every tool: the ones worth a hardware button are the ones you switch
+ * to for a moment and back. A pen-to-plotting-a-coordinate-plane button is
+ * not a thing anyone wants.
+ */
+const BARREL_TOOLS: readonly { readonly id: ToolType; readonly label: string }[] = [
+  { id: 'pen', label: 'Pen' },
+  { id: 'highlighter', label: 'Highlighter' },
+  { id: 'eraser-stroke', label: 'Stroke eraser' },
+  { id: 'eraser-pixel', label: 'Area eraser' },
+  { id: 'lasso', label: 'Lasso' },
+  { id: 'select', label: 'Select' },
+  { id: 'laser-pointer', label: 'Laser pointer' },
+  { id: 'line', label: 'Lines and shapes' },
+];
 
 /** How long a swatch must be held before it becomes editable, in ms. */
 const SWATCH_HOLD_MS = 550;
@@ -1056,18 +1074,68 @@ export function PaletteSettings({
           Touch Draw
         </Switch>
       </Row>
-      <Row label="Barrel button">
+      {/* One button, two gestures: a click swaps tools and leaves them
+          swapped, a hold borrows one for as long as it is held. They are
+          configured separately because they answer different needs. */}
+      <Row label="Barrel click">
         <select
           className={SELECT}
-          aria-label="Barrel button"
-          value={settings.stylus.barrelButton}
-          onChange={(e) => onSettingsChange({ stylus: { ...settings.stylus, barrelButton: e.target.value as BarrelButtonAction } })}
+          aria-label="Barrel click, first tool"
+          data-barrel-click-a
+          value={settings.stylus.clickToggle[0]}
+          onChange={(e) =>
+            onSettingsChange({
+              stylus: { ...settings.stylus, clickToggle: [e.target.value as ToolType, settings.stylus.clickToggle[1]] },
+            })
+          }
         >
-          <option value="eraser-stroke">Stroke eraser</option>
-          <option value="eraser-pixel">Pixel eraser</option>
-          <option value="select">Select / lasso</option>
+          {BARREL_TOOLS.map((tool) => (
+            <option key={tool.id} value={tool.id}>
+              {tool.label}
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-zinc-400 dark:text-zinc-500" aria-hidden="true">
+          ⇄
+        </span>
+        <select
+          className={SELECT}
+          aria-label="Barrel click, second tool"
+          data-barrel-click-b
+          value={settings.stylus.clickToggle[1]}
+          onChange={(e) =>
+            onSettingsChange({
+              stylus: { ...settings.stylus, clickToggle: [settings.stylus.clickToggle[0], e.target.value as ToolType] },
+            })
+          }
+        >
+          {BARREL_TOOLS.map((tool) => (
+            <option key={tool.id} value={tool.id}>
+              {tool.label}
+            </option>
+          ))}
         </select>
       </Row>
+      <Row label="Barrel hold">
+        <select
+          className={SELECT}
+          aria-label="Barrel hold"
+          data-barrel-hold
+          value={settings.stylus.holdTool}
+          onChange={(e) => onSettingsChange({ stylus: { ...settings.stylus, holdTool: e.target.value as ToolType } })}
+        >
+          {BARREL_TOOLS.map((tool) => (
+            <option key={tool.id} value={tool.id}>
+              {tool.label}
+            </option>
+          ))}
+        </select>
+      </Row>
+      <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-barrel-note>
+        A quick press swaps between the first pair and stays there. Holding the
+        button past {BARREL_CLICK_MS} ms borrows the second tool until you let
+        go.
+      </p>
       <Row label="Eraser end">
         <select
           className={SELECT}

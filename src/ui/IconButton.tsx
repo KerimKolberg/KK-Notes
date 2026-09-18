@@ -31,7 +31,12 @@ const SIZES: Record<IconButtonSize, { button: string; icon: number }> = {
 };
 
 const BASE =
-  'relative inline-flex shrink-0 items-center justify-center transition-colors select-none ' +
+  // `touch-manipulation` takes the double-tap gesture off these buttons, so an
+  // Android WebView dispatches the click on lift instead of holding it back to
+  // see whether a second tap is coming. Panning is already forbidden by the
+  // palette's own `touch-action: none`, and an ancestor that forbids it wins,
+  // so this cannot hand a drag-to-reorder gesture back to the browser.
+  'relative inline-flex shrink-0 touch-manipulation items-center justify-center transition-colors select-none ' +
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ' +
   'disabled:opacity-35 disabled:pointer-events-none';
 

@@ -16,6 +16,15 @@
   --safe-right: max(env(safe-area-inset-right, 0px), var(--android-inset-right, 0px));
   --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--android-inset-bottom, 0px));
   --safe-left: max(env(safe-area-inset-left, 0px), var(--android-inset-left, 0px));
+
+  /*
+   * The document top bar owns the status-bar strip, so it is 3.5rem of controls
+   * plus whatever the system takes off the top. Anything that has to sit *below*
+   * the bar — the page arranger and its scrim — measures from this instead of
+   * repeating the sum, so the two can never drift apart and leave the bar
+   * covered.
+   */
+  --topbar-h: calc(3.5rem + var(--safe-top));
 }
 
 html,

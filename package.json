@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check:bundle": "node scripts/check-bundle.mjs",
+    "check:ui": "node scripts/ui-check.mjs",
     "check:rust": "cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc --tests",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml -p notes-sync",
     "icons": "node scripts/make-icons.mjs",

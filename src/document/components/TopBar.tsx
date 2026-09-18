@@ -105,14 +105,20 @@ export function TopBar() {
 
   return (
     <header
-      className="flex h-14 min-h-14 shrink-0 items-center gap-1 border-b border-zinc-200 bg-white/85 px-2 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/85"
+      // `relative z-40` gives the bar a stacking context of its own, above the
+      // page arranger (z-30) and its scrim (z-20). Without it the bar is a plain
+      // static flex child, so a *fixed* drawer paints over it and swallows every
+      // tap on the arranger toggle — which on a touchscreen reads as a dead
+      // button, because there is no hover to tell you the bar is covered.
+      className="relative z-40 flex h-14 min-h-14 shrink-0 items-center gap-1 border-b border-zinc-200 bg-white/85 px-2 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/85"
       style={{
         // Android draws the app edge to edge, so the bar owns the status-bar strip.
-        height: 'calc(3.5rem + var(--safe-top))',
+        height: 'var(--topbar-h)',
         paddingTop: 'var(--safe-top)',
         paddingLeft: 'max(0.5rem, var(--safe-left))',
         paddingRight: 'max(0.5rem, var(--safe-right))',
       }}
+      data-top-bar
     >
       {/* Group 1: document and history. */}
       <div className="flex items-center gap-0.5" role="group" aria-label="Document and history">

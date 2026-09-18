@@ -23,6 +23,7 @@ import {
   type LaserTrail,
 } from '../engine/laser';
 import {
+  POINTER_BUTTONS,
   isBarrelPress,
   isPointerAccepted,
   normalizePointerType,
@@ -81,6 +82,14 @@ export interface UsePointerInkOptions {
   onInteractionStart?: () => void;
   /** The pen's barrel button is mapped to select mode and was pressed on the surface. */
   onBarrelSelect?: () => void;
+  /**
+   * The pen's barrel button went down or came up, contact or not. The host
+   * runs the click / hold gesture from this; the surface only reports it,
+   * because the gesture outlives any one page.
+   */
+  onBarrelButton?: (pressed: boolean) => void;
+  /** The barrel gesture must be abandoned (pen out of range, gesture taken over). */
+  onBarrelCancel?: () => void;
   /** A lasso loop is starting (hosts clear any previous selection). */
   onLassoStart?: () => void;
   /** A lasso loop was closed; `polygon` is in drawing units. */
@@ -555,9 +564,27 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
 
     // ---- handlers ---------------------------------------------------------------
 
+    /**
+     * Track the barrel button across every pen event that carries `buttons`.
+     *
+     * Not just presses that start a stroke: the whole point of the click and
+     * hold gestures is that they work with the pen hovering, so they have to
+     * be read from moves and enters too. `buttons` is a bitmask of what is
+     * currently down, so this is edge-triggered against the last reading.
+     */
+    let barrelDown = false;
+    const noteBarrel = (pointerType: InkPointerType, buttons: number): void => {
+      if (pointerType !== 'pen') return;
+      const pressed = (buttons & POINTER_BUTTONS.SECONDARY) !== 0;
+      if (pressed === barrelDown) return;
+      barrelDown = pressed;
+      optionsRef.current.onBarrelButton?.(pressed);
+    };
+
     const onPointerDown: CanvasPointerHandler = (e) => {
       const pointerType = normalizePointerType(e.pointerType);
       notePen(pointerType);
+      noteBarrel(pointerType, e.buttons);
 
       const opts = optionsRef.current;
       const settings = opts.settingsRef.current;
@@ -679,6 +706,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
     const onPointerMove: CanvasPointerHandler = (e) => {
       const pointerType = normalizePointerType(e.pointerType);
       notePen(pointerType);
+      noteBarrel(pointerType, e.buttons);
 
       const session = sessionRef.current;
       if (!session || session.pointerId !== e.pointerId) return;
@@ -726,22 +754,32 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
     };
 
     const onPointerUp: CanvasPointerHandler = (e) => {
+      noteBarrel(normalizePointerType(e.pointerType), e.buttons);
       const session = sessionRef.current;
       if (session && session.pointerId === e.pointerId) finishSession();
     };
 
     const onPointerCancel: CanvasPointerHandler = (e) => {
+      noteBarrel(normalizePointerType(e.pointerType), e.buttons);
       const session = sessionRef.current;
       if (session && session.pointerId === e.pointerId) cancelSession();
     };
 
     const onPointerEnter: CanvasPointerHandler = (e) => {
-      notePen(normalizePointerType(e.pointerType));
+      const pointerType = normalizePointerType(e.pointerType);
+      notePen(pointerType);
+      noteBarrel(pointerType, e.buttons);
     };
 
     const onPointerLeave: CanvasPointerHandler = (e) => {
       if (normalizePointerType(e.pointerType) !== 'pen') return;
       notePenLeft();
+      // Out of range with the button still down: we will never see it come
+      // up, so give back anything the hold borrowed rather than stranding it.
+      if (barrelDown) {
+        barrelDown = false;
+        optionsRef.current.onBarrelCancel?.();
+      }
     };
 
     const onLostPointerCapture: CanvasPointerHandler = (e) => {

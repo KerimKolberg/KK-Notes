@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PRESSURE, PALM_REJECTION_GRACE_MS, PEN_PROXIMITY_TIMEOUT_MS } from '../constants';
+import { DEFAULT_PRESSURE, DEFAULT_STYLUS_SETTINGS, PALM_REJECTION_GRACE_MS, PEN_PROXIMITY_TIMEOUT_MS } from '../constants';
 import {
   isBarrelPress,
   isEraserEndPress,
@@ -73,8 +73,10 @@ describe('resolveEffectiveTool', () => {
     expect(resolveEffectiveTool('pen', 'pen', 5, 32)).toBe('eraser-stroke');
   });
 
-  it('switches to the stroke eraser for barrel button + contact', () => {
-    expect(resolveEffectiveTool('pen', 'pen', 0, 1 | 2)).toBe('eraser-stroke');
+  it('borrows the hold tool for barrel button + contact', () => {
+    // Drawing with the barrel down *is* a hold, so it borrows whatever the
+    // hold gesture is mapped to rather than a second setting of its own.
+    expect(resolveEffectiveTool('pen', 'pen', 0, 1 | 2)).toBe(DEFAULT_STYLUS_SETTINGS.holdTool);
   });
 
   it('ignores a barrel press while hovering (no contact)', () => {
@@ -96,11 +98,11 @@ describe('resolveEffectiveTool', () => {
   });
 
   it('honours stylus mappings for the barrel button and eraser end', () => {
-    const stylus = { barrelButton: 'select' as const, eraserEnd: 'eraser-pixel' as const };
+    const stylus = { ...DEFAULT_STYLUS_SETTINGS, holdTool: 'select' as const, eraserEnd: 'eraser-pixel' as const };
     expect(resolveEffectiveTool('pen', 'pen', 0, 1 | 2, stylus)).toBe('select');
     expect(resolveEffectiveTool('pen', 'pen', 5, 32, stylus)).toBe('eraser-pixel');
     expect(resolveEffectiveTool('pen', 'pen', 2, 0, stylus)).toBe('select'); // drivers without `buttons`
-    const pixel = { barrelButton: 'eraser-pixel' as const, eraserEnd: 'eraser-stroke' as const };
+    const pixel = { ...DEFAULT_STYLUS_SETTINGS, holdTool: 'eraser-pixel' as const, eraserEnd: 'eraser-stroke' as const };
     expect(resolveEffectiveTool('highlighter', 'pen', 0, 3, pixel)).toBe('eraser-pixel');
     // Mouse and touch never see stylus mappings.
     expect(resolveEffectiveTool('pen', 'mouse', 2, 2, stylus)).toBeNull();

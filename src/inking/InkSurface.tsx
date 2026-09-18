@@ -26,6 +26,10 @@ export interface InkSurfaceProps {
   onInteractionStart?: () => void;
   /** Barrel button mapped to select was pressed: switch tools temporarily. */
   onBarrelSelect?: () => void;
+  /** The pen's barrel button went down or came up, contact or not. */
+  onBarrelButton?: (pressed: boolean) => void;
+  /** The barrel gesture must be abandoned (pen out of range, gesture taken over). */
+  onBarrelCancel?: () => void;
   /** Lasso tool: a loop is starting / was closed (polygon in page units). */
   onLassoStart?: () => void;
   onLassoComplete?: (polygon: readonly Point[]) => void;
@@ -66,6 +70,8 @@ export const InkSurface = memo(function InkSurface({
   onEraseStrokes,
   onInteractionStart,
   onBarrelSelect,
+  onBarrelButton,
+  onBarrelCancel,
   onLassoStart,
   onLassoComplete,
   hiddenStrokeIds = null,
@@ -132,6 +138,8 @@ export const InkSurface = memo(function InkSurface({
     contentScaleRef: zoomRef,
     ...(onInteractionStart ? { onInteractionStart } : {}),
     ...(onBarrelSelect ? { onBarrelSelect } : {}),
+    ...(onBarrelButton ? { onBarrelButton } : {}),
+    ...(onBarrelCancel ? { onBarrelCancel } : {}),
     ...(onLassoStart ? { onLassoStart } : {}),
     ...(onLassoComplete ? { onLassoComplete } : {}),
     onCommitStroke,

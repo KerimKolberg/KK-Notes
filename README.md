@@ -22,6 +22,7 @@ npm test               # unit tests (vitest)
 npm run typecheck      # strict tsc
 npm run build          # typecheck + production bundle + bundle guard
 npm run check:bundle   # assert pdf.js / pdf-lib are lazy chunks
+npm run check:ui       # Playwright: stacking order and hit-testing at real viewport sizes
 npm run check:rust     # cargo check of the Tauri shell (Windows MSVC target)
 npm run test:rust      # the sync engine's own tests (no webview needed)
 npm run check:android  # assert the Android project carries this repo's customizations
@@ -104,11 +105,36 @@ title against the last saved snapshot, so scrolling and zooming never count as
 edits.
 
 **Stylus buttons.** `resolveEffectiveTool` maps hardware buttons per the
-*Stylus* settings in the palette: the eraser end (`button 5` / `buttons & 32`)
-routes to the stroke or pixel eraser without touching the palette, and the
-barrel button (`buttons & 2` while touching) acts as a stroke eraser, pixel
-eraser, or temporary Select mode that restores the previous tool when the pen
-lifts. A barrel press while merely hovering is ignored.
+*Stylus* settings in the palette. The eraser end (`button 5` / `buttons & 32`)
+routes to the stroke or pixel eraser without touching the palette. The barrel
+button carries two gestures, told apart by how long it is held
+(`src/inking/engine/barrelButton.ts`):
+
+| Gesture | Threshold | Effect |
+| --- | --- | --- |
+| **Click** | released inside `BARREL_CLICK_MS` (300 ms) | toggles the active tool between a user-chosen pair, e.g. pen ⇄ stroke eraser |
+| **Hold** | still down at 300 ms | borrows one tool — lasso, laser pointer, an eraser — and puts the previous one back the moment the button is released |
+
+The state machine is pure: `barrelDown` / `barrelUp` / `barrelTick` /
+`barrelCancel` take a state and a timestamp and return the next state plus an
+action, so the whole click-vs-hold decision is unit-testable without a stylus.
+A few decisions are deliberate and pinned by tests:
+
+- A long press *is* a hold even if no tick ever fires. Silence never becomes a
+  click, so a slow release can't fire the toggle by accident.
+- The borrow happens at the 300 ms tick, not on release, which is what makes
+  "hold to lasso, drag, let go" feel immediate.
+- `barrelCancel` (the pen leaving the digitiser mid-press) restores a borrowed
+  tool but never fires a click: we never saw that press end.
+
+`stylusBarrel.ts` drives it from the surface and owns the one `setTimeout` the
+promotion needs — a button held down emits no further pointer events, so
+nothing else would wake it. That driver is module-level rather than per-page
+because the pen can cross a page boundary mid-hold.
+
+Drawing with the barrel down borrows the same hold tool, rather than a third
+setting that could disagree with it. A barrel press while merely hovering is
+ignored.
 
 **Bundle.** pdf.js and pdf-lib are only reached through dynamic `import()`
 (raster client, PDF background, exporter, `React.lazy` import dialog), so the
@@ -297,6 +323,26 @@ on the last page), template and background per page or for all pages, and
 single click to jump. The top bar shows `Page n / N`, a jump field, prev/next,
 continuous/single toggle, zoom and the arranger toggle.
 
+It starts *below* the top bar — `top: var(--topbar-h)`, the same token the bar
+sizes itself with — and the bar carries `relative z-40` so it always outranks
+the drawer (`z-30`) and its scrim (`z-20`). That is not cosmetic: on a phone
+the drawer is `w-full`, so anchoring it to the top of the window put it over
+the bar, and since a static flex child has no z-index a *fixed* drawer paints
+across it by default. The toggle then swallowed every tap and read as a dead
+button, which on a touchscreen is indistinguishable from a broken handler
+because there is no hover to show you the bar is covered. Anchoring it under
+the bar means the control that opened the drawer can always close it again.
+
+The scrim dismisses on tap and is drawn only below Tailwind's `sm` (640 px),
+where the drawer covers the page anyway; wider than that the arranger is a
+side panel and the page beside it stays live. The drawer slides in on a
+`translate-x-full` → `translate-x-0` transition, staying mounted for
+`ARRANGER_SLIDE_MS` after closing (and `inert` while it does) so the exit half
+has something to animate and cannot catch a tap on its way out. Everything
+under its header shares one scroller: the settings used to be fixed-height
+siblings of a scrolling thumbnail grid, which on a short viewport squeezed the
+grid to nothing and clipped the rest with no way to reach it.
+
 ```
 src/document/
 ├── types.ts            Page, Document, TemplateConfig, serialized forms
@@ -307,6 +353,7 @@ src/document/
 ├── store.ts            Zustand document store   toolStore.ts  shared tool settings
 ├── media.ts            image placement, anchored resize, rotation, z-order
 ├── gestures.ts         pinch / pan math, centroid anchoring across zoom changes
+├── stylusBarrel.ts     drives barrelButton.ts from the surfaces; owns the hold timer
 ├── raster/             rasterize.ts, rasterWorker.ts, rasterClient.ts, rasterCache.ts
 ├── hooks/              useRasterBitmap, usePointerReorder, useMediaInput, useTouchGestures
 └── components/         DocumentApp, TopBar, DocumentViewer, PageFrame, PageSnapshot,
@@ -1273,6 +1320,37 @@ and text.
 `remove` stores strokes with their original indices, `clear` stores the list.
 Undo inverts, redo re-applies, depth is capped.
 
+## Browser checks (`scripts/ui-check.mjs`)
+
+`vitest` runs in a `node` environment with no DOM here, which is the right
+trade for the geometry, reducers and state machines that make up most of this
+code — but it means a control can be correctly wired, mounted and enabled and
+still be untappable because something is painted on top of it. That class of
+bug needs a real browser, so `npm run check:ui` drives the production build in
+Chromium at three viewport sizes and asserts what only paint order and
+hit-testing can answer:
+
+- **phone, 412×915, touch only** — a *tap* (not a click) opens the arranger;
+  the drawer lands below the top bar; the toggle is still what
+  `document.elementFromPoint` returns at its own centre while the drawer is
+  open, so the same tap closes it again; the drawer animates its transform.
+- **small tablet, 560×900, touch only** — the drawer is a 440 px side panel
+  rather than the whole screen, and the scrim beside it dismisses on tap.
+- **desktop, 1280×800** — no scrim over the page, so the canvas stays live
+  next to the panel.
+
+A blocked tap is reported as a failed check naming the element in the way
+(Playwright's own actionability error says which), not as a timeout that hides
+the checks after it. The script was verified the only way that means anything:
+by putting the old `inset-y-0` drawer and the unlayered top bar back and
+watching it fail with *"blocked by `<aside>`"*.
+
+`playwright-core` and a Chromium binary are not dependencies of this project —
+they are large and CI installs them separately — so the script explains what is
+missing and exits 0 rather than failing a build that has nothing wrong with it.
+It serves `dist/` itself via `vite preview` unless something is already
+listening, or takes `--url=` to point at a running dev server.
+
 ## Layout
 
 ```
@@ -1300,6 +1378,7 @@ src/inking/
 │   ├── lassoFilter.ts      which layers the lasso may pick up
 │   ├── brushes.ts          pen presets: perfect-freehand params, tilt, grain, tapers
 │   ├── laser.ts            disappearing pointer trail: fade, rainbow, run batching
+│   ├── barrelButton.ts     pure click-vs-hold state machine for the stylus barrel
 │   ├── gestureState.ts     shared two-finger-gesture flag and pen presence
 │   ├── toolStyles.ts       per-tool StrokeStyle
 │   ├── strokeBuilder.ts    in-progress freehand accumulator
