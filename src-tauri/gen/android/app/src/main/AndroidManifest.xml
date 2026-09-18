@@ -58,6 +58,14 @@
                 <data android:pathPattern=".*\\.pdf" />
                 <data android:pathPattern=".*\\.notex" />
             </intent-filter>
+
+            <!-- notex: OAuth redirect. Google sends the authorization code back here. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.notex.app" />
+            </intent-filter>
         </activity>
 
         <provider

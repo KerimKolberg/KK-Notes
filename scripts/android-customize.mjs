@@ -136,6 +136,37 @@ export const OPEN_WITH_FILTERS = `
                 <data android:pathPattern=".*\\\\.notex" />
             </intent-filter>`;
 
+/**
+ * The OAuth redirect.
+ *
+ * Android has no loopback port a browser will reach, so the desktop's
+ * "become a web server for a moment" trick is out; the app claims a custom
+ * scheme instead and Google redirects to it. Three details are the difference
+ * between this working and failing silently:
+ *
+ * - **`BROWSABLE`.** Without it the system refuses to start an activity from a
+ *   link a browser followed, and the consent screen ends on "can't open page".
+ *   It is the single most common way this is got wrong.
+ * - **`DEFAULT`.** An implicit `ACTION_VIEW` is only delivered to activities
+ *   that declare it.
+ * - **The scheme is the application id.** Google only issues a redirect on a
+ *   scheme it can attribute to the app, and any app on the device may register
+ *   any scheme it likes — which is exactly why PKCE is not optional here: an
+ *   intercepted code is worthless without the verifier.
+ *
+ * `android:host` is deliberately absent. The redirect is `com.notex.app:/…`,
+ * with no authority at all, and a filter that demanded a host would not match
+ * it.
+ */
+export const OAUTH_REDIRECT_FILTER = `
+            <!-- notex: OAuth redirect. Google sends the authorization code back here. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${IDENTIFIER}" />
+            </intent-filter>`;
+
 edit('app/src/main/AndroidManifest.xml', (xml) => {
   let out = xml;
   if (!out.includes('xmlns:tools=')) {
@@ -155,6 +186,10 @@ edit('app/src/main/AndroidManifest.xml', (xml) => {
   // when the keyboard opens over an AcroForm field.
   if (!out.includes('android:windowSoftInputMode')) {
     out = out.replace('            android:launchMode="singleTask"\n', '            android:launchMode="singleTask"\n            android:windowSoftInputMode="adjustResize"\n');
+  }
+  // Google's OAuth redirect comes back as a link on our own scheme.
+  if (!out.includes('notex: OAuth redirect')) {
+    out = out.replace('        </activity>', `${OAUTH_REDIRECT_FILTER}\n        </activity>`);
   }
   // "Open with" from a file manager or a mail attachment.
   if (!out.includes('notex: open-with')) {
@@ -232,6 +267,26 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  /**
+   * The OAuth redirect this launch was asked to handle, or null.
+   *
+   * Same pull-then-push shape as the open-with bridge, and for the same
+   * reason: the intent is known before the page exists, so the page has to be
+   * able to ask. Consumed on read, because an authorization code is single-use
+   * and replaying a stale one only produces a confusing error.
+   */
+  @Volatile
+  private var oauthRedirect: String? = null
+
+  private inner class OauthBridge {
+    @JavascriptInterface
+    fun take(): String? {
+      val payload = oauthRedirect
+      oauthRedirect = null
+      return payload
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // Draw under the status bar and the gesture pill; the web layer pads itself
     // with the --safe-* CSS variables fed below.
@@ -246,12 +301,20 @@ class MainActivity : TauriActivity() {
     super.onNewIntent(intent)
     noteOpenWith(intent)
     pushOpenWith()
+    pushOauthRedirect()
   }
 
   /** Remember the document this launch was asked to open, if any. */
   private fun noteOpenWith(intent: Intent?) {
     val uri = intent?.data ?: return
     if (intent.action != Intent.ACTION_VIEW && intent.action != Intent.ACTION_SEND) return
+    // Google's redirect arrives as ACTION_VIEW too, on this app's own scheme.
+    // It is not a document, and handing it to the importer would try to open
+    // an authorization code as a PDF.
+    if (uri.scheme == BuildConfig.APPLICATION_ID) {
+      oauthRedirect = uri.toString()
+      return
+    }
     // The MIME the sender declared, falling back to what the resolver knows.
     val mime = intent.type ?: contentResolver.getType(uri) ?: ""
     // Built with JSONObject rather than string concatenation: this file is
@@ -268,6 +331,25 @@ class MainActivity : TauriActivity() {
     runOnUiThread {
       webViewRef?.evaluateJavascript(
         "window.dispatchEvent(new CustomEvent('notex-open-with', { detail: ${'$'}payload }));",
+        null,
+      )
+    }
+  }
+
+  /**
+   * Push a redirect into a page that is already up.
+   *
+   * This is the usual case, not the exception: the app was running when the
+   * browser was opened, singleTask brings that same instance forward, and the
+   * redirect arrives through onNewIntent with the page mid-session.
+   */
+  private fun pushOauthRedirect() {
+    val payload = oauthRedirect ?: return
+    oauthRedirect = null
+    val detail = JSONObject().put("redirect", payload).toString()
+    runOnUiThread {
+      webViewRef?.evaluateJavascript(
+        "window.dispatchEvent(new CustomEvent('notex-oauth-redirect', { detail: ${'$'}detail }));",
         null,
       )
     }
@@ -306,6 +388,7 @@ class MainActivity : TauriActivity() {
     // added here is only visible to the *next* navigation, so the page asks
     // for it rather than waiting to be told.
     webView.addJavascriptInterface(OpenWithBridge(), "__notexOpenWith")
+    webView.addJavascriptInterface(OauthBridge(), "__notexOauth")
     webViewRef = webView
     ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
       val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
@@ -392,6 +475,58 @@ export function xmlProblems(xml, label) {
     }
   }
   if (stack.length > 0) found.push(`${label}: unclosed <${stack.join('>, <')}>`);
+  return found;
+}
+
+/**
+ * Is there an intent filter that can actually receive an OAuth redirect?
+ *
+ * Stronger than well-formedness on purpose. An intent filter that parses
+ * perfectly and is missing `BROWSABLE` builds a perfectly good APK in which
+ * signing in ends on the browser's "can't open page" — and nothing in the
+ * build says a word about it. The failure is invisible until someone installs
+ * the thing and taps a button, which is the worst possible moment to find out,
+ * so the shape is asserted here instead.
+ *
+ * Returns a list of problems; an empty list means a browser following
+ * `<scheme>:/oauth2redirect` will reach the app.
+ */
+export function oauthFilterProblems(xml, scheme, label) {
+  const found = [];
+  // Comments can contain anything, including a plausible-looking filter.
+  const body = xml.replace(/<!--[\s\S]*?-->/g, '');
+  const filters = [...body.matchAll(/<intent-filter[\s\S]*?<\/intent-filter>/g)].map((m) => m[0]);
+
+  const matching = filters.filter(
+    (filter) =>
+      filter.includes(`android:scheme="${scheme}"`) && filter.includes('android.intent.action.VIEW'),
+  );
+  if (matching.length === 0) {
+    found.push(`${label}: no <intent-filter> with android:scheme="${scheme}" and action VIEW`);
+    return found;
+  }
+
+  for (const filter of matching) {
+    // Without BROWSABLE the system will not start the activity from a link,
+    // which is the only way this redirect ever arrives.
+    if (!filter.includes('android.intent.category.BROWSABLE')) {
+      found.push(`${label}: the ${scheme} intent filter is missing category BROWSABLE, so a browser cannot open it`);
+    }
+    // An implicit intent is only delivered to activities declaring DEFAULT.
+    if (!filter.includes('android.intent.category.DEFAULT')) {
+      found.push(`${label}: the ${scheme} intent filter is missing category DEFAULT`);
+    }
+    // The redirect has no authority. A host requirement would never match it.
+    if (/<data[^>]*android:host=/.test(filter)) {
+      found.push(`${label}: the ${scheme} intent filter requires a host, but the redirect URI has none`);
+    }
+    // A MIME type turns a scheme match into a typed-data match, and a browser
+    // following a link declares no type.
+    if (/<data[^>]*android:mimeType=/.test(filter)) {
+      found.push(`${label}: the ${scheme} intent filter requires a mimeType, which a browser redirect does not carry`);
+    }
+  }
+  found.push(...xmlProblems(`<activity>${matching.join('')}</activity>`, label));
   return found;
 }
 
@@ -548,6 +683,8 @@ if (!manifest.includes('android:mimeType="application/pdf"')) {
 if (!manifest.includes('android:pathPattern=".*\\\\.pdf"')) {
   problems.push('AndroidManifest.xml has no .pdf pathPattern filter (senders that type files as octet-stream)');
 }
+// The OAuth redirect. Checked for shape, not just presence: see above.
+if (manifest) problems.push(...oauthFilterProblems(manifest, IDENTIFIER, 'AndroidManifest.xml'));
 
 
 const appGradle = existsSync(join(ANDROID, 'app/build.gradle.kts'))
@@ -568,6 +705,9 @@ if (!existsSync(activity)) {
   problems.push(...kotlinProblems(readFileSync(activity, 'utf8'), 'MainActivity.kt'));
   if (!readFileSync(activity, 'utf8').includes('__notexOpenWith')) {
     problems.push('MainActivity.kt does not expose the open-with bridge');
+  }
+  if (!readFileSync(activity, 'utf8').includes('__notexOauth')) {
+    problems.push('MainActivity.kt does not expose the OAuth redirect bridge');
   }
 }
 

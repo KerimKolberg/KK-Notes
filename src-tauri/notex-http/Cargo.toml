@@ -1,0 +1,21 @@
+[package]
+name = "notex-http"
+version = "0.1.0"
+description = "The HTTPS transport behind notes-sync's CloudProvider"
+edition = "2021"
+rust-version = "1.77"
+
+# Its own crate, and Tauri-free, for the same reason `notes-sync` is: it can
+# then be compiled and tested on any machine. That matters more here than
+# elsewhere, because this is the one part of the sync stack that carries a TLS
+# stack — and a TLS stack is a C build. The Tauri shell's own type-check runs
+# against a Windows target from Linux, where no MSVC toolchain exists to build
+# ring's assembly, so the shell depends on this behind a feature and this crate
+# is verified natively instead.
+[dependencies]
+notes-sync = { path = "../notes-sync" }
+# Blocking on purpose: `CloudProvider` is a synchronous trait driven from the
+# sync manager's own thread, so an async runtime would be a layer with nothing
+# to do. `tls` is rustls + webpki-roots — no OpenSSL to cross-compile for the
+# Android ABIs.
+ureq = { version = "2", default-features = false, features = ["tls"] }

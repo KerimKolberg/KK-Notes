@@ -58,6 +58,13 @@ jobs:
       - run: npm ci
 
       - name: Build debug APK
+        env:
+          # The Google OAuth client id for Drive sync. Not a secret — an
+          # installed app is a *public* OAuth client, which is exactly why the
+          # flow uses PKCE instead of a client secret — so it lives in a repo
+          # variable rather than a secret, and an empty one simply builds an
+          # APK whose Cloud Sync panel says it has no client id.
+          NOTEX_GOOGLE_CLIENT_ID: ${{ vars.NOTEX_GOOGLE_CLIENT_ID }}
         run: ./build-android.sh --debug --abi aarch64
 
       - name: Locate the APK

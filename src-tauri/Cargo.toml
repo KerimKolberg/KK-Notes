@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "notes-sync"]
+members = [".", "notes-sync", "notex-http"]
 
 [package]
 name = "notes-taking-app"
@@ -20,9 +20,30 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+# Opens the *system* browser for the OAuth consent screen. RFC 8252 forbids
+# doing it in an embedded webview and Google enforces that, so this is not an
+# implementation detail that could be swapped for `window.open`.
+tauri-plugin-opener = "2"
+# Where the refresh token lives between runs.
+tauri-plugin-store = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 notes-sync = { path = "notes-sync" }
+# The HTTPS transport, optional so the type-check below can leave it out.
+notex-http = { path = "notex-http", optional = true }
+# 32 bytes for a PKCE verifier and an OAuth state. Already in the tree (uuid
+# pulls it), so this is a name for something that is compiled either way.
+getrandom = "0.3"
+
+[features]
+default = ["cloud-sync"]
+# Compiles the real HTTPS transport in. Everything ships with it; the one
+# configuration that does not is `npm run check:rust`, which type-checks this
+# crate for Windows *from Linux* and so has no MSVC toolchain to build rustls's
+# assembly with. Without the feature the cloud code paths still compile and
+# still run — they fail with a sentence — so turning it off checks the shell
+# rather than hiding it. `notex-http` itself is compiled and tested natively.
+cloud-sync = ["dep:notex-http"]
 
 [profile.release]
 codegen-units = 1

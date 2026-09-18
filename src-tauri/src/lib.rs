@@ -8,10 +8,15 @@
 //!
 //! The library and sync engine themselves live in the `notes-sync` crate,
 //! which carries no Tauri dependency so it can be compiled and tested without
-//! a platform webview. What is here is the IPC surface over it.
+//! a platform webview — as does Google Drive sync and the whole OAuth
+//! exchange behind it. What is here is the IPC surface over them, plus the
+//! two things that genuinely need the platform: opening the system browser
+//! for consent, and keeping the refresh token.
 
 mod commands;
+mod drive_commands;
 mod library_commands;
+mod transport;
 
 use tauri::Manager;
 
@@ -20,6 +25,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .manage(commands::StartupFile::from_args())
         .invoke_handler(tauri::generate_handler![
             commands::save_document,
@@ -41,6 +48,10 @@ pub fn run() {
             library_commands::sync_status,
             library_commands::sync_now,
             library_commands::resolve_conflict,
+            drive_commands::drive_account,
+            drive_commands::drive_sign_in,
+            drive_commands::drive_complete_sign_in,
+            drive_commands::drive_sign_out,
         ])
         .setup(|app| {
             // Make sure the per-user data directory exists before the first autosave.
@@ -54,6 +65,12 @@ pub fn run() {
             library_commands::restore_sync_state(&handle, &library.manager);
             library_commands::start_watching(&handle, &library);
             app.manage(library);
+
+            // The Google account, restored from the store. A device that was
+            // connected yesterday is connected again on launch, without anyone
+            // having to press anything.
+            app.manage(drive_commands::Drive::new(&handle));
+            drive_commands::attach_provider(&handle);
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, ChevronRight, FolderPlus, Grid2x2, House, List, Plus } from 'lucide-react';
+import { ArrowUp, ChevronRight, Cloud, FolderPlus, Grid2x2, House, List, Plus } from 'lucide-react';
 import { openDocumentFromLibrary } from './openDocument';
+import { CloudSyncPanel } from './CloudSyncPanel';
 import { ConflictDialog } from './ConflictDialog';
 import { DocumentCard } from './DocumentCard';
 import { SyncIndicator } from './SyncIndicator';
@@ -76,6 +77,7 @@ export function LibraryView() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<SyncStatus>(OFFLINE_STATUS);
   const [showConflicts, setShowConflicts] = useState(false);
+  const [showCloud, setShowCloud] = useState(false);
   const generation = useRef(0);
 
   useEffect(() => store(LAYOUT_KEY, layout), [layout]);
@@ -218,6 +220,16 @@ export function LibraryView() {
         </nav>
 
         <SyncIndicator status={status} onSyncNow={() => void syncNow().then(setStatus)} onShowConflicts={() => setShowConflicts(true)} />
+        <button
+          type="button"
+          onClick={() => setShowCloud(true)}
+          aria-label="Cloud sync settings"
+          title="Cloud sync"
+          data-cloud-settings
+          className="inline-flex h-9 w-9 shrink-0 touch-manipulation items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        >
+          <Cloud size={16} aria-hidden="true" />
+        </button>
       </header>
 
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
@@ -349,6 +361,19 @@ export function LibraryView() {
 
       {showConflicts && status.conflicts.length > 0 && (
         <ConflictDialog conflicts={status.conflicts} onResolve={onResolve} onClose={() => setShowConflicts(false)} />
+      )}
+
+      {showCloud && (
+        <CloudSyncPanel
+          status={status}
+          onClose={() => setShowCloud(false)}
+          onSyncNow={() => {
+            void syncNow().then((s) => {
+              setStatus(s);
+              void refresh();
+            });
+          }}
+        />
       )}
     </div>
   );

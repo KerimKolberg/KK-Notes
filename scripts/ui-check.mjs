@@ -265,6 +265,42 @@ async function checkDesktop(browser) {
   await ctx.close();
 }
 
+/**
+ * The Cloud Sync panel, which lives on the library screen rather than in a
+ * document — so the arranger passes above never touch it.
+ */
+async function checkCloudPanel(browser) {
+  console.log('cloud sync panel, 412x915, touch only:');
+  const ctx = await browser.newContext({ viewport: { width: PHONE.width, height: PHONE.height }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-cloud-settings]', { timeout: 20_000 });
+
+  const opened = await tapOrFail(page, '[data-cloud-settings]', 'tapping the cloud button opens the panel');
+  if (!opened) {
+    await ctx.close();
+    return;
+  }
+  check('tapping the cloud button opens the panel', await page.waitForSelector('[data-cloud-panel]', { state: 'visible', timeout: 3_000 }).then(() => true, () => false));
+
+  const account = await page.textContent('[data-cloud-account]');
+  // A browser has no Rust side, and the panel must say *that* rather than
+  // blaming a missing client id the visitor could not act on anyway.
+  check('it explains that a browser cannot sync', (account ?? '').includes('desktop and Android'), account ?? '');
+  check(
+    'the sign-in button is present and disabled here',
+    await page.$eval('[data-drive-sign-in]', (el) => el.disabled === true).catch(() => false),
+  );
+  check(
+    'it names the folder and the narrow permission',
+    await page.$eval('[data-cloud-panel]', (el) => el.textContent ?? '').then((t) => t.includes('Notex Sync') && t.includes('cannot see anything else')),
+  );
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
 // --------------------------------------------------------------------- main
 
 const executablePath = findChromium();
@@ -296,6 +332,7 @@ try {
   await checkPhone(browser);
   await checkSmallTablet(browser);
   await checkDesktop(browser);
+  await checkCloudPanel(browser);
 } finally {
   await browser.close();
   if (server) {

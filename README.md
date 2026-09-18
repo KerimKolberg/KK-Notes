@@ -23,8 +23,8 @@ npm run typecheck      # strict tsc
 npm run build          # typecheck + production bundle + bundle guard
 npm run check:bundle   # assert pdf.js / pdf-lib are lazy chunks
 npm run check:ui       # Playwright: stacking order and hit-testing at real viewport sizes
-npm run check:rust     # cargo check of the Tauri shell (Windows MSVC target)
-npm run test:rust      # the sync engine's own tests (no webview needed)
+npm run check:rust     # cargo check of the Tauri shell (Windows MSVC target, no TLS)
+npm run test:rust      # the sync engine and the HTTP transport (no webview needed)
 npm run check:android  # assert the Android project carries this repo's customizations
 npm run desktop:dev    # Tauri v2 desktop shell, hot reloading
 npm run desktop:build  # NSIS / MSI installers (run on Windows)
@@ -191,7 +191,7 @@ takes to write somewhere else by accident.
 
 `src-tauri/notes-sync/` is a workspace crate with **no Tauri dependency**. The
 shell cannot be compiled — let alone tested — without a platform webview, and
-none of this needs one, so `npm run test:rust` runs the engine's 54 tests
+none of this needs one, so `npm run test:rust` runs its tests
 anywhere. The Tauri side (`library_commands.rs`) is a thin IPC surface over it.
 
 **Watching.** A `notify` watcher over the library feeds a thread that waits
@@ -238,7 +238,107 @@ pill reads *Offline*, which is a truthful state and not an error.
 
 The status pill in the library's top bar shows Offline / Syncing / Up to date
 / Needs attention, pushed from Rust over a `sync://status` event after each
-pass rather than polled.
+pass rather than polled. The cloud button beside it opens the **Cloud Sync**
+panel, which is where an account is connected and disconnected.
+
+### Google Drive
+
+The first real provider, in `notes-sync/src/drive.rs`. It still talks to no
+socket: every request goes through an `HttpTransport`, so the whole of it —
+URLs, multipart framing, error envelopes, conflict detection — is tested
+against recorded Google responses in milliseconds, with no account attached.
+
+**The path and the digest travel with the file**, in Drive's `appProperties`:
+
+| key | what it holds |
+| --- | --- |
+| `notexApp` | marks the file as this app's, so one query finds all of them |
+| `notexPath` | the file's path within the library, `/`-separated |
+| `notexSha256` | the SHA-256 of the bytes as uploaded |
+
+That choice is what makes sync cheap. `list()` is a *single* paged query no
+matter how deeply the library nests, because the path does not have to be
+rebuilt by walking parents; the digest arrives with the listing, so deciding
+what changed costs no downloads — which is the difference between sync being
+usable on a phone and not; and a file the user drags somewhere else in Drive
+is still the same file, because its identity never depended on where it sits.
+Folders are still mirrored for real under one **Notex Sync** folder, because
+someone who opens Drive should see their notebooks arranged the way they
+arranged them.
+
+**The sync loop is unchanged** — Drive only supplies the three digests the
+existing three-way decision already wanted. Local moved: push. Remote moved:
+pull. Both moved to different content since the recorded base: `sync-conflict`,
+and the modal. Deletes are *trashes*, never erasures: a sync engine destroying
+someone's only copy beyond recovery is the failure nobody forgives, and Drive's
+bin is exactly the undo that a permanent delete would not have.
+
+**A 401 refreshes once and retries once.** An access token can expire between
+being fetched and being read, and a token can be revoked from Google's account
+page mid-pass. One retry tells "needs a new token" apart from "this account is
+gone"; a second 401 is reported rather than looped on. A *refresh* that comes
+back 400 or 401 means the refresh token itself was revoked, so the account is
+dropped and the UI offers signing in again — but a 5xx keeps it, because Google
+being down is not the user being signed out.
+
+#### Authentication (OAuth 2.0 + PKCE)
+
+An installed app is a **public** OAuth client: whatever secret it shipped with,
+the user can read out of the binary. PKCE (RFC 7636) is what replaces one. The
+app invents a high-entropy `code_verifier`, sends only its SHA-256 to the
+authorization endpoint, and produces the verifier when redeeming the code —
+so an intercepted redirect carries a code that cannot be exchanged. The
+derivation is checked against RFC 7636's own published vector, which is the
+only way to know it interoperates before pointing it at Google.
+
+The consent screen always opens in the **system browser**, never an embedded
+webview: RFC 8252 §8.12 asks for it, Google rejects in-app webviews outright,
+and the user needs to see a real address bar for a real password.
+
+The two platforms differ only in how the redirect gets back:
+
+- **Desktop** binds an ephemeral port on `127.0.0.1` and becomes a one-request
+  web server (`notes-sync/src/loopback.rs`). Port 0, so two instances cannot
+  fight over a fixed one; `127.0.0.1` rather than `localhost`, which RFC 8252
+  §8.3 requires because a hostname goes through a resolver; a real HTML reply,
+  because the browser is showing that tab and a dead connection would make a
+  sign-in that worked look broken; a deadline, because someone who closes the
+  consent screen never comes back. Requests that are not the redirect — a
+  browser asking for `/favicon.ico`, a port scanner — are answered and ignored
+  rather than failing the sign-in. All of it is tested by connecting real
+  sockets to it.
+- **Android** has no port a browser will reach, so the app claims
+  `com.notex.app:/oauth2redirect` with an intent filter and `MainActivity`
+  hands the URI to the page, which passes it back to Rust. The filter carries
+  `BROWSABLE` — without it the system will not start an activity from a link
+  and sign-in ends on "can't open page" — and no `android:host` or
+  `android:mimeType`, since the redirect carries neither.
+
+Both paths check the `state` they started with before redeeming anything, and
+the scope asked for is `drive.file` alone: access to the files this app
+creates, and nothing else in the account. If consent comes back without it —
+Google's screen lets an individual scope be refused — the panel says so,
+rather than letting it surface as a 403 on the first upload.
+
+Tokens are kept through `tauri-plugin-store`; only the refresh token really
+matters, and the access token is treated as disposable. The client id is baked
+in from `NOTEX_GOOGLE_CLIENT_ID` at build time (and can be overridden by the
+same variable at runtime). It is **not a secret** — that is what PKCE is for —
+so the APK workflow reads it from a repo *variable*. A build without one still
+runs; its Cloud Sync panel says it has no client id instead of offering a
+button that cannot work.
+
+#### Where the TLS lives, and why
+
+`notes-sync` carries no HTTP client, and neither does the Tauri shell: the
+transport is its own crate, `notex-http`. A TLS stack is a C build, and the
+shell's type-check cross-compiles for Windows *from Linux*, where there is no
+MSVC toolchain to assemble rustls's crypto with. So `npm run check:rust` builds
+the shell `--no-default-features`, where `transport.rs` supplies an
+`UnavailableTransport` that fails with a sentence — every cloud code path still
+compiles and still runs in that configuration, so the check is of this crate
+rather than of a subset of it — while `notex-http` is compiled and tested
+natively, over real sockets, by `npm run test:rust`.
 
 **In a browser** there is no filesystem and no Rust, so `browserLibrary.ts`
 keeps the same interface over `localStorage` — otherwise `npm run dev` would
@@ -1338,6 +1438,9 @@ hit-testing can answer:
   rather than the whole screen, and the scrim beside it dismisses on tap.
 - **desktop, 1280×800** — no scrim over the page, so the canvas stays live
   next to the panel.
+- **the Cloud Sync panel** — it opens from the library's cloud button, and in
+  a browser it says cloud sync needs the app rather than blaming a missing
+  client id nobody could act on.
 
 A blocked tap is reported as a failed check naming the element in the way
 (Playwright's own actionability error says which), not as a timeout that hides
@@ -1412,6 +1515,8 @@ src/library/
 ├── LibraryView.tsx         grid / list, folders, sorting, sync status
 ├── DocumentCard.tsx        lazily rendered card, drag to file
 ├── SyncIndicator.tsx       Offline / Syncing / Up to date / Needs attention
+├── CloudSyncPanel.tsx      connect and disconnect a Google account
+├── driveService.ts         the page's side of the sign-in: it holds no secrets
 └── ConflictDialog.tsx      keep local, keep remote, keep both
 
 src-tauri/notes-sync/src/
@@ -1420,7 +1525,19 @@ src-tauri/notes-sync/src/
 ├── thumb.rs                streaming first-page extraction
 ├── conflict.rs             the three-way decision and conflict naming
 ├── provider.rs             the CloudProvider trait (WebDAV / Drive shaped)
+├── http.rs                 HttpTransport: requests as data, and a mock to test against
+├── oauth.rs                PKCE, the authorization URL, token exchange and refresh
+├── loopback.rs             the desktop redirect listener on 127.0.0.1
+├── account.rs              the connected account: tokens in, access tokens out
+├── drive.rs                Google Drive as a CloudProvider
 └── manager.rs              notify watcher, passes, conflict resolution
+
+src-tauri/notex-http/src/
+└── lib.rs                  the one part that opens a socket: ureq + rustls
+
+src-tauri/src/
+├── drive_commands.rs       sign in / out, the token store, provider swapping
+└── transport.rs            which transport this build has (the only cfg)
 ```
 
 [perfect-freehand]: https://github.com/steveruizok/perfect-freehand

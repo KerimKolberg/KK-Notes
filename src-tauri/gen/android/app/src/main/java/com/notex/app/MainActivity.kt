@@ -53,6 +53,26 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  /**
+   * The OAuth redirect this launch was asked to handle, or null.
+   *
+   * Same pull-then-push shape as the open-with bridge, and for the same
+   * reason: the intent is known before the page exists, so the page has to be
+   * able to ask. Consumed on read, because an authorization code is single-use
+   * and replaying a stale one only produces a confusing error.
+   */
+  @Volatile
+  private var oauthRedirect: String? = null
+
+  private inner class OauthBridge {
+    @JavascriptInterface
+    fun take(): String? {
+      val payload = oauthRedirect
+      oauthRedirect = null
+      return payload
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // Draw under the status bar and the gesture pill; the web layer pads itself
     // with the --safe-* CSS variables fed below.
@@ -67,12 +87,20 @@ class MainActivity : TauriActivity() {
     super.onNewIntent(intent)
     noteOpenWith(intent)
     pushOpenWith()
+    pushOauthRedirect()
   }
 
   /** Remember the document this launch was asked to open, if any. */
   private fun noteOpenWith(intent: Intent?) {
     val uri = intent?.data ?: return
     if (intent.action != Intent.ACTION_VIEW && intent.action != Intent.ACTION_SEND) return
+    // Google's redirect arrives as ACTION_VIEW too, on this app's own scheme.
+    // It is not a document, and handing it to the importer would try to open
+    // an authorization code as a PDF.
+    if (uri.scheme == BuildConfig.APPLICATION_ID) {
+      oauthRedirect = uri.toString()
+      return
+    }
     // The MIME the sender declared, falling back to what the resolver knows.
     val mime = intent.type ?: contentResolver.getType(uri) ?: ""
     // Built with JSONObject rather than string concatenation: this file is
@@ -89,6 +117,25 @@ class MainActivity : TauriActivity() {
     runOnUiThread {
       webViewRef?.evaluateJavascript(
         "window.dispatchEvent(new CustomEvent('notex-open-with', { detail: $payload }));",
+        null,
+      )
+    }
+  }
+
+  /**
+   * Push a redirect into a page that is already up.
+   *
+   * This is the usual case, not the exception: the app was running when the
+   * browser was opened, singleTask brings that same instance forward, and the
+   * redirect arrives through onNewIntent with the page mid-session.
+   */
+  private fun pushOauthRedirect() {
+    val payload = oauthRedirect ?: return
+    oauthRedirect = null
+    val detail = JSONObject().put("redirect", payload).toString()
+    runOnUiThread {
+      webViewRef?.evaluateJavascript(
+        "window.dispatchEvent(new CustomEvent('notex-oauth-redirect', { detail: $detail }));",
         null,
       )
     }
@@ -127,6 +174,7 @@ class MainActivity : TauriActivity() {
     // added here is only visible to the *next* navigation, so the page asks
     // for it rather than waiting to be told.
     webView.addJavascriptInterface(OpenWithBridge(), "__notexOpenWith")
+    webView.addJavascriptInterface(OauthBridge(), "__notexOauth")
     webViewRef = webView
     ViewCompat.setOnApplyWindowInsetsListener(webView) { view, insets ->
       val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
