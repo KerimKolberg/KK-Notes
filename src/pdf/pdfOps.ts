@@ -288,9 +288,66 @@ function tapeToPdfOps(stroke: FreehandStroke, project: PdfProjection): PdfOp[] {
   return ops;
 }
 
+/** `hsl` at full-ish saturation, as PDF rgb. Only the rainbow ramp needs it. */
+function rainbowAt(t: number): RgbColor {
+  const hue = ((t % 1) + 1) % 1;
+  const f = (n: number): number => {
+    const k = (n + hue * 12) % 12;
+    return 0.55 - 0.85 * 0.55 * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  };
+  return { r: f(0), g: f(8), b: f(4) };
+}
+
+/** The gradient's colour at `t` along it, 0 at the near end and 1 at the far. */
+function gradientAt(style: StrokeStyle, t: number): RgbColor {
+  const gradient = style.gradient;
+  if (!gradient) return cssColorToPdf(style.color);
+  if (gradient.mode === 'rainbow') return rainbowAt(t);
+  const from = cssColorToPdf(style.color);
+  const to = cssColorToPdf(gradient.to);
+  return { r: from.r + (to.r - from.r) * t, g: from.g + (to.g - from.g) * t, b: from.b + (to.b - from.b) * t };
+}
+
+/** Segments a gradient stroke is chopped into for export. */
+const GRADIENT_SEGMENTS = 16;
+
+/**
+ * A gradient stroke, as a run of flat-coloured pieces.
+ *
+ * A PDF shading pattern cannot be reached through the op vocabulary used
+ * here, so the stroke is chopped along its own length and each piece takes
+ * the colour the gradient has there. Round caps make consecutive pieces
+ * overlap, so the joins do not show as seams — and at sixteen pieces the
+ * banding is below what the eye picks up at reading size.
+ */
+function gradientToPdfOps(stroke: FreehandStroke, project: PdfProjection): PdfOp[] {
+  const style = stroke.style;
+  const centreline = freehandCentreline(stroke.points, style);
+  if (centreline.length < 2) return [];
+  const ops: PdfOp[] = [];
+  const perSegment = Math.max(1, Math.floor((centreline.length - 1) / GRADIENT_SEGMENTS));
+  for (let start = 0; start < centreline.length - 1; start += perSegment) {
+    // One vertex of overlap, so the round caps of neighbours meet.
+    const piece = centreline.slice(start, Math.min(centreline.length, start + perSegment + 1));
+    if (piece.length < 2) continue;
+    const t = centreline.length > 1 ? start / (centreline.length - 1) : 0;
+    const color = gradientAt(style, t);
+    ops.push({
+      kind: 'path',
+      d: polylineToPath(project, piece, false),
+      stroke: color,
+      lineWidth: style.size * project.scale,
+      opacity: style.opacity,
+      blend: blendOf(style),
+    });
+  }
+  return ops;
+}
+
 export function freehandToPdfOps(stroke: FreehandStroke, project: PdfProjection): PdfOp[] {
   if (stroke.style.compositeOperation === 'destination-out') return []; // pixel eraser: not representable as vectors
   if (stroke.style.tape) return tapeToPdfOps(stroke, project);
+  if (stroke.style.gradient) return gradientToPdfOps(stroke, project);
   const style = stroke.style;
   const color = cssColorToPdf(style.color);
   const arrows = arrowPaths(stroke.points, style, project);

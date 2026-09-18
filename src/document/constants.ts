@@ -131,5 +131,16 @@ export const TABLE_CELL_PADDING = 5;
 export const TABLE_CELL_SIZE = { width: 120, height: 36 } as const;
 export const DEFAULT_TABLE_ROWS = 3;
 export const DEFAULT_TABLE_COLUMNS = 3;
-export const MAX_TABLE_ROWS = 40;
+export const MAX_TABLE_ROWS = 20;
 export const MAX_TABLE_COLUMNS = 20;
+
+/** Grid line weight and solidity, as the insert dialog's sliders set them. */
+export const DEFAULT_TABLE_LINE_WIDTH = 1;
+export const MIN_TABLE_LINE_WIDTH = 0.5;
+export const MAX_TABLE_LINE_WIDTH = 4;
+export const DEFAULT_TABLE_LINE_OPACITY = 1;
+export const MIN_TABLE_LINE_OPACITY = 0.1;
+export const MAX_TABLE_LINE_OPACITY = 1;
+
+/** A track may not be dragged below this share of the table. */
+export const MIN_TRACK_FRACTION = 0.04;

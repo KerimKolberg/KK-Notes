@@ -10,7 +10,8 @@
  * Committed strokes never change, so their `RenderPlan` (the Path2D objects)
  * is memoised in a WeakMap keyed by the stroke object.
  */
-import type { InkPoint, Point, Shape, Stroke, StrokePattern, StrokeStyle, CoordinatePlaneShape } from '../types';
+import type { BBox, InkPoint, Point, Shape, Stroke, StrokePattern, StrokeStyle, CoordinatePlaneShape } from '../types';
+import { bboxFromPoints } from './geometry';
 import type { AngleArc } from './angleHud';
 import {
   GRAIN_TILE,
@@ -101,6 +102,12 @@ interface RenderPlan {
   readonly passes: readonly PlanPass[];
   /** Stroked with the line width and dash pattern. */
   readonly outline: Path2D | null;
+  /**
+   * The geometry's own bounds. A `Path2D` cannot be measured, so a gradient
+   * — which is defined across the stroke's extent — needs them recorded here
+   * when the plan is built.
+   */
+  readonly bounds?: BBox;
 }
 
 /** Plain body fill, the shape of every stroke before brushes got involved. */
@@ -245,14 +252,16 @@ function freehandBody(points: readonly InkPoint[], style: StrokeStyle, complete:
 
 function buildFreehandPlan(points: readonly InkPoint[], style: StrokeStyle, complete: boolean): RenderPlan {
   const isEraser = style.compositeOperation === 'destination-out';
+  const bounds = style.gradient && points.length > 0 ? bboxFromPoints(points) : undefined;
+  const withBounds = (plan: Omit<RenderPlan, 'bounds'>): RenderPlan => (bounds ? { ...plan, bounds } : plan);
   if (isEraser || (style.pattern === 'solid' && style.arrowheads === 'none')) {
-    return { passes: freehandBody(points, style, complete), outline: null };
+    return withBounds({ passes: freehandBody(points, style, complete), outline: null });
   }
   const arrows = arrowheadFills(points, style).map((path) => fillPass(path));
   if (style.pattern === 'solid') {
-    return { passes: [...freehandBody(points, style, complete), ...arrows], outline: null };
+    return withBounds({ passes: [...freehandBody(points, style, complete), ...arrows], outline: null });
   }
-  return { passes: arrows, outline: polylinePath(trimForArrowheads(freehandCentreline(points, style), style)) };
+  return withBounds({ passes: arrows, outline: polylinePath(trimForArrowheads(freehandCentreline(points, style), style)) });
 }
 
 function buildShapePlan(shape: Shape, style: StrokeStyle): RenderPlan {
@@ -338,12 +347,41 @@ function grainPattern(ctx: InkContext, color: string): CanvasPattern | null {
   return tile ? ctx.createPattern(tile, 'repeat') : null;
 }
 
+/**
+ * The gradient a stroke paints with, laid across its own bounds along
+ * whichever axis it mostly runs — a swipe left to right should shade left to
+ * right, not corner to corner.
+ */
+function strokeGradient(ctx: InkContext, style: StrokeStyle, bounds: BBox): CanvasGradient | null {
+  const gradient = style.gradient;
+  if (!gradient) return null;
+  const width = bounds.maxX - bounds.minX;
+  const height = bounds.maxY - bounds.minY;
+  const horizontal = width >= height;
+  const paint = horizontal
+    ? ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.minY)
+    : ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.minX, bounds.maxY);
+  if (gradient.mode === 'dual') {
+    paint.addColorStop(0, style.color);
+    paint.addColorStop(1, gradient.to);
+  } else {
+    for (let i = 0; i <= RAINBOW_STOPS; i++) {
+      paint.addColorStop(i / RAINBOW_STOPS, `hsl(${Math.round((i / RAINBOW_STOPS) * 360)}, 85%, 55%)`);
+    }
+  }
+  return paint;
+}
+
+/** Hue stops across a rainbow gradient; enough that the banding is invisible. */
+const RAINBOW_STOPS = 12;
+
 function paintPlan(ctx: InkContext, plan: RenderPlan, style: StrokeStyle): void {
   ctx.save();
   ctx.globalCompositeOperation = style.compositeOperation;
   ctx.globalAlpha = style.opacity;
-  ctx.fillStyle = style.color;
-  ctx.strokeStyle = style.color;
+  const gradient = plan.bounds ? strokeGradient(ctx, style, plan.bounds) : null;
+  ctx.fillStyle = gradient ?? style.color;
+  ctx.strokeStyle = gradient ?? style.color;
   if (plan.outline) {
     ctx.lineWidth = style.size;
     ctx.lineCap = 'round';
@@ -377,7 +415,7 @@ function paintPlan(ctx: InkContext, plan: RenderPlan, style: StrokeStyle): void 
     }
     // Outlines self-intersect at sharp turns; nonzero winding keeps them solid.
     ctx.fill(pass.path, 'nonzero');
-    if (pass.kind === 'texture') ctx.fillStyle = style.color;
+    if (pass.kind === 'texture') ctx.fillStyle = gradient ?? style.color;
   }
   ctx.restore();
 }

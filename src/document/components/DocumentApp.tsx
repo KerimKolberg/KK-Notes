@@ -7,7 +7,9 @@ import { ToolPalette } from '../../inking/palette/ToolPalette';
 import { ToolConfigRow } from '../../inking/palette/parts';
 import { useDesktopIntegration } from '../../desktop/useDesktopIntegration';
 import { useMediaInput } from '../hooks/useMediaInput';
-import { createStickyNote, createTable, nextZIndex } from '../media';
+import { createStickyNote, createTable, nextZIndex, type TableInit } from '../media';
+import type { MediaObject, Page } from '../types';
+import { InsertMenu } from './InsertMenu';
 
 /** PDF.js only loads when the import dialog is actually opened. */
 const ImportPdfDialog = lazy(() => import('../../pdf/ImportPdfDialog').then((m) => ({ default: m.ImportPdfDialog })));
@@ -37,19 +39,27 @@ export function DocumentApp() {
   );
 
   /** Drop a new note or table on the page the reader is looking at. */
-  const insertMedia = useCallback((make: 'note' | 'table') => {
-    const state = useDocumentStore.getState();
-    if (state.readOnly) return;
-    const page = state.document.pages[state.document.activePageIndex];
-    if (!page) return;
-    const z = nextZIndex(page.media);
-    state.addMedia(page.id, make === 'note' ? createStickyNote(page.dimensions, z) : createTable(page.dimensions, z));
-    // Both are dragged and typed into with the select tool, so switch to it
-    // rather than leaving the pen armed over something you want to edit.
-    updateSettings({ tool: 'select' });
-  }, [updateSettings]);
-  const insertNote = useCallback(() => insertMedia('note'), [insertMedia]);
-  const insertTable = useCallback(() => insertMedia('table'), [insertMedia]);
+  const insertMedia = useCallback(
+    (make: (page: Page, zIndex: number) => MediaObject) => {
+      const state = useDocumentStore.getState();
+      if (state.readOnly) return;
+      const page = state.document.pages[state.document.activePageIndex];
+      if (!page) return;
+      state.addMedia(page.id, make(page, nextZIndex(page.media)));
+      // Both are dragged and typed into with the select tool, so switch to it
+      // rather than leaving the pen armed over something you want to edit.
+      updateSettings({ tool: 'select' });
+    },
+    [updateSettings],
+  );
+  const insertNote = useCallback(
+    () => insertMedia((page, z) => createStickyNote(page.dimensions, z)),
+    [insertMedia],
+  );
+  const insertTable = useCallback(
+    (init: TableInit) => insertMedia((page, z) => createTable(page.dimensions, z, undefined, init)),
+    [insertMedia],
+  );
 
   const clearPageInkActive = useCallback(
     () => useDocumentStore.getState().clearPageInk(activePageId, settingsRef.current.eraseFilter),
@@ -127,9 +137,14 @@ export function DocumentApp() {
           onSettingsChange={updateSettings}
           onClear={clearActive}
           containerRef={stageRef}
-          onInsertImage={pickImage}
-          onInsertNote={insertNote}
-          onInsertTable={insertTable}
+          insertMenu={(onInsertDone) => (
+            <InsertMenu
+              onInsertImage={pickImage}
+              onInsertNote={insertNote}
+              onInsertTable={insertTable}
+              onDone={onInsertDone}
+            />
+          )}
           onClearPageInk={clearPageInkActive}
           onClearDocumentInk={clearDocumentInkActive}
           hidden={readOnly}

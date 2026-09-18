@@ -267,3 +267,46 @@ describe('strokeToPdfOps', () => {
     expect(isValidPdfSvgPath(op.d)).toBe(true);
   });
 });
+
+describe('gradient highlighter export', () => {
+  const gradientStroke = (mode: 'rainbow' | 'dual'): FreehandStroke => ({
+    ...freehand,
+    tool: 'highlighter',
+    style: { ...style, color: '#ff0000', opacity: 0.4, compositeOperation: 'multiply', gradient: { mode, to: '#0000ff' } },
+  });
+
+  it('chops a dual-colour stroke into flat pieces running from one colour to the other', () => {
+    const ops = strokeToPdfOps(gradientStroke('dual'), flat);
+    expect(ops.length).toBeGreaterThan(1);
+    // Every piece is a stroked open path, not a filled outline: that is what
+    // lets each one carry its own colour without seams.
+    for (const op of ops) {
+      expect(op.kind).toBe('path');
+      if (op.kind !== 'path') continue;
+      expect(op.fill).toBeUndefined();
+      expect(op.stroke).toBeDefined();
+      expect(isValidPdfSvgPath(op.d)).toBe(true);
+      expect(op.opacity).toBeCloseTo(0.4);
+      expect(op.blend).toBe('multiply');
+    }
+    const first = ops[0];
+    const last = ops[ops.length - 1];
+    if (first?.kind !== 'path' || last?.kind !== 'path') throw new Error('expected paths');
+    // Red at the start, travelling towards blue by the end.
+    expect(first.stroke!.r).toBeGreaterThan(first.stroke!.b);
+    expect(last.stroke!.b).toBeGreaterThan(first.stroke!.b);
+  });
+
+  it('sweeps the hue for a rainbow stroke rather than repeating one colour', () => {
+    const ops = strokeToPdfOps(gradientStroke('rainbow'), flat);
+    const colors = ops.map((op) => (op.kind === 'path' ? op.stroke : undefined));
+    const unique = new Set(colors.map((c) => (c ? `${c.r.toFixed(2)},${c.g.toFixed(2)},${c.b.toFixed(2)}` : '')));
+    expect(unique.size).toBeGreaterThan(4);
+  });
+
+  it('leaves a plain highlighter as a single filled outline', () => {
+    const ops = strokeToPdfOps({ ...freehand, tool: 'highlighter' }, flat);
+    expect(ops).toHaveLength(1);
+    expect(ops[0]?.kind === 'path' && ops[0].fill).toBeDefined();
+  });
+});

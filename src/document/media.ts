@@ -17,6 +17,7 @@ import {
   MAX_TABLE_COLUMNS,
   MAX_TABLE_ROWS,
   MIN_IMAGE_SIZE,
+  MIN_TRACK_FRACTION,
   NOTE_DEFAULT_SIZE,
   NOTE_GRIP_HEIGHT,
   NOTE_PADDING,
@@ -258,13 +259,15 @@ export function createStickyNote(page: PageDimensions, zIndex: number, at?: Poin
   return { kind: 'note', id: `note_${createStrokeId()}`, x, y, width, height, rotation: 0, zIndex, text: '', color };
 }
 
-export function createTable(
-  page: PageDimensions,
-  zIndex: number,
-  at?: Point,
-  rows = DEFAULT_TABLE_ROWS,
-  columns = DEFAULT_TABLE_COLUMNS,
-): TableLayer {
+export interface TableInit {
+  readonly rows?: number;
+  readonly columns?: number;
+  readonly lineWidth?: number;
+  readonly lineOpacity?: number;
+}
+
+export function createTable(page: PageDimensions, zIndex: number, at?: Point, init: TableInit = {}): TableLayer {
+  const { rows = DEFAULT_TABLE_ROWS, columns = DEFAULT_TABLE_COLUMNS } = init;
   const r = clampTableCount(rows, MAX_TABLE_ROWS);
   const c = clampTableCount(columns, MAX_TABLE_COLUMNS);
   const width = c * TABLE_CELL_SIZE.width;
@@ -282,6 +285,8 @@ export function createTable(
     rows: r,
     columns: c,
     cells: Array.from({ length: r * c }, () => ''),
+    ...(init.lineWidth === undefined ? {} : { lineWidth: init.lineWidth }),
+    ...(init.lineOpacity === undefined ? {} : { lineOpacity: init.lineOpacity }),
   };
 }
 
@@ -326,9 +331,24 @@ export function resizeTable(table: TableLayer, rows: number, columns: number): T
     rows: r,
     columns: c,
     cells,
+    columnFractions: reshapeFractions(columnFractions(table), c),
+    rowFractions: reshapeFractions(rowFractions(table), r),
     width: (table.width / table.columns) * c,
     height: (table.height / table.rows) * r,
   };
+}
+
+/**
+ * Fit a set of track shares to a new track count: keep the ones that survive,
+ * give a new track the average share, and renormalise. A dragged layout is
+ * therefore preserved across adding and removing rows or columns.
+ */
+function reshapeFractions(fractions: readonly number[], count: number): number[] {
+  if (count === fractions.length) return [...fractions];
+  const average = 1 / Math.max(1, count);
+  const next = Array.from({ length: count }, (_, i) => fractions[i] ?? average);
+  const total = next.reduce((sum, f) => sum + f, 0);
+  return total > 0 ? next.map((f) => f / total) : evenFractions(count);
 }
 
 export function addTableRow(table: TableLayer): TableLayer {
@@ -417,7 +437,90 @@ export function tableGridBox(table: TableLayer): { x: number; y: number; width: 
 /** Box of one cell in page px, in the table's unrotated frame. */
 export function tableCellBox(table: TableLayer, row: number, column: number): { x: number; y: number; width: number; height: number } {
   const grid = tableGridBox(table);
-  const width = grid.width / table.columns;
-  const height = grid.height / table.rows;
-  return { x: grid.x + column * width, y: grid.y + row * height, width, height };
+  const columns = trackEdges(columnFractions(table));
+  const rows = trackEdges(rowFractions(table));
+  const x0 = columns[column] ?? 0;
+  const x1 = columns[column + 1] ?? 1;
+  const y0 = rows[row] ?? 0;
+  const y1 = rows[row + 1] ?? 1;
+  return {
+    x: grid.x + x0 * grid.width,
+    y: grid.y + y0 * grid.height,
+    width: (x1 - x0) * grid.width,
+    height: (y1 - y0) * grid.height,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Uneven table tracks
+// ---------------------------------------------------------------------------
+
+/** `count` equal shares, summing to 1. */
+export function evenFractions(count: number): number[] {
+  const n = Math.max(1, Math.round(count));
+  return Array.from({ length: n }, () => 1 / n);
+}
+
+/**
+ * The column (or row) shares of a table, always `count` long and summing to
+ * 1. A table with no stored fractions — a new one, or one from a file written
+ * before dividers could be dragged — is evenly divided.
+ */
+export function trackFractions(stored: readonly number[] | undefined, count: number): number[] {
+  const n = Math.max(1, Math.round(count));
+  if (!stored || stored.length !== n) return evenFractions(n);
+  const total = stored.reduce((sum, f) => sum + (Number.isFinite(f) && f > 0 ? f : 0), 0);
+  if (!(total > 0)) return evenFractions(n);
+  return stored.map((f) => (Number.isFinite(f) && f > 0 ? f / total : 0));
+}
+
+export function columnFractions(table: TableLayer): number[] {
+  return trackFractions(table.columnFractions, table.columns);
+}
+
+export function rowFractions(table: TableLayer): number[] {
+  return trackFractions(table.rowFractions, table.rows);
+}
+
+/** Cumulative offsets 0…1 of every divider, including both outer edges. */
+export function trackEdges(fractions: readonly number[]): number[] {
+  const edges = [0];
+  let run = 0;
+  for (const f of fractions) {
+    run += f;
+    edges.push(Math.min(1, run));
+  }
+  edges[edges.length - 1] = 1;
+  return edges;
+}
+
+/**
+ * Move divider `index` (1-based: the first interior one is 1) to `position`,
+ * a 0..1 offset across the table. Only the two tracks either side of it
+ * change, which is how a spreadsheet behaves and keeps the rest of the table
+ * where the user left it. Neither may collapse past `MIN_TRACK_FRACTION`.
+ */
+export function resizeTrack(fractions: readonly number[], index: number, position: number): number[] {
+  const next = [...fractions];
+  const before = next[index - 1];
+  const after = next[index];
+  if (before === undefined || after === undefined) return next;
+  const edges = trackEdges(fractions);
+  const start = edges[index - 1] ?? 0;
+  const pair = before + after;
+  const clamped = Math.min(
+    start + pair - MIN_TRACK_FRACTION,
+    Math.max(start + MIN_TRACK_FRACTION, Number.isFinite(position) ? position : start + before),
+  );
+  next[index - 1] = clamped - start;
+  next[index] = pair - next[index - 1]!;
+  return next;
+}
+
+export function setColumnFractions(table: TableLayer, fractions: readonly number[]): TableLayer {
+  return { ...table, columnFractions: [...fractions] };
+}
+
+export function setRowFractions(table: TableLayer, fractions: readonly number[]): TableLayer {
+  return { ...table, rowFractions: [...fractions] };
 }

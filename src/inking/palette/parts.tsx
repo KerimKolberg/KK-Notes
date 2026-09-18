@@ -9,12 +9,14 @@ import {
   MAX_CURVE_AMPLITUDE,
   MAX_CURVE_CYCLES,
   MAX_HIGHLIGHTER_OPACITY,
+  MAX_HIGHLIGHTER_WIDTH,
   MAX_STROKE_SIZE,
   MIN_CURVE_AMPLITUDE,
   MAX_ERASER_SIZE,
   MIN_CURVE_CYCLES,
   MIN_ERASER_SIZE,
   MIN_HIGHLIGHTER_OPACITY,
+  MIN_HIGHLIGHTER_WIDTH,
   MAX_WASHI_OPACITY,
   MAX_WASHI_WIDTH,
   MIN_STROKE_SIZE,
@@ -32,6 +34,7 @@ import type {
   CoordinatePlaneConfig,
   EraserEndAction,
   EraserMode,
+  GradientMode,
   StrokePattern,
   ToolSettings,
   ToolType,
@@ -135,7 +138,6 @@ export function usesColor(tool: ToolType): boolean {
 export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
   const colorInputRef = useRef<HTMLInputElement>(null);
   const laser = settings.tool === 'laser-pointer';
-  const highlighter = settings.tool === 'highlighter';
   const activeColor = laser ? settings.laserColor : settings.color;
   const colorDisabled = !usesColor(settings.tool) || (laser && settings.laserRainbow);
   const setColor = (color: string): void => onSettingsChange(laser ? { laserColor: color } : { color });
@@ -209,26 +211,6 @@ export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
           {settings.size}px
         </span>
       </label>
-
-      {highlighter && (
-        <label className="flex min-w-0 flex-1 items-center gap-2" title="Highlighter heaviness">
-          <span className="shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400">Ink</span>
-          <input
-            type="range"
-            className="h-1 min-w-16 flex-1 accent-blue-600"
-            min={MIN_HIGHLIGHTER_OPACITY}
-            max={MAX_HIGHLIGHTER_OPACITY}
-            step={0.05}
-            value={settings.highlighterOpacity}
-            aria-label="Highlighter heaviness"
-            onChange={(e) => onSettingsChange({ highlighterOpacity: Number(e.target.value) })}
-            data-highlighter-opacity
-          />
-          <span className="w-9 shrink-0 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-highlighter-opacity-value>
-            {Math.round(settings.highlighterOpacity * 100)}%
-          </span>
-        </label>
-      )}
 
       {laser && (
         <Chip active={settings.laserRainbow} onClick={() => onSettingsChange({ laserRainbow: !settings.laserRainbow })} label="Rainbow laser">
@@ -415,6 +397,122 @@ export function LineOptions({ settings, onSettingsChange }: PanelProps) {
           15°
         </Chip>
       </Row>
+    </div>
+  );
+}
+
+const GRADIENTS: readonly { readonly id: 'none' | GradientMode; readonly label: string; readonly hint: string }[] = [
+  { id: 'none', label: 'Flat', hint: 'One colour along the whole stroke' },
+  { id: 'rainbow', label: 'Rainbow', hint: 'A full hue sweep along the stroke' },
+  { id: 'dual', label: 'Two colours', hint: 'Fades from the stroke colour into a second one' },
+];
+
+/**
+ * The highlighter's own settings, opened by pressing its button a second time
+ * — the same gesture as the pen's brushes and the tape's patterns.
+ *
+ * Width lives here rather than on the shared thickness slider because a
+ * highlighter is tens of pixels wide where a pen is a few, and sharing one
+ * range would leave both ends of it useless. The gradient is mapped across the
+ * finished stroke's bounding box, so it reads as one sweep from end to end
+ * however the stroke doubles back on itself.
+ */
+export function HighlighterOptions({ settings, onSettingsChange }: PanelProps) {
+  const toRef = useRef<HTMLInputElement>(null);
+  const dual = settings.highlighterGradient === 'dual';
+  return (
+    <div className="flex w-[min(19rem,calc(100vw-2.5rem))] flex-col gap-1" data-highlighter-options>
+      <Row label="Width">
+        <input
+          type="range"
+          className="h-1 w-32 accent-blue-600"
+          min={MIN_HIGHLIGHTER_WIDTH}
+          max={MAX_HIGHLIGHTER_WIDTH}
+          step={1}
+          value={settings.highlighterWidth}
+          aria-label="Highlighter width"
+          onChange={(e) => onSettingsChange({ highlighterWidth: Number(e.target.value) })}
+          data-highlighter-width
+        />
+        <span className="w-10 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-highlighter-width-value>
+          {Math.round(settings.highlighterWidth)}px
+        </span>
+      </Row>
+      <Row label="Opacity">
+        <input
+          type="range"
+          className="h-1 w-32 accent-blue-600"
+          min={MIN_HIGHLIGHTER_OPACITY}
+          max={MAX_HIGHLIGHTER_OPACITY}
+          step={0.05}
+          value={settings.highlighterOpacity}
+          aria-label="Highlighter heaviness"
+          onChange={(e) => onSettingsChange({ highlighterOpacity: Number(e.target.value) })}
+          data-highlighter-opacity
+        />
+        <span className="w-10 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-highlighter-opacity-value>
+          {Math.round(settings.highlighterOpacity * 100)}%
+        </span>
+      </Row>
+      <Row label="Gradient">
+        {GRADIENTS.map((gradient) => (
+          <Chip
+            key={gradient.id}
+            active={settings.highlighterGradient === gradient.id}
+            label={gradient.hint}
+            onClick={() => onSettingsChange({ highlighterGradient: gradient.id })}
+          >
+            <span data-highlighter-gradient={gradient.id}>{gradient.label}</span>
+          </Chip>
+        ))}
+      </Row>
+      <Row label="Fades into">
+        {COLOR_PALETTE.slice(0, 6).map((color) => (
+          <button
+            key={color}
+            type="button"
+            aria-label={`Fade into ${color}`}
+            aria-pressed={settings.highlighterGradientTo.toLowerCase() === color.toLowerCase()}
+            disabled={!dual}
+            data-highlighter-gradient-to={color}
+            className={`h-6 w-6 rounded-full ring-1 ring-black/15 disabled:opacity-30 dark:ring-white/25 ${
+              settings.highlighterGradientTo.toLowerCase() === color.toLowerCase() ? 'outline-2 outline-offset-2 outline-blue-500' : ''
+            }`}
+            style={{ background: color }}
+            onClick={() => onSettingsChange({ highlighterGradientTo: color })}
+          />
+        ))}
+        <IconButton
+          icon={Pipette}
+          label="Custom second colour"
+          size="sm"
+          disabled={!dual}
+          onClick={() => toRef.current?.click()}
+        />
+        <input
+          ref={toRef}
+          type="color"
+          className="sr-only"
+          aria-label="Custom second colour value"
+          value={settings.highlighterGradientTo.length === 7 ? settings.highlighterGradientTo : '#22d3ee'}
+          disabled={!dual}
+          onChange={(e) => onSettingsChange({ highlighterGradientTo: e.target.value })}
+        />
+      </Row>
+      <div
+        className="mx-1 mb-1 h-3 rounded-full"
+        aria-hidden="true"
+        data-highlighter-preview
+        style={{
+          background:
+            settings.highlighterGradient === 'rainbow'
+              ? 'linear-gradient(90deg, hsl(0 90% 55%), hsl(60 90% 55%), hsl(120 90% 55%), hsl(180 90% 55%), hsl(240 90% 55%), hsl(300 90% 55%), hsl(360 90% 55%))'
+              : settings.highlighterGradient === 'dual'
+                ? `linear-gradient(90deg, ${settings.color}, ${settings.highlighterGradientTo})`
+                : settings.color,
+          opacity: settings.highlighterOpacity,
+        }}
+      />
     </div>
   );
 }

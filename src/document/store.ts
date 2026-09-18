@@ -8,12 +8,14 @@ import { create } from 'zustand';
 import {
   duplicateStrokes,
   removeStrokesById,
+  reshapeStrokes,
   restyleStrokes,
   transformStroke,
   transformStrokes,
   type StrokeTransform,
   type StyleChange,
 } from '../inking/engine/lasso';
+import type { CurveEdit } from '../inking/engine/shapes';
 import { keepStrokes, type EraseFilter } from '../inking/engine/eraseFilter';
 import type { Stroke } from '../inking/types';
 import { TEMPLATE_DEFAULT_SPACING, ZOOM_STEP } from './constants';
@@ -138,6 +140,12 @@ export interface DocumentStore {
   clearLassoSelection: () => void;
   transformSelection: (pageId: string, ids: readonly string[], transform: StrokeTransform) => void;
   restyleSelection: (pageId: string, ids: readonly string[], change: StyleChange) => void;
+  /**
+   * Rebuild the selected lines and curves from new parameters. A committed
+   * curve keeps everything it was drawn from, so this re-runs the generator
+   * rather than deforming the points it left behind.
+   */
+  reshapeSelection: (pageId: string, ids: readonly string[], edit: CurveEdit) => void;
   /** Appends offset copies and moves the selection onto them. */
   duplicateSelection: (pageId: string, ids: readonly string[]) => void;
   deleteSelection: (pageId: string, ids: readonly string[]) => void;
@@ -454,6 +462,17 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
       return {
         document: updatePageById(s.document, pageId, (page) => {
           const next = restyleStrokes(page.strokes, idSet, change);
+          return next.every((stroke, i) => stroke === page.strokes[i]) ? page : withStrokes(page, next);
+        }),
+      };
+    })),
+
+  reshapeSelection: (pageId, ids, change) =>
+    set(edit((s) => {
+      const idSet = new Set(ids);
+      return {
+        document: updatePageById(s.document, pageId, (page) => {
+          const next = reshapeStrokes(page.strokes, idSet, change);
           return next.every((stroke, i) => stroke === page.strokes[i]) ? page : withStrokes(page, next);
         }),
       };

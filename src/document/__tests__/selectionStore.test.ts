@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { selectionCurveParams } from '../../inking/engine/lasso';
 import { makeLine, makeStroke } from '../../inking/__tests__/testUtils';
 import { useDocumentStore } from '../store';
 
@@ -35,6 +36,31 @@ describe('lasso selection in the document store', () => {
     expect(store.getState().lassoSelection?.strokeIds).toEqual(ids);
     store.getState().redo(pageId());
     expect(strokes()[0]!.bbox.minX).toBeCloseTo(a!.bbox.minX + 20);
+  });
+
+  it('reshapeSelection rebuilds the selected curve as one undo step', () => {
+    const line = strokes()[1]!;
+    const ids = [line.id];
+    store.getState().setLassoSelection({ pageId: pageId(), strokeIds: ids });
+    const depth = page().undoStack.length;
+    store.getState().reshapeSelection(pageId(), ids, { curve: 'wave', cycles: 5 });
+    const reshaped = strokes()[1]!;
+    expect(reshaped.kind).toBe('geometric');
+    expect(reshaped.id).toBe(line.id);
+    expect(selectionCurveParams([reshaped])).toMatchObject({ curve: 'wave', cycles: 5 });
+    expect(page().undoStack.length).toBe(depth + 1);
+    // The ends never move, so the endpoints of the chord are untouched.
+    expect(reshaped.bbox.minX).toBeCloseTo(line.bbox.minX);
+    store.getState().undo(pageId());
+    expect(strokes()[1]).toBe(line);
+    expect(store.getState().lassoSelection?.strokeIds).toEqual(ids);
+  });
+
+  it('reshapeSelection leaves the page alone when nothing in the selection is a curve', () => {
+    const ids = [strokes()[0]!.id];
+    const depth = page().undoStack.length;
+    store.getState().reshapeSelection(pageId(), ids, { curve: 'wave' });
+    expect(page().undoStack.length).toBe(depth);
   });
 
   it('restyleSelection changes colour / width and no-ops when nothing changes', () => {

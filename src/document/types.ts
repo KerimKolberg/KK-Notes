@@ -122,6 +122,16 @@ export interface TableLayer extends MediaBox {
   readonly rows: number;
   readonly columns: number;
   readonly cells: readonly string[];
+  /**
+   * Relative widths of the columns and heights of the rows, each as many
+   * entries as there are tracks and summing to 1. Absent means "all equal",
+   * which is what a new table is and what an older file carries.
+   */
+  readonly columnFractions?: readonly number[];
+  readonly rowFractions?: readonly number[];
+  /** Grid line weight in page px, and how solid it is. */
+  readonly lineWidth?: number;
+  readonly lineOpacity?: number;
 }
 
 export type MediaObject = ImageLayer | StickyNote | TableLayer;

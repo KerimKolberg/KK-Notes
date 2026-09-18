@@ -251,14 +251,22 @@ As the window narrows the zoom read-out and the word "Page" drop away and
 the title truncates; the icons stay, so nothing becomes unreachable.
 
 **Floating tool palette** — a draggable panel over the canvas. The first row
-groups the tools (select, lasso, laser, insert image / note / table · pen,
-highlighter, washi tape · line, coordinate system, stroke options · eraser · settings) and the second
+groups the tools (select, lasso, laser, add · pen, highlighter, washi tape ·
+line, coordinate system, stroke options · eraser · settings) and the second
 carries the colour swatches and the thickness slider. Tools that have more
 to say open a flyout when their own button is pressed again: the pen's five
-brushes, the coordinate plane's quadrants and labels. The eraser is one
-button with two modes, the pattern / snapping and the input / stylus
-settings each live behind a popover, and everything the old text toolbar
-could do is still there.
+brushes, the highlighter's width, opacity and gradient, the tape's patterns,
+the coordinate plane's quadrants and labels. The eraser is one button with
+two modes, the pattern / snapping and the input / stylus settings each live
+behind a popover, and everything the old text toolbar could do is still
+there.
+
+Everything that can be *placed* on a page — an image, a sticky note, a table
+— sits behind one **Add** button rather than three of its own, because they
+are one errand with three answers and the palette has no room to spend on
+each. The popover's body is passed into `ToolPalette` as a render prop
+(`insertMenu`), so the palette stays an inking control that knows nothing
+about pages, notes or tables.
 
 Dragging is handled by `useDraggablePanel` on top of the pure clamping in
 `dragBounds.ts`: the palette is kept fully inside the canvas area with a
@@ -336,7 +344,10 @@ a dashed box on a z-25 layer between the ink and the form widgets:
 - **quick actions**: Duplicate (offset copies become the new selection),
   six colour swatches plus a colour picker, a width slider that previews
   live and commits on release, Delete, Deselect; Delete / Backspace and
-  Escape work from the keyboard.
+  Escape work from the keyboard;
+- **curve settings**, when the selection holds a line or a curve: the four
+  paths (straight / parabola / wave / zigzag), the dash pattern, a depth
+  slider, Flip and a cycle count.
 
 While a drag is in flight the originals are hidden on the committed layer
 (`hiddenStrokeIds`) and transformed copies are drawn on the selection
@@ -347,6 +358,20 @@ through `withStrokes`, i.e. it is exactly one entry on that page's undo
 stack. Transforms keep stroke ids, so a selection stays valid across undo /
 redo of its own edits; a new lasso, or switching to any tool other than
 Lasso / Select, clears it.
+
+**Editing a curve after the fact.** A `CurveShape` keeps everything it was
+drawn from — both ends, a *signed* amplitude and a cycle count — so nothing
+extra had to be stored to make a committed curve editable again.
+`curveParams()` (in `shapes.ts`) takes one apart: depth comes back as the
+amplitude measured against the chord, and the sign of the amplitude *is* the
+flip. `reshapeCurve()` merges the toolbar's changes over that and rebuilds
+the shape, keeping the endpoints fixed; a straight line has no depth of its
+own, so it borrows the tool defaults until the sliders are moved, and
+straightening is the same edit in reverse. `reshapeStrokes()` applies it to a
+selection and recomputes each bbox, and `reshapeSelection` in the store
+commits it as one undo entry — the depth slider previews on the selection
+layer's own canvas while it moves and only commits on release, so dragging it
+leaves one entry rather than forty.
 
 **Two-finger navigation** (`src/document/gestures.ts`,
 `hooks/useTouchGestures.ts`). The viewer's scroll container has
@@ -618,12 +643,42 @@ export values, options, max length and alignment. Values live in
 export value under the group name, everything else is a string.
 
 **Media** (`media.ts`, `MediaLayer.tsx`, `useMediaInput.ts`). Paste
-(`Ctrl+V`) or drop images onto a page (dropped PDFs import). Images are data
-URLs with `{x, y, width, height, rotation, zIndex}`. The transform box has
-eight resize handles (aspect locked by default, Shift for free transform,
-anchored on the opposite edge so rotated boxes resize predictably), a rotation
-handle (Shift snaps to 15°), body drag, and a contextual toolbar / right-click
-for Delete, Bring to front and Send to back. `Delete` removes the selection.
+(`Ctrl+V`) or drop images onto a page (dropped PDFs import), or place an
+image, a sticky note or a table from the palette's Add menu. All three share
+one box — `{x, y, width, height, rotation, zIndex, locked?}` — and one
+transform box: eight resize handles (aspect locked by default for an image and
+free for a note or a table, Shift swaps the two, anchored on the opposite edge
+so rotated boxes resize predictably), a rotation handle (Shift snaps to 15°),
+body drag, and a contextual toolbar / right-click for Lock, Delete, Bring to
+front and Send to back. `Delete` removes the selection. A locked object still
+selects — that is how it gets unlocked — but shows no grips at all, because
+nothing to grab is the clearest statement that nothing will move.
+
+Notes and tables are real HTML rather than canvas, because they are typed
+into and need the platform's own text editing, selection and IME. That makes
+them hard to *pick up*: every cell and textarea swallows the press that was
+meant for the object. So each one carries two extra affordances (`MediaGrips`):
+a grip bar at the top centre, a constant size on screen like the resize
+handles, and — until the object is selected — a shield over its whole box, so
+the first press anywhere takes hold of the table and the second, once it is
+selected, types into a cell. Both ride the object's own rotation. Ink always
+wins over media regardless: the media layer is z-10 against the ink layer's
+z-20, and goes `pointer-events: none` entirely whenever the current tool is
+not Select.
+
+A **table** is configured before it exists — a grid picker up to 20 × 20, and
+grid line width and opacity — because picking the size afterwards would mean
+adding rows one at a time, and how hard the ruling is printed is part of what
+a table is for. Its column and row shares live on the object
+(`columnFractions` / `rowFractions`, summing to 1), so dragging an internal
+divider is a document edit rather than a view state that evaporates on
+reload; `resizeTrack` moves only the two tracks either side of the divider,
+the way a spreadsheet does, and neither may collapse past
+`MIN_TRACK_FRACTION`. Adding or removing a row keeps the layout by rescaling
+the shares rather than resetting them, and a file written before dividers
+existed — or one whose stored list no longer fits the grid — falls back to an
+even division. The same fractions drive the live grid, the page snapshot
+raster and the PDF export, so all three land on identical lines.
 
 **Export** (`export.ts`, `pdfOps.ts`). `exportDocumentToPdf(doc)` builds a
 pdf-lib document: PDF-backed pages are `copyPages` copies of the source so
@@ -636,8 +691,9 @@ pure, unit-tested `strokeToPdfOps`: perfect-freehand outlines become
 `M … L … Z` paths for `drawSvgPath`, dashed centrelines are stroked paths with
 scaled dash arrays, lines / rectangles / ellipses use `drawLine`,
 `drawRectangle`, `drawEllipse` (falling back to paths on rotated source
-pages), highlighter uses the Multiply blend, and coordinate planes become
-lines, arrowheads and text. The pixel eraser cannot be represented as vectors
+pages), highlighter uses the Multiply blend (a gradient one is chopped into
+flat-coloured pieces, since the op vocabulary has no shading), and coordinate
+planes become lines, arrowheads and text. The pixel eraser cannot be represented as vectors
 and is skipped. *Export PDF* in the top bar downloads the result.
 
 ## Inking engine (`src/inking/`)
@@ -683,7 +739,7 @@ Keyboard: `Ctrl/⌘+Z` undo, `Ctrl/⌘+Shift+Z` or `Ctrl+Y` redo.
 | --- | --- | --- |
 | Lasso | freehand loop | selects enclosed strokes (see above) |
 | Pen | freehand | pressure-thinned perfect-freehand polygon |
-| Highlighter | freehand | 4× width, `multiply`, opacity from its own slider |
+| Highlighter | freehand | constant width, `multiply`, opacity and gradient from its own popover |
 | Washi tape | freehand | wide translucent band filled with a repeating pattern |
 | Laser | freehand | glowing trail that fades out in 2.7 s, never committed |
 
@@ -693,6 +749,22 @@ marker and wet brush (see the brush engine above).
 | Axes | drag from the origin | coordinate plane |
 | Stroke eraser | sweep | removes whole strokes it crosses |
 | Area eraser | freehand | `destination-out` band, at its own size |
+
+**The highlighter** carries its own width rather than borrowing the shared
+thickness slider: it is tens of pixels wide where a pen is a few, and one
+range serving both would leave each end of it useless. Opacity and the
+gradient live beside it, behind a second press of its button.
+
+*Gradient* is off (one flat colour), **Rainbow** (a full hue sweep) or **Two
+colours** (the stroke colour fading into a second one). Either is mapped
+across the *finished stroke's bounding box*, along whichever axis it is
+longer in, so a stroke that doubles back on itself still reads as one sweep
+end to end rather than restarting on each wobble. On a canvas that is a
+`createLinearGradient` used as the fill; PDF has no shading in the op
+vocabulary used here, so the export chops the centreline into sixteen
+flat-coloured pieces with a vertex of overlap — round caps hide the joins,
+and at that many pieces the banding is below what the eye picks up at
+reading size.
 
 **Washi tape** is a strip, not a stroke: constant width, no pressure
 response, and its pattern (solid, stripes, checks, dots) frozen onto the
@@ -844,14 +916,14 @@ src/inking/
 ├── InkSurface.tsx          page-sized surface for the document viewer (zoom-aware)
 ├── palette/                floating tool palette
 │   ├── ToolPalette.tsx     icon groups, flyouts, colour and thickness rows
-│   └── parts.tsx           brush flyout, stroke options, plane options, settings
+│   └── parts.tsx           brush, highlighter, tape, line, eraser, plane, settings panels
 ├── InkingCanvas.module.css
 ├── types.ts                Stroke, StrokeStyle, ToolSettings, HistoryEntry, …
 ├── constants.ts
 ├── engine/                 framework-free, unit-tested core
 │   ├── strokeOutline.ts    perfect-freehand integration → Path2D
 │   ├── renderer.ts         fills vs. stroked paths, dashes, arrowheads, plane, HUD
-│   ├── shapes.ts           primitives, drag construction, plane layout, flattening
+│   ├── shapes.ts           primitives, drag construction, curve editing, plane layout, flattening
 │   ├── shapeRecognition.ts hold-to-snap classifier (RDP, PCA ellipse, corners, heart)
 │   ├── simplify.ts         Ramer–Douglas–Peucker, arc-length resampling, tangents
 │   ├── angles.ts           15° snapping, math-convention read-outs
@@ -859,7 +931,7 @@ src/inking/
 │   ├── hitTest.ts          stroke-eraser geometry for both stroke kinds
 │   ├── history.ts          undo/redo reducer
 │   ├── pointerPolicy.ts    palm rejection, pressure, button mapping
-│   ├── lasso.ts            point-in-polygon selection, stroke transforms, handle geometry
+│   ├── lasso.ts            point-in-polygon selection, stroke transforms, reshaping, handles
 │   ├── brushes.ts          pen presets: perfect-freehand params, tilt, grain, tapers
 │   ├── laser.ts            disappearing pointer trail: fade, rainbow, run batching
 │   ├── gestureState.ts     shared two-finger-gesture flag and pen presence

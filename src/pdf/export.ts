@@ -34,8 +34,19 @@ import {
   type PDFPage,
 } from 'pdf-lib';
 import type { Point } from '../inking/types';
-import { dataUrlToBytes, noteTextBox, sortedByZ, tableCell, wrapText } from '../document/media';
 import {
+  columnFractions,
+  dataUrlToBytes,
+  noteTextBox,
+  rowFractions,
+  sortedByZ,
+  tableCell,
+  trackEdges,
+  wrapText,
+} from '../document/media';
+import {
+  DEFAULT_TABLE_LINE_OPACITY,
+  DEFAULT_TABLE_LINE_WIDTH,
   NOTE_FONT_SIZE,
   NOTE_GRIP_HEIGHT,
   NOTE_LINE_HEIGHT,
@@ -57,6 +68,12 @@ export interface ExportOptions {
 }
 
 const toColor = (c: RgbColor) => rgb(c.r, c.g, c.b);
+
+/** A colour laid over white at `alpha`, for the transparency PDF ops lack. */
+function blendOnWhite(c: RgbColor, alpha: number): RgbColor {
+  const a = Math.min(1, Math.max(0, Number.isFinite(alpha) ? alpha : 1));
+  return { r: 1 - a * (1 - c.r), g: 1 - a * (1 - c.g), b: 1 - a * (1 - c.b) };
+}
 const toBlend = (b: 'normal' | 'multiply') => (b === 'multiply' ? BlendMode.Multiply : BlendMode.Normal);
 
 // ---------------------------------------------------------------------------
@@ -305,6 +322,12 @@ function drawTable(target: PDFPage, table: TableLayer, projection: PdfProjection
     return { x: box.x + localX * cos - fromBottom * sin, y: box.y + localX * sin + fromBottom * cos };
   };
 
+  // Grid weight and tint travel with the table. PDF has no alpha in this
+  // vocabulary, so a faint grid is exported as its colour blended towards the
+  // white the table is drawn on — the same thing the eye sees on screen.
+  const thickness = (table.lineWidth ?? DEFAULT_TABLE_LINE_WIDTH) * projection.scale;
+  const rule = toColor(blendOnWhite(cssColorToPdf('#a1a1aa'), table.lineOpacity ?? DEFAULT_TABLE_LINE_OPACITY));
+
   target.drawRectangle({
     x: box.x,
     y: box.y,
@@ -312,24 +335,20 @@ function drawTable(target: PDFPage, table: TableLayer, projection: PdfProjection
     height: box.height,
     rotate: degrees(box.rotateDeg),
     color: toColor(cssColorToPdf('#ffffff')),
-    borderColor: toColor(cssColorToPdf('#a1a1aa')),
-    borderWidth: 0.75,
+    borderColor: rule,
+    borderWidth: thickness,
   });
 
   const grip = TABLE_GRIP_HEIGHT * projection.scale;
   const gridHeight = Math.max(0, box.height - grip);
-  const cellWidth = box.width / table.columns;
-  const cellHeight = gridHeight / table.rows;
-  const rule = toColor(cssColorToPdf('#d4d4d8'));
-  for (let column = 1; column < table.columns; column++) {
-    const x = column * cellWidth;
-    target.drawLine({ start: at(x, grip), end: at(x, box.height), thickness: 0.5, color: rule });
+  const columnEdges = trackEdges(columnFractions(table)).map((f) => f * box.width);
+  const rowEdges = trackEdges(rowFractions(table)).map((f) => grip + f * gridHeight);
+  for (const x of columnEdges.slice(1, -1)) {
+    target.drawLine({ start: at(x, grip), end: at(x, box.height), thickness, color: rule });
   }
-  for (let row = 1; row <= table.rows; row++) {
-    const y = grip + row * cellHeight;
-    target.drawLine({ start: at(0, y), end: at(box.width, y), thickness: 0.5, color: rule });
+  for (const y of rowEdges) {
+    target.drawLine({ start: at(0, y), end: at(box.width, y), thickness, color: rule });
   }
-  target.drawLine({ start: at(0, grip), end: at(box.width, grip), thickness: 0.5, color: rule });
 
   const size = TABLE_FONT_SIZE * projection.scale;
   const padding = TABLE_CELL_PADDING * projection.scale;
@@ -340,12 +359,16 @@ function drawTable(target: PDFPage, table: TableLayer, projection: PdfProjection
       if (raw === '') continue;
       // One line, truncated to the cell: a cell that overflows on screen is
       // scrolled, which paper cannot do either.
+      const x = columnEdges[column] ?? 0;
+      const cellWidth = (columnEdges[column + 1] ?? box.width) - x;
+      const y = rowEdges[row] ?? grip;
+      const cellHeight = (rowEdges[row + 1] ?? box.height) - y;
       const [line = ''] = wrapText(raw, Math.max(1, cellWidth - padding * 2), (t) =>
         fonts.regular.widthOfTextAtSize(sanitizeText(t), size),
       );
       if (line === '') continue;
-      const baseline = grip + row * cellHeight + cellHeight / 2 + size * 0.35;
-      const p = at(column * cellWidth + padding, baseline);
+      const baseline = y + cellHeight / 2 + size * 0.35;
+      const p = at(x + padding, baseline);
       target.drawText(sanitizeText(line), { x: p.x, y: p.y, size, font: fonts.regular, color: ink, rotate: degrees(box.rotateDeg) });
     }
   }

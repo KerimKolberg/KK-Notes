@@ -10,21 +10,33 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { COLOR_PALETTE, MAX_STROKE_SIZE, MIN_STROKE_SIZE } from '../../inking/constants';
+import {
+  COLOR_PALETTE,
+  MAX_CURVE_AMPLITUDE,
+  MAX_CURVE_CYCLES,
+  MAX_STROKE_SIZE,
+  MIN_CURVE_AMPLITUDE,
+  MIN_CURVE_CYCLES,
+  MIN_STROKE_SIZE,
+  STROKE_PATTERNS,
+} from '../../inking/constants';
 import { subscribeTouchGesture } from '../../inking/engine/gestureState';
 import {
   SCALE_HANDLES,
+  reshapeStrokes,
   restyleStrokes,
   scaleFromHandle,
   selectionBounds,
+  selectionCurveParams,
   transformStroke,
   type ScaleHandle,
   type StrokeTransform,
 } from '../../inking/engine/lasso';
+import type { CurveEdit } from '../../inking/engine/shapes';
 import { clearSurface, drawStroke, get2dContext } from '../../inking/engine/renderer';
 import { usePageCanvas } from '../../inking/hooks/usePageCanvas';
 import { useViewportShift } from '../../ui/useViewportShift';
-import type { BBox, CanvasSize, Point, Stroke } from '../../inking/types';
+import type { BBox, CanvasSize, CurveKind, Point, Stroke, StrokePattern } from '../../inking/types';
 import { pageAtViewportPoint, pageHandoffOffset, type PageRect } from '../layout';
 import { useDocumentStore } from '../store';
 import type { Page } from '../types';
@@ -44,7 +56,10 @@ export interface SelectionLayerProps {
 }
 
 /** An uncommitted edit shown on the preview canvas. */
-type Draft = { readonly kind: 'transform'; readonly transform: StrokeTransform } | { readonly kind: 'size'; readonly size: number };
+type Draft =
+  | { readonly kind: 'transform'; readonly transform: StrokeTransform }
+  | { readonly kind: 'size'; readonly size: number }
+  | { readonly kind: 'curve'; readonly edit: CurveEdit };
 
 interface Drag {
   readonly mode: 'move' | 'scale';
@@ -90,8 +105,17 @@ function isIdentity(t: StrokeTransform): boolean {
 
 function applyDraft(selected: readonly Stroke[], ids: ReadonlySet<string>, draft: Draft): Stroke[] {
   if (draft.kind === 'transform') return selected.map((s) => transformStroke(s, draft.transform));
+  if (draft.kind === 'curve') return reshapeStrokes(selected, ids, draft.edit);
   return restyleStrokes(selected, ids, { size: draft.size });
 }
+
+/** The four paths a committed line can be rebuilt as, same set the line tool offers. */
+const CURVE_KINDS: readonly { readonly id: 'straight' | CurveKind; readonly label: string }[] = [
+  { id: 'straight', label: 'Straight' },
+  { id: 'parabola', label: 'Parabola' },
+  { id: 'wave', label: 'Wave' },
+  { id: 'zigzag', label: 'Zigzag' },
+];
 
 /** The most common stroke width of the selection, for the width slider's initial value. */
 function dominantSize(strokes: readonly Stroke[]): number {
@@ -123,17 +147,25 @@ export const SelectionLayer = memo(function SelectionLayer({
   onPreviewHidden,
   onDraggingChange,
 }: SelectionLayerProps) {
-  const { clearLassoSelection, transformSelection, restyleSelection, duplicateSelection, deleteSelection, moveSelectionToPage } =
-    useDocumentStore(
-      useShallow((s) => ({
-        clearLassoSelection: s.clearLassoSelection,
-        transformSelection: s.transformSelection,
-        restyleSelection: s.restyleSelection,
-        duplicateSelection: s.duplicateSelection,
-        deleteSelection: s.deleteSelection,
-        moveSelectionToPage: s.moveSelectionToPage,
-      })),
-    );
+  const {
+    clearLassoSelection,
+    transformSelection,
+    restyleSelection,
+    reshapeSelection,
+    duplicateSelection,
+    deleteSelection,
+    moveSelectionToPage,
+  } = useDocumentStore(
+    useShallow((s) => ({
+      clearLassoSelection: s.clearLassoSelection,
+      transformSelection: s.transformSelection,
+      restyleSelection: s.restyleSelection,
+      reshapeSelection: s.reshapeSelection,
+      duplicateSelection: s.duplicateSelection,
+      deleteSelection: s.deleteSelection,
+      moveSelectionToPage: s.moveSelectionToPage,
+    })),
+  );
 
   const idSet = useMemo(() => new Set(strokeIds), [strokeIds]);
   const selected = useMemo(() => page.strokes.filter((s) => idSet.has(s.id)), [page.strokes, idSet]);
@@ -305,6 +337,38 @@ export const SelectionLayer = memo(function SelectionLayer({
     restyleSelection(page.id, strokeIds, { size: current.size });
   }, [page.id, strokeIds, restyleSelection, setDraft]);
 
+  // Curve editing. A committed line or curve still carries everything it was
+  // drawn from — its ends, its signed depth, its cycle count — so the toolbar
+  // can take it apart and rebuild it instead of deforming the points it left
+  // behind. `null` when the selection holds no line or curve at all.
+  const curve = useMemo(() => selectionCurveParams(selected), [selected]);
+  const applyCurve = useCallback(
+    (edit: CurveEdit) => {
+      setDraft(null);
+      reshapeSelection(page.id, strokeIds, edit);
+    },
+    [page.id, strokeIds, reshapeSelection, setDraft],
+  );
+  // Depth is a slider, so it behaves like the width one: previewed on the
+  // private canvas as it moves, and pushed onto the undo stack once, on release.
+  const [depthValue, setDepthValue] = useState(() => curve?.amplitudeRatio ?? MIN_CURVE_AMPLITUDE);
+  useEffect(() => {
+    if (draftRef.current?.kind !== 'curve' && curve) setDepthValue(curve.amplitudeRatio);
+  }, [curve]);
+  const onDepthInput = useCallback(
+    (amplitudeRatio: number) => {
+      setDepthValue(amplitudeRatio);
+      setDraft({ kind: 'curve', edit: { amplitudeRatio } });
+    },
+    [setDraft],
+  );
+  const commitDepth = useCallback(() => {
+    const current = draftRef.current;
+    if (current?.kind !== 'curve') return;
+    setDraft(null);
+    reshapeSelection(page.id, strokeIds, current.edit);
+  }, [page.id, strokeIds, reshapeSelection, setDraft]);
+
   if (!bounds || selected.length === 0) return null;
 
   const box = {
@@ -349,7 +413,9 @@ export const SelectionLayer = memo(function SelectionLayer({
     };
   };
   const toolbarButton =
-    'inline-flex h-7 items-center rounded-md px-2 text-xs font-medium text-white hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-blue-300';
+    'inline-flex h-7 items-center rounded-md px-2 text-xs font-medium text-white hover:bg-white/15 ' +
+    'focus-visible:outline-2 focus-visible:outline-blue-300 disabled:opacity-40';
+  const curvePattern: StrokePattern = selected.find((s) => s.kind === 'geometric')?.style.pattern ?? 'solid';
 
   return (
     <div
@@ -487,6 +553,93 @@ export const SelectionLayer = memo(function SelectionLayer({
               {sizeValue}
             </span>
           </label>
+          {curve && (
+            <>
+              <span className="mx-0.5 h-5 w-px bg-white/20" aria-hidden="true" />
+              <div
+                className="flex flex-wrap items-center justify-center gap-1"
+                role="group"
+                aria-label="Curve shape"
+                data-selection-curve={curve.curve}
+              >
+                {CURVE_KINDS.map((kind) => (
+                  <button
+                    key={kind.id}
+                    type="button"
+                    className={`${toolbarButton} ${curve.curve === kind.id ? 'bg-blue-500 hover:bg-blue-500' : ''}`}
+                    aria-pressed={curve.curve === kind.id}
+                    data-selection-curve-kind={kind.id}
+                    title={`Rebuild as ${kind.label.toLowerCase()}`}
+                    onClick={() => applyCurve({ curve: kind.id })}
+                  >
+                    {kind.label}
+                  </button>
+                ))}
+                <select
+                  className="h-6 rounded-md border border-white/25 bg-zinc-800 px-1 text-xs text-white"
+                  aria-label="Line pattern"
+                  value={curvePattern}
+                  data-selection-curve-pattern
+                  onChange={(e) => restyleSelection(page.id, strokeIds, { pattern: e.target.value as StrokePattern })}
+                >
+                  {STROKE_PATTERNS.map((pattern) => (
+                    <option key={pattern.id} value={pattern.id}>
+                      {pattern.label}
+                    </option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-1 text-xs text-white/90">
+                  <span>Depth</span>
+                  <input
+                    type="range"
+                    min={MIN_CURVE_AMPLITUDE}
+                    max={MAX_CURVE_AMPLITUDE}
+                    step={0.01}
+                    value={depthValue}
+                    disabled={curve.curve === 'straight'}
+                    aria-label="Curve depth"
+                    className="h-1 w-16 accent-blue-400 disabled:opacity-40"
+                    data-selection-curve-depth
+                    onChange={(e) => onDepthInput(Number(e.target.value))}
+                    onPointerUp={commitDepth}
+                    onKeyUp={commitDepth}
+                    onBlur={commitDepth}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className={toolbarButton}
+                  disabled={curve.curve === 'straight'}
+                  aria-pressed={curve.flip}
+                  data-selection-curve-flip={curve.flip ? 'true' : undefined}
+                  title="Mirror the curve"
+                  aria-label="Mirror the curve"
+                  onClick={() => applyCurve({ flip: !curve.flip })}
+                >
+                  Flip
+                </button>
+                <label className="flex items-center gap-1 text-xs text-white/90">
+                  <span>Cycles</span>
+                  <input
+                    type="number"
+                    min={MIN_CURVE_CYCLES}
+                    max={MAX_CURVE_CYCLES}
+                    step={1}
+                    value={curve.cycles}
+                    disabled={curve.curve !== 'wave' && curve.curve !== 'zigzag'}
+                    aria-label="Curve cycles"
+                    className="h-6 w-12 rounded-md border border-white/25 bg-zinc-800 px-1 text-xs text-white disabled:opacity-40"
+                    data-selection-curve-cycles
+                    onChange={(e) => {
+                      const value = Math.round(Number(e.target.value));
+                      if (!Number.isFinite(value)) return;
+                      applyCurve({ cycles: Math.min(MAX_CURVE_CYCLES, Math.max(MIN_CURVE_CYCLES, value)) });
+                    }}
+                  />
+                </label>
+              </div>
+            </>
+          )}
           <span className="mx-0.5 h-5 w-px bg-white/20" aria-hidden="true" />
           <button
             type="button"

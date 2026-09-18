@@ -6,6 +6,8 @@
  */
 import { drawStroke, type InkContext } from '../../inking/engine/renderer';
 import {
+  DEFAULT_TABLE_LINE_OPACITY,
+  DEFAULT_TABLE_LINE_WIDTH,
   NOTE_FONT_SIZE,
   NOTE_GRIP_HEIGHT,
   NOTE_LINE_HEIGHT,
@@ -14,7 +16,7 @@ import {
   TABLE_FONT_SIZE,
   TABLE_GRIP_HEIGHT,
 } from '../constants';
-import { noteTextBox, sortedByZ, tableCell, wrapText } from '../media';
+import { columnFractions, noteTextBox, rowFractions, sortedByZ, tableCell, trackEdges, wrapText } from '../media';
 import { drawTemplate } from '../templates';
 import type { ImageLayer, MediaObject, PageDimensions, PageVisual, StickyNote, TableLayer } from '../types';
 
@@ -77,7 +79,7 @@ function drawNote(ctx: InkContext, note: StickyNote): void {
   ctx.restore();
 }
 
-/** A table's frame, cell grid and cell text. */
+/** A table's frame, cell grid and cell text, with its own tracks and ruling. */
 function drawTable(ctx: InkContext, table: TableLayer): void {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, table.width, table.height);
@@ -85,23 +87,25 @@ function drawTable(ctx: InkContext, table: TableLayer): void {
   ctx.fillRect(0, 0, table.width, TABLE_GRIP_HEIGHT);
 
   const gridHeight = Math.max(1, table.height - TABLE_GRIP_HEIGHT);
-  const cellWidth = table.width / table.columns;
-  const cellHeight = gridHeight / table.rows;
-  ctx.strokeStyle = '#d4d4d8';
-  ctx.lineWidth = 1;
+  // Dragged dividers are shares of the table, so a snapshot lands on the same
+  // grid as the live page whatever size the bitmap is rendered at.
+  const columnEdges = trackEdges(columnFractions(table)).map((f) => f * table.width);
+  const rowEdges = trackEdges(rowFractions(table)).map((f) => TABLE_GRIP_HEIGHT + f * gridHeight);
+  const lineWidth = table.lineWidth ?? DEFAULT_TABLE_LINE_WIDTH;
+  const rule = `rgba(161, 161, 170, ${table.lineOpacity ?? DEFAULT_TABLE_LINE_OPACITY})`;
+
+  ctx.strokeStyle = rule;
+  ctx.lineWidth = lineWidth;
   ctx.beginPath();
-  for (let column = 0; column <= table.columns; column++) {
-    const x = column * cellWidth;
+  for (const x of columnEdges) {
     ctx.moveTo(x, TABLE_GRIP_HEIGHT);
     ctx.lineTo(x, table.height);
   }
-  for (let row = 0; row <= table.rows; row++) {
-    const y = TABLE_GRIP_HEIGHT + row * cellHeight;
+  for (const y of rowEdges) {
     ctx.moveTo(0, y);
     ctx.lineTo(table.width, y);
   }
   ctx.stroke();
-  ctx.strokeStyle = '#a1a1aa';
   ctx.strokeRect(0, 0, table.width, table.height);
 
   ctx.font = `${TABLE_FONT_SIZE}px ${MEDIA_FONT}`;
@@ -112,8 +116,10 @@ function drawTable(ctx: InkContext, table: TableLayer): void {
     for (let column = 0; column < table.columns; column++) {
       const text = tableCell(table, row, column);
       if (text === '') continue;
-      const x = column * cellWidth;
-      const y = TABLE_GRIP_HEIGHT + row * cellHeight;
+      const x = columnEdges[column] ?? 0;
+      const y = rowEdges[row] ?? TABLE_GRIP_HEIGHT;
+      const cellWidth = (columnEdges[column + 1] ?? table.width) - x;
+      const cellHeight = (rowEdges[row + 1] ?? table.height) - y;
       ctx.save();
       ctx.beginPath();
       ctx.rect(x, y, cellWidth, cellHeight);

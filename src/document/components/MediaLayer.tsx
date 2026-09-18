@@ -1,11 +1,12 @@
 import { memo, useCallback, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Lock, LockOpen } from 'lucide-react';
-import { NOTE_COLORS } from '../constants';
+import { DEFAULT_TABLE_LINE_OPACITY, DEFAULT_TABLE_LINE_WIDTH, NOTE_COLORS } from '../constants';
 import {
   RESIZE_HANDLES,
   addTableColumn,
   addTableRow,
+  columnFractions,
   handlePositions,
   imageCenter,
   isLocked,
@@ -13,11 +14,16 @@ import {
   removeTableColumn,
   removeTableRow,
   resizeImage,
+  resizeTrack,
   rotationFromPointer,
+  rowFractions,
+  setColumnFractions,
+  setRowFractions,
   setTableCell,
   sortedByZ,
   tableCell,
   toLocalDelta,
+  trackEdges,
   type ResizeHandle,
 } from '../media';
 import { useDocumentStore } from '../store';
@@ -53,6 +59,11 @@ const HANDLE_CURSORS: Record<ResizeHandle, string> = {
 };
 
 const ROTATION_HANDLE_OFFSET = 28;
+/** The lip a note or a table is dragged by, page units. */
+const NOTE_LIP = 18;
+const TABLE_LIP = 14;
+/** How wide the divider's invisible grab strip is, page units. */
+const DIVIDER_GRAB = 7;
 
 /**
  * z-10 media layer: images, sticky notes and tables in page units inside a
@@ -230,11 +241,34 @@ export const MediaLayer = memo(function MediaLayer({ page, zoom, active }: Media
               table={item}
               box={box}
               editable={active && !isLocked(item)}
+              selected={item.id === selectedId}
+              zoom={zoom}
               onDragBody={bodyHandlers(raw)}
               onCell={(row, column, value) => updateMedia(page.id, item.id, setTableCell(item, row, column, value))}
+              onPatch={(patch) => updateMedia(page.id, item.id, patch)}
             />
           );
         })}
+
+        {/* Grips and select shields, after every object so each one's overlay
+            sits above its own content but still below anything stacked on top
+            of it. A note or a table is full of inputs that swallow a press, so
+            without this the only way to pick one up would be its lip. */}
+        {active &&
+          items.map((raw) => {
+            const item = shown(raw);
+            return (
+              <MediaGrips
+                key={`grips-${item.id}`}
+                item={item}
+                zoom={zoom}
+                selected={item.id === selectedId}
+                locked={isLocked(item)}
+                onSelect={() => selectMedia({ pageId: page.id, mediaId: item.id })}
+                onDragBody={bodyHandlers(raw)}
+              />
+            );
+          })}
 
         {active && selected && (
           <TransformBox
@@ -261,6 +295,94 @@ interface BodyHandlers {
   onPointerMove: (e: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: (e: ReactPointerEvent<HTMLElement>) => void;
   onPointerCancel: (e: ReactPointerEvent<HTMLElement>) => void;
+}
+
+interface MediaGripsProps {
+  item: MediaObject;
+  zoom: number;
+  selected: boolean;
+  locked: boolean;
+  onSelect: () => void;
+  onDragBody: BodyHandlers;
+}
+
+/**
+ * The two things every placed object needs and none of them can provide from
+ * the inside: something obvious to drag it by, and a way to be picked up at
+ * all.
+ *
+ * The shield covers the whole object until it is selected, so one press
+ * anywhere on a table takes hold of the table; once selected it steps aside
+ * and the cells take the pointer, so the second press types into one. The grip
+ * stays either way, because a selected table still has to be movable without
+ * hitting a cell. Both ride the object's own rotation.
+ */
+function MediaGrips({ item, zoom, selected, locked, onSelect, onDragBody }: MediaGripsProps) {
+  // Constant on-screen size, like the resize handles: a grip that shrank with
+  // the zoom would be unhittable on the page overview.
+  const gripHeight = 10 / zoom;
+  const gripWidth = Math.min(item.width * 0.6, 44 / zoom);
+  const dot = 2.5 / zoom;
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        position: 'absolute',
+        left: item.x,
+        top: item.y,
+        width: item.width,
+        height: item.height,
+        transform: `rotate(${item.rotation}deg)`,
+        transformOrigin: 'center',
+        zIndex: item.zIndex,
+        pointerEvents: 'none',
+      }}
+    >
+      {!selected && (
+        <div
+          data-media-shield={item.id}
+          style={{ position: 'absolute', inset: 0, pointerEvents: 'auto', cursor: locked ? 'default' : 'move', touchAction: 'none' }}
+          {...onDragBody}
+        />
+      )}
+      {!locked && (
+        <div
+          role="presentation"
+          title="Drag to move"
+          data-media-grip={item.id}
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: -(gripHeight + 3 / zoom),
+            width: gripWidth,
+            height: gripHeight,
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: dot,
+            borderRadius: 9999,
+            background: selected ? 'rgba(37, 99, 235, 0.95)' : 'rgba(63, 63, 70, 0.9)',
+            boxShadow: `0 ${1 / zoom}px ${3 / zoom}px rgba(0,0,0,0.35)`,
+            cursor: 'move',
+            pointerEvents: 'auto',
+            touchAction: 'none',
+          }}
+          onPointerDown={(e) => {
+            onSelect();
+            onDragBody.onPointerDown(e);
+          }}
+          onPointerMove={onDragBody.onPointerMove}
+          onPointerUp={onDragBody.onPointerUp}
+          onPointerCancel={onDragBody.onPointerCancel}
+        >
+          {[0, 1, 2].map((i) => (
+            <span key={i} style={{ width: dot, height: dot, borderRadius: '50%', background: 'rgba(255,255,255,0.9)' }} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface NoteCardProps {
@@ -294,7 +416,7 @@ function NoteCard({ note, box, editable, onDragBody, onText }: NoteCardProps) {
       <div
         aria-hidden="true"
         title="Drag to move"
-        style={{ height: 18, flexShrink: 0, cursor: editable ? 'move' : 'default', background: 'rgba(0,0,0,0.06)' }}
+        style={{ height: NOTE_LIP, flexShrink: 0, cursor: editable ? 'move' : 'default', background: 'rgba(0,0,0,0.06)' }}
         {...onDragBody}
       />
       <textarea
@@ -327,33 +449,60 @@ interface TableCardProps {
   table: TableLayer;
   box: CSSProperties;
   editable: boolean;
+  /** Dividers only appear on the selected table; otherwise they are in the way. */
+  selected: boolean;
+  zoom: number;
   onDragBody: BodyHandlers;
   onCell: (row: number, column: number, value: string) => void;
+  onPatch: (patch: Partial<TableLayer>) => void;
 }
 
-/** A grid of text inputs, sized to fill the box whatever its row/column count. */
-function TableCard({ table, box, editable, onDragBody, onCell }: TableCardProps) {
+/** The grid's line weight and tint, with the defaults older files lack. */
+function gridLine(table: TableLayer): { width: number; color: string } {
+  const width = table.lineWidth ?? DEFAULT_TABLE_LINE_WIDTH;
+  const opacity = table.lineOpacity ?? DEFAULT_TABLE_LINE_OPACITY;
+  return { width, color: `rgba(161, 161, 170, ${opacity})` };
+}
+
+/**
+ * A grid of text inputs filling the box, with the column and row shares the
+ * table carries — so a dragged divider is part of the document rather than a
+ * view state that evaporates on reload.
+ */
+function TableCard({ table, box, editable, selected, zoom, onDragBody, onCell, onPatch }: TableCardProps) {
+  const columns = columnFractions(table);
+  const rows = rowFractions(table);
+  const line = gridLine(table);
+  const gridHeight = Math.max(1, table.height - TABLE_LIP);
   return (
     <div
       data-media-id={table.id}
       data-media-kind="table"
       data-table-size={`${table.rows}x${table.columns}`}
-      style={{ ...box, background: '#ffffff', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #a1a1aa' }}
+      style={{
+        ...box,
+        background: '#ffffff',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        border: `${line.width}px solid ${line.color}`,
+      }}
     >
       <div
         aria-hidden="true"
         title="Drag to move"
-        style={{ height: 14, flexShrink: 0, cursor: editable ? 'move' : 'default', background: '#e4e4e7' }}
+        style={{ height: TABLE_LIP, flexShrink: 0, cursor: editable ? 'move' : 'default', background: '#e4e4e7' }}
         {...onDragBody}
       />
       <div
         role="table"
         style={{
+          position: 'relative',
           flex: 1,
           minHeight: 0,
           display: 'grid',
-          gridTemplateColumns: `repeat(${table.columns}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${table.rows}, minmax(0, 1fr))`,
+          gridTemplateColumns: columns.map((f) => `${f}fr`).join(' '),
+          gridTemplateRows: rows.map((f) => `${f}fr`).join(' '),
         }}
       >
         {Array.from({ length: table.rows }, (_, row) =>
@@ -369,7 +518,7 @@ function TableCard({ table, box, editable, onDragBody, onCell }: TableCardProps)
               onPointerDown={(e) => e.stopPropagation()}
               style={{
                 minWidth: 0,
-                border: '0.5px solid #d4d4d8',
+                border: `${line.width}px solid ${line.color}`,
                 outline: 'none',
                 padding: '2px 5px',
                 font: '13px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
@@ -379,8 +528,101 @@ function TableCard({ table, box, editable, onDragBody, onCell }: TableCardProps)
             />
           )),
         )}
+        {editable &&
+          selected &&
+          trackEdges(columns)
+            .slice(1, -1)
+            .map((edge, i) => (
+              <TrackDivider
+                key={`col-${i}`}
+                axis="column"
+                index={i + 1}
+                edge={edge}
+                zoom={zoom}
+                length={table.width}
+                onResize={(position) => onPatch(setColumnFractions(table, resizeTrack(columns, i + 1, position)))}
+              />
+            ))}
+        {editable &&
+          selected &&
+          trackEdges(rows)
+            .slice(1, -1)
+            .map((edge, i) => (
+              <TrackDivider
+                key={`row-${i}`}
+                axis="row"
+                index={i + 1}
+                edge={edge}
+                zoom={zoom}
+                length={gridHeight}
+                onResize={(position) => onPatch(setRowFractions(table, resizeTrack(rows, i + 1, position)))}
+              />
+            ))}
       </div>
     </div>
+  );
+}
+
+interface TrackDividerProps {
+  axis: 'column' | 'row';
+  /** 1-based interior divider index, as `resizeTrack` counts them. */
+  index: number;
+  /** Where it currently sits, 0..1 across the grid. */
+  edge: number;
+  zoom: number;
+  /** The grid's extent along this axis, page units, for turning px into a share. */
+  length: number;
+  onResize: (position: number) => void;
+}
+
+/**
+ * One draggable grid divider. The drag is measured as a delta from where the
+ * divider started rather than from the pointer's absolute position, so it
+ * survives the table being rotated and needs nothing from the page geometry.
+ */
+function TrackDivider({ axis, index, edge, zoom, length, onResize }: TrackDividerProps) {
+  const start = useRef<{ pointerId: number; client: number; edge: number } | null>(null);
+  const column = axis === 'column';
+  return (
+    <div
+      role="separator"
+      aria-orientation={column ? 'vertical' : 'horizontal'}
+      aria-label={`${column ? 'Column' : 'Row'} divider ${index}`}
+      data-table-divider={`${axis}-${index}`}
+      style={{
+        position: 'absolute',
+        ...(column
+          ? { left: `${edge * 100}%`, top: 0, bottom: 0, width: DIVIDER_GRAB / zoom, transform: 'translateX(-50%)', cursor: 'col-resize' }
+          : { top: `${edge * 100}%`, left: 0, right: 0, height: DIVIDER_GRAB / zoom, transform: 'translateY(-50%)', cursor: 'row-resize' }),
+        background: 'rgba(37, 99, 235, 0.25)',
+        touchAction: 'none',
+        zIndex: 5,
+      }}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        start.current = { pointerId: e.pointerId, client: column ? e.clientX : e.clientY, edge };
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* synthetic pointer */
+        }
+      }}
+      onPointerMove={(e) => {
+        const from = start.current;
+        if (!from || from.pointerId !== e.pointerId || length <= 0) return;
+        e.stopPropagation();
+        const moved = ((column ? e.clientX : e.clientY) - from.client) / zoom;
+        onResize(from.edge + moved / length);
+      }}
+      onPointerUp={(e) => {
+        if (start.current?.pointerId === e.pointerId) start.current = null;
+      }}
+      onPointerCancel={(e) => {
+        if (start.current?.pointerId === e.pointerId) start.current = null;
+      }}
+    />
   );
 }
 

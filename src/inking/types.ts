@@ -133,6 +133,20 @@ export interface StrokeStyle {
    * same at any zoom and carries into an export. Absent on everything else.
    */
   readonly tape?: TapeStyle;
+  /**
+   * Paint the stroke with a gradient across its own bounding box instead of
+   * a flat colour. Frozen with the stroke, like everything else here.
+   */
+  readonly gradient?: StrokeGradient;
+}
+
+/** How a gradient stroke picks its colours. */
+export type GradientMode = 'rainbow' | 'dual';
+
+export interface StrokeGradient {
+  readonly mode: GradientMode;
+  /** `dual` only: the far end's colour. The stroke colour is the near end. */
+  readonly to: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +310,12 @@ export interface ToolSettings {
   brush: BrushId;
   /** Layer opacity of the highlighter's `multiply` ink (0..1). */
   highlighterOpacity: number;
+  /** Highlighter width in page px — its own, not a multiple of the pen's. */
+  highlighterWidth: number;
+  /** Off, or which gradient the highlighter lays down. */
+  highlighterGradient: 'none' | GradientMode;
+  /** The far end's colour in `dual` mode. */
+  highlighterGradientTo: string;
   /** Washi tape: band width in page px, independent of the pen's width. */
   washiWidth: number;
   washiOpacity: number;

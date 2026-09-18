@@ -21,6 +21,7 @@ import type {
   Shape,
   StrokeStyle,
 } from '../types';
+import { DEFAULT_CURVE_AMPLITUDE, DEFAULT_CURVE_CYCLES } from '../constants';
 import { snapLineEnd } from './angles';
 import { EMPTY_BBOX, bboxFromPoints, bboxUnion, expandBBox } from './geometry';
 import { createStrokeId } from './ids';
@@ -410,4 +411,67 @@ export function createGeometricStroke(init: GeometricStrokeInit): GeometricStrok
 /** Which ends of an open shape get arrowheads under `mode`. */
 export function arrowheadEnds(mode: ArrowheadMode): { start: boolean; end: boolean } {
   return { start: mode === 'both', end: mode !== 'none' };
+}
+
+// ---------------------------------------------------------------------------
+// Editing a committed curve
+// ---------------------------------------------------------------------------
+
+/**
+ * What the lasso toolbar can change about an already-drawn line or curve.
+ * Every field is optional: the toolbar sends only what the user touched.
+ */
+export interface CurveEdit {
+  readonly curve?: 'straight' | CurveKind;
+  /** Depth as a fraction of the chord, as the drag tool expresses it. */
+  readonly amplitudeRatio?: number;
+  readonly cycles?: number;
+  readonly flip?: boolean;
+}
+
+/**
+ * The parameters a shape was built from, recovered from the shape itself.
+ *
+ * Nothing extra is stored to make this work: a curve keeps its endpoints,
+ * its signed amplitude and its cycle count, and depth is just the amplitude
+ * measured against the chord. So a curve committed at any point in the past
+ * can be taken apart and rebuilt.
+ */
+export function curveParams(shape: LineShape | CurveShape): Required<CurveEdit> {
+  if (shape.type === 'line') {
+    return { curve: 'straight', amplitudeRatio: DEFAULT_CURVE_AMPLITUDE, cycles: DEFAULT_CURVE_CYCLES, flip: false };
+  }
+  const length = Math.hypot(shape.to.x - shape.from.x, shape.to.y - shape.from.y);
+  return {
+    curve: shape.kind,
+    amplitudeRatio: length > 0 ? Math.abs(shape.amplitude) / length : DEFAULT_CURVE_AMPLITUDE,
+    cycles: shape.cycles,
+    flip: shape.amplitude < 0,
+  };
+}
+
+/** True for the shapes the curve editor can act on. */
+export function isEditableCurve(shape: Shape): shape is LineShape | CurveShape {
+  return shape.type === 'line' || shape.type === 'curve';
+}
+
+/**
+ * Rebuild a line or curve with some of its parameters changed, keeping its
+ * endpoints. Straight and curved are the same edit in both directions: a
+ * straight line has no depth of its own, so it borrows the defaults until
+ * the user moves the sliders.
+ */
+export function reshapeCurve(shape: LineShape | CurveShape, edit: CurveEdit): LineShape | CurveShape {
+  const current = curveParams(shape);
+  const next = { ...current, ...edit };
+  if (next.curve === 'straight') return { type: 'line', from: shape.from, to: shape.to };
+  const length = Math.hypot(shape.to.x - shape.from.x, shape.to.y - shape.from.y);
+  return {
+    type: 'curve',
+    kind: next.curve,
+    from: shape.from,
+    to: shape.to,
+    amplitude: length * next.amplitudeRatio * (next.flip ? -1 : 1),
+    cycles: Math.max(1, Math.round(next.cycles)),
+  };
 }

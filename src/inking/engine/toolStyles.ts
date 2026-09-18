@@ -1,9 +1,4 @@
-import {
-  HIGHLIGHTER_OPACITY,
-  HIGHLIGHTER_SIZE_MULTIPLIER,
-  MAX_HIGHLIGHTER_OPACITY,
-  MIN_HIGHLIGHTER_OPACITY,
-} from '../constants';
+import { HIGHLIGHTER_OPACITY, MAX_HIGHLIGHTER_OPACITY, MIN_HIGHLIGHTER_OPACITY } from '../constants';
 import { brushStyle } from './brushes';
 import type { LaserStyle } from './laser';
 import type { InkPointerType, InkTool, StrokeStyle, ToolSettings } from '../types';
@@ -38,7 +33,7 @@ export function styleForTool(
     case 'highlighter':
       return {
         color: settings.color,
-        size: settings.size * HIGHLIGHTER_SIZE_MULTIPLIER,
+        size: settings.highlighterWidth,
         opacity: clampHighlighterOpacity(settings.highlighterOpacity),
         compositeOperation: 'multiply',
         thinning: 0,
@@ -49,6 +44,9 @@ export function styleForTool(
         taperEnd: 0,
         pattern: settings.pattern,
         arrowheads: settings.arrowheads,
+        ...(settings.highlighterGradient === 'none'
+          ? {}
+          : { gradient: { mode: settings.highlighterGradient, to: settings.highlighterGradientTo } }),
       };
     case 'washi-tape':
       // A strip, not a stroke: constant width, no pressure response, and the

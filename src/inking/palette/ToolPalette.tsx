@@ -1,19 +1,17 @@
-import { memo, useCallback, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useRef, useState, type ReactNode, type RefObject } from 'react';
 import {
   Axis3d,
   Ellipsis,
   Eraser,
   GripHorizontal,
   Highlighter,
-  ImagePlus,
   Lasso,
   MousePointer2,
+  Plus,
   Redo2,
-  Scissors,
   Settings2,
   Spline,
-  StickyNote,
-  Table,
+  Ticket,
   Undo2,
   Zap,
 } from 'lucide-react';
@@ -28,6 +26,7 @@ import {
   BRUSH_ICONS,
   BrushFlyout,
   EraserOptions,
+  HighlighterOptions,
   LineOptions,
   PaletteSettings,
   PlaneOptions,
@@ -45,12 +44,13 @@ export interface ToolPaletteProps {
   containerRef: RefObject<HTMLElement | null>;
   /** Undo / redo live in the app's top bar, so only the standalone canvas passes these. */
   history?: { canUndo: boolean; canRedo: boolean; onUndo: () => void; onRedo: () => void };
-  /** Opens a picker and places the chosen image on the page. */
-  onInsertImage?: () => void;
-  /** Places a blank sticky note on the current page. */
-  onInsertNote?: () => void;
-  /** Places a blank table on the current page. */
-  onInsertTable?: () => void;
+  /**
+   * Body of the Add popover: every object that can be dropped onto a page.
+   * Passed in rather than built here so the palette stays an inking control
+   * and knows nothing about pages, notes or tables. `onInsertDone` closes the
+   * popover once the menu has placed something.
+   */
+  insertMenu?: (onInsertDone: () => void) => ReactNode;
   /** Bulk removals offered in the eraser's flyout; scoped by the erase filter. */
   onClearPageInk?: () => void;
   onClearDocumentInk?: () => void;
@@ -59,7 +59,7 @@ export interface ToolPaletteProps {
   hidden?: boolean;
 }
 
-type Flyout = 'brush' | 'washi' | 'line' | 'stroke' | 'plane' | 'eraser' | 'settings' | null;
+type Flyout = 'insert' | 'brush' | 'highlighter' | 'washi' | 'line' | 'stroke' | 'plane' | 'eraser' | 'settings' | null;
 
 const ERASERS: readonly ToolType[] = ['eraser-stroke', 'eraser-pixel'];
 
@@ -90,9 +90,7 @@ export const ToolPalette = memo(function ToolPalette({
   onClear,
   containerRef,
   history,
-  onInsertImage,
-  onInsertNote,
-  onInsertTable,
+  insertMenu,
   onClearPageInk,
   onClearDocumentInk,
   draggable = true,
@@ -127,6 +125,7 @@ export const ToolPalette = memo(function ToolPalette({
 
   const BrushIcon = BRUSH_ICONS[settings.brush];
   const penActive = settings.tool === 'pen';
+  const highlighterActive = settings.tool === 'highlighter';
   const lineActive = settings.tool === 'line';
   const washiActive = settings.tool === 'washi-tape';
   const planeActive = settings.tool === 'coordinate-plane';
@@ -172,9 +171,23 @@ export const ToolPalette = memo(function ToolPalette({
         <IconButton icon={MousePointer2} label="Select" active={settings.tool === 'select'} onClick={() => pick('select')} data-palette-tool="select" />
         <IconButton icon={Lasso} label="Lasso select" active={settings.tool === 'lasso'} onClick={() => pick('lasso')} data-palette-tool="lasso" />
         <IconButton icon={Zap} label="Laser pointer" active={laser} onClick={() => pick('laser-pointer')} data-palette-tool="laser-pointer" />
-        {onInsertImage && <IconButton icon={ImagePlus} label="Insert image" onClick={onInsertImage} data-insert-image />}
-        {onInsertNote && <IconButton icon={StickyNote} label="Insert sticky note" onClick={onInsertNote} data-insert-note />}
-        {onInsertTable && <IconButton icon={Table} label="Insert table" onClick={onInsertTable} data-insert-table />}
+        {insertMenu && (
+          <div className="relative">
+            <IconButton
+              icon={Plus}
+              label="Add to the page"
+              hint="images, sticky notes and tables"
+              active={flyout === 'insert'}
+              aria-haspopup="dialog"
+              aria-expanded={flyout === 'insert'}
+              onClick={() => toggle('insert')}
+              data-insert-trigger
+            />
+            <Popover open={flyout === 'insert'} onClose={close} label="Add to the page" side="top" align="center">
+              {insertMenu(close)}
+            </Popover>
+          </div>
+        )}
 
         {DIVIDER}
 
@@ -194,16 +207,26 @@ export const ToolPalette = memo(function ToolPalette({
             <BrushFlyout settings={settings} onSettingsChange={onSettingsChange} onPick={close} />
           </Popover>
         </div>
-        <IconButton
-          icon={Highlighter}
-          label="Highlighter"
-          active={settings.tool === 'highlighter'}
-          onClick={() => pick('highlighter')}
-          data-palette-tool="highlighter"
-        />
         <div className="relative">
           <IconButton
-            icon={Scissors}
+            icon={Highlighter}
+            label="Highlighter"
+            hint={highlighterActive ? 'press again for width, ink and gradient' : undefined}
+            active={highlighterActive}
+            hasPopover
+            tooltipDisabled={flyout === 'highlighter'}
+            onClick={() => (highlighterActive ? toggle('highlighter') : pick('highlighter'))}
+            data-palette-tool="highlighter"
+            data-highlighter-gradient={settings.highlighterGradient}
+          />
+          <Popover open={flyout === 'highlighter'} onClose={close} label="Highlighter" side="top" align="center">
+            <HighlighterOptions settings={settings} onSettingsChange={onSettingsChange} />
+          </Popover>
+        </div>
+        <div className="relative">
+          <IconButton
+            icon={Ticket}
+            className="[&>svg]:-rotate-45"
             label="Washi tape"
             hint={washiActive ? 'press again for patterns' : undefined}
             active={washiActive}

@@ -81,7 +81,7 @@ describe('tables', () => {
   });
 
   it('addresses cells row-major', () => {
-    const table = createTable(page, 1, undefined, 2, 3);
+    const table = createTable(page, 1, undefined, { rows: 2, columns: 3 });
     expect(cellIndex(table, 0, 0)).toBe(0);
     expect(cellIndex(table, 1, 0)).toBe(3);
     expect(cellIndex(table, 1, 2)).toBe(5);
@@ -93,7 +93,7 @@ describe('tables', () => {
   });
 
   it('keeps the text that still has a cell when rows and columns change', () => {
-    let table = createTable(page, 1, undefined, 2, 2);
+    let table = createTable(page, 1, undefined, { rows: 2, columns: 2 });
     table = setTableCell(table, 0, 0, 'a');
     table = setTableCell(table, 1, 1, 'd');
 
@@ -112,7 +112,7 @@ describe('tables', () => {
   });
 
   it('grows the box with the grid, so cells keep their size', () => {
-    const table = createTable(page, 1, undefined, 2, 2);
+    const table = createTable(page, 1, undefined, { rows: 2, columns: 2 });
     const cellWidth = table.width / table.columns;
     const wider = addTableColumn(table);
     expect(wider.width).toBeCloseTo(table.width + cellWidth);
@@ -120,14 +120,14 @@ describe('tables', () => {
   });
 
   it('never collapses below one row or one column, nor past the cap', () => {
-    const one = createTable(page, 1, undefined, 1, 1);
+    const one = createTable(page, 1, undefined, { rows: 1, columns: 1 });
     expect(removeTableRow(one).rows).toBe(1);
     expect(removeTableColumn(one).columns).toBe(1);
     expect(resizeTable(one, 999, 999)).toMatchObject({ rows: MAX_TABLE_ROWS, columns: MAX_TABLE_COLUMNS });
   });
 
   it('divides its grid evenly into cell boxes, below the grip', () => {
-    const table = { ...createTable(page, 1, undefined, 2, 4), x: 0, y: 0, width: 400, height: 200 };
+    const table = { ...createTable(page, 1, undefined, { rows: 2, columns: 4 }), x: 0, y: 0, width: 400, height: 200 };
     const first = tableCellBox(table, 0, 0);
     expect(first.x).toBe(0);
     expect(first.y).toBe(TABLE_GRIP_HEIGHT);

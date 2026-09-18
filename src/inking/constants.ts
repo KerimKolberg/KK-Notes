@@ -24,8 +24,15 @@ export const MAX_DEVICE_PIXEL_RATIO = 3;
 /** Default undo depth. */
 export const MAX_HISTORY_DEPTH = 200;
 
-/** Highlighter width relative to the base stroke width. */
-export const HIGHLIGHTER_SIZE_MULTIPLIER = 4;
+/**
+ * Highlighter width in page px. Like the eraser's, it is its own setting: a
+ * highlighter is a chisel of a fixed size, not a scaled-up pen.
+ */
+export const MIN_HIGHLIGHTER_WIDTH = 4;
+export const MAX_HIGHLIGHTER_WIDTH = 72;
+export const DEFAULT_HIGHLIGHTER_WIDTH = 16;
+/** The other end of a dual-colour highlighter, before anything is picked. */
+export const DEFAULT_HIGHLIGHTER_GRADIENT_TO = '#22d3ee';
 
 /**
  * Area-eraser diameter in page px. It is its own setting rather than a
@@ -158,6 +165,9 @@ export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   touchDraw: false,
   brush: DEFAULT_BRUSH,
   highlighterOpacity: HIGHLIGHTER_OPACITY,
+  highlighterWidth: DEFAULT_HIGHLIGHTER_WIDTH,
+  highlighterGradient: 'none',
+  highlighterGradientTo: DEFAULT_HIGHLIGHTER_GRADIENT_TO,
   washiWidth: DEFAULT_WASHI_WIDTH,
   washiOpacity: DEFAULT_WASHI_OPACITY,
   washiPattern: 'stripes',

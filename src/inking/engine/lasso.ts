@@ -3,10 +3,10 @@
  * the pure stroke transforms the selection box applies. Transforms keep
  * stroke ids, so a selection stays valid across undo / redo of its own edits.
  */
-import type { BBox, Point, Shape, Stroke } from '../types';
+import type { BBox, GeometricStroke, Point, Shape, Stroke, StrokePattern } from '../types';
 import { createStrokeId } from './ids';
 import { bboxFromPoints, bboxIntersects, bboxUnion, EMPTY_BBOX } from './geometry';
-import { shapeBBox, shapeToPolylines } from './shapes';
+import { curveParams, isEditableCurve, reshapeCurve, shapeBBox, shapeToPolylines, type CurveEdit } from './shapes';
 import { freehandBBox } from './strokeBuilder';
 
 // ---------------------------------------------------------------------------
@@ -233,6 +233,7 @@ export function transformStrokes(strokes: readonly Stroke[], ids: ReadonlySet<st
 export interface StyleChange {
   readonly color?: string;
   readonly size?: number;
+  readonly pattern?: StrokePattern;
 }
 
 /** Recolour / resize the selected strokes (pixel-eraser strokes keep their colour). */
@@ -244,11 +245,38 @@ export function restyleStrokes(strokes: readonly Stroke[], ids: ReadonlySet<stri
       ...s.style,
       ...(change.color !== undefined && !isEraser ? { color: change.color } : {}),
       ...(change.size !== undefined ? { size: Math.max(0.5, change.size) } : {}),
+      ...(change.pattern !== undefined ? { pattern: change.pattern } : {}),
     };
     if (style === s.style) return s;
     if (s.kind === 'freehand') return { ...s, style, bbox: freehandBBox(s.points, style) };
     return { ...s, style, bbox: shapeBBox(s.shape, style) };
   });
+}
+
+/**
+ * Re-cut the selected lines and curves with new parameters, keeping their
+ * ids and their endpoints. Anything else in the selection is left alone, so
+ * a mixed selection edits only the parts the toolbar is offering to edit.
+ */
+export function reshapeStrokes(strokes: readonly Stroke[], ids: ReadonlySet<string>, edit: CurveEdit): Stroke[] {
+  let changed = false;
+  const next = strokes.map((stroke) => {
+    if (!ids.has(stroke.id) || stroke.kind !== 'geometric' || !isEditableCurve(stroke.shape)) return stroke;
+    const shape = reshapeCurve(stroke.shape, edit);
+    changed = true;
+    return { ...stroke, shape, bbox: shapeBBox(shape, stroke.style) };
+  });
+  return changed ? next : [...strokes];
+}
+
+/** The parameters shared by every editable curve in a selection, if any. */
+export function selectionCurveParams(strokes: readonly Stroke[]): Required<CurveEdit> | null {
+  const editable = strokes.filter(
+    (s): s is GeometricStroke => s.kind === 'geometric' && isEditableCurve(s.shape),
+  );
+  const first = editable[0];
+  if (!first || !isEditableCurve(first.shape)) return null;
+  return curveParams(first.shape);
 }
 
 export const DUPLICATE_OFFSET: Point = { x: 16, y: 16 };
