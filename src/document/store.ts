@@ -14,7 +14,7 @@ import {
   type StrokeTransform,
   type StyleChange,
 } from '../inking/engine/lasso';
-import { keepStrokes, type EraseScope } from '../inking/engine/eraseScope';
+import { keepStrokes, type EraseFilter } from '../inking/engine/eraseFilter';
 import type { Stroke } from '../inking/types';
 import { TEMPLATE_DEFAULT_SPACING, ZOOM_STEP } from './constants';
 import { clampZoom } from './layout';
@@ -130,8 +130,8 @@ export interface DocumentStore {
   sendMediaToBack: (pageId: string, mediaId: string) => void;
   selectMedia: (selection: MediaSelection | null) => void;
   /** Erase every stroke on one page, or on every page as a single undo step. */
-  clearPageInk: (pageId: string, scope?: EraseScope) => void;
-  clearDocumentInk: (scope?: EraseScope) => void;
+  clearPageInk: (pageId: string, filter?: EraseFilter) => void;
+  clearDocumentInk: (filter?: EraseFilter) => void;
 
   // lasso selection (every edit is one undo step on the page)
   setLassoSelection: (selection: LassoSelection | null) => void;
@@ -414,9 +414,9 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
       (s.selectedMedia?.pageId === selection?.pageId && s.selectedMedia?.mediaId === selection?.mediaId) ? s : { selectedMedia: selection },
     ),
 
-  clearPageInk: (pageId, scope) =>
+  clearPageInk: (pageId, filter) =>
     set(edit((s) => ({
-      document: updatePageById(s.document, pageId, (page) => withStrokes(page, keepStrokes(page.strokes, scope))),
+      document: updatePageById(s.document, pageId, (page) => withStrokes(page, keepStrokes(page.strokes, filter))),
       lassoSelection: s.lassoSelection?.pageId === pageId ? null : s.lassoSelection,
     }))),
 
@@ -425,10 +425,10 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
    * anyway, so this leaves every page exactly one step from where it was.
    * Media is untouched — an image, a note or a table is not ink.
    */
-  clearDocumentInk: (scope) =>
+  clearDocumentInk: (filter) =>
     set(edit((s) => {
       const pages = s.document.pages.map((page) => {
-        const kept = keepStrokes(page.strokes, scope);
+        const kept = keepStrokes(page.strokes, filter);
         return kept.length === page.strokes.length ? page : withStrokes(page, kept);
       });
       if (pages.every((page, i) => page === s.document.pages[i])) return s;

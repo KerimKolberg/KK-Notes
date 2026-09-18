@@ -52,11 +52,11 @@ export function DocumentApp() {
   const insertTable = useCallback(() => insertMedia('table'), [insertMedia]);
 
   const clearPageInkActive = useCallback(
-    () => useDocumentStore.getState().clearPageInk(activePageId, settingsRef.current.eraseScope),
+    () => useDocumentStore.getState().clearPageInk(activePageId, settingsRef.current.eraseFilter),
     [activePageId, settingsRef],
   );
   const clearDocumentInkActive = useCallback(
-    () => useDocumentStore.getState().clearDocumentInk(settingsRef.current.eraseScope),
+    () => useDocumentStore.getState().clearDocumentInk(settingsRef.current.eraseFilter),
     [settingsRef],
   );
 

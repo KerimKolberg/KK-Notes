@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { makeLine, makeStroke } from '../../inking/__tests__/testUtils';
+import { ERASE_EVERYTHING, type EraseFilter } from '../../inking/engine/eraseFilter';
 import { createStickyNote, createTable } from '../media';
 import { useDocumentStore } from '../store';
+
+const HIGHLIGHTER_ONLY: EraseFilter = { ...ERASE_EVERYTHING, highlighter: true };
+const WASHI_ONLY: EraseFilter = { ...ERASE_EVERYTHING, washiTape: true };
+const BOTH_LAYERS: EraseFilter = { highlighter: true, washiTape: true };
 
 const store = useDocumentStore;
 const pages = () => store.getState().document.pages;
@@ -32,10 +37,10 @@ describe('clearing a page', () => {
   });
 
   it('removes only the filtered layer when the eraser is narrowed', () => {
-    store.getState().clearPageInk(page().id, 'highlighter');
+    store.getState().clearPageInk(page().id, HIGHLIGHTER_ONLY);
     expect(page().strokes.map((s) => (s.kind === 'freehand' ? s.tool : s.shape.type))).toEqual(['pen', 'washi-tape', 'line']);
 
-    store.getState().clearPageInk(page().id, 'washi-tape');
+    store.getState().clearPageInk(page().id, WASHI_ONLY);
     expect(page().strokes.map((s) => (s.kind === 'freehand' ? s.tool : s.shape.type))).toEqual(['pen', 'line']);
   });
 
@@ -49,9 +54,9 @@ describe('clearing a page', () => {
   });
 
   it('does nothing at all when the filter matches nothing', () => {
-    store.getState().clearPageInk(page().id, 'highlighter');
+    store.getState().clearPageInk(page().id, HIGHLIGHTER_ONLY);
     const before = store.getState().document;
-    store.getState().clearPageInk(page().id, 'highlighter');
+    store.getState().clearPageInk(page().id, HIGHLIGHTER_ONLY);
     expect(store.getState().document).toBe(before);
   });
 
@@ -87,7 +92,7 @@ describe('clearing the whole document', () => {
   });
 
   it('applies the eraser filter across all of them', () => {
-    store.getState().clearDocumentInk('washi-tape');
+    store.getState().clearDocumentInk(WASHI_ONLY);
     for (const p of pages()) {
       expect(p.strokes.map((s) => (s.kind === 'freehand' ? s.tool : 'geometric'))).toEqual(['pen', 'highlighter', 'geometric']);
     }
@@ -96,15 +101,23 @@ describe('clearing the whole document', () => {
   it('skips pages the filter does not touch, so they keep their history', () => {
     // Only page 0 gets a second highlight; clearing highlighter still has to
     // leave a page with none of them completely untouched…
-    store.getState().clearDocumentInk('highlighter');
+    store.getState().clearDocumentInk(HIGHLIGHTER_ONLY);
     const cleared = pages();
     const depths = cleared.map((p) => p.undoStack.length);
 
     const before = store.getState().document;
-    store.getState().clearDocumentInk('highlighter');
+    store.getState().clearDocumentInk(HIGHLIGHTER_ONLY);
     // …and a second pass changes nothing anywhere, object identity included.
     expect(store.getState().document).toBe(before);
     expect(pages().map((p) => p.undoStack.length)).toEqual(depths);
+  });
+
+  it('takes both decorative layers at once when both toggles are on', () => {
+    store.getState().clearDocumentInk(BOTH_LAYERS);
+    for (const p of pages()) {
+      // The writing and the geometry are what a filtered clear is protecting.
+      expect(p.strokes.map((s) => (s.kind === 'freehand' ? s.tool : 'geometric'))).toEqual(['pen', 'geometric']);
+    }
   });
 
   it('is refused while the document is locked', () => {

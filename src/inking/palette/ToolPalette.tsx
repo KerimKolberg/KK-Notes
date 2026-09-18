@@ -17,6 +17,7 @@ import {
   Undo2,
   Zap,
 } from 'lucide-react';
+import { filterIsActive } from '../engine/eraseFilter';
 import { IconButton } from '../../ui/IconButton';
 import { Popover } from '../../ui/Popover';
 import { Tooltip } from '../../ui/Tooltip';
@@ -50,7 +51,7 @@ export interface ToolPaletteProps {
   onInsertNote?: () => void;
   /** Places a blank table on the current page. */
   onInsertTable?: () => void;
-  /** Bulk removals offered in the eraser's flyout; scoped by `eraseScope`. */
+  /** Bulk removals offered in the eraser's flyout; scoped by the erase filter. */
   onClearPageInk?: () => void;
   onClearDocumentInk?: () => void;
   draggable?: boolean;
@@ -99,7 +100,6 @@ export const ToolPalette = memo(function ToolPalette({
 }: ToolPaletteProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [flyout, setFlyout] = useState<Flyout>(null);
-  const [lastEraser, setLastEraser] = useState<ToolType>('eraser-stroke');
   // On a tablet the palette must stay clear of the status bar and the gesture pill.
   const insets = useSafeAreaInsets();
   const { position, dragging, handleProps, reset } = useDraggablePanel({
@@ -123,8 +123,7 @@ export const ToolPalette = memo(function ToolPalette({
   const laser = settings.tool === 'laser-pointer';
 
   const eraserActive = ERASERS.includes(settings.tool);
-  const eraserMode = eraserActive ? settings.tool : lastEraser;
-  const eraserIsPixel = eraserMode === 'eraser-pixel';
+  const eraserIsArea = settings.eraserMode === 'area';
 
   const BrushIcon = BRUSH_ICONS[settings.brush];
   const penActive = settings.tool === 'pen';
@@ -269,49 +268,37 @@ export const ToolPalette = memo(function ToolPalette({
 
         {DIVIDER}
 
-        {/* Erasers: one button, two modes, and a flyout for what they take. */}
-        <IconButton
-          icon={Eraser}
-          label={eraserIsPixel ? 'Pixel eraser' : 'Stroke eraser'}
-          hint={eraserActive ? 'press again to switch' : undefined}
-          active={eraserActive}
-          badge={eraserIsPixel ? 'px' : undefined}
-          onClick={() => {
-            const next = eraserActive ? (eraserIsPixel ? 'eraser-stroke' : 'eraser-pixel') : eraserMode;
-            setLastEraser(next);
-            pick(next);
-          }}
-          data-palette-tool="eraser"
-          data-eraser-mode={eraserIsPixel ? 'pixel' : 'stroke'}
-        />
-        {onClearPageInk && onClearDocumentInk && (
-          <div className="relative">
-            <IconButton
-              icon={Ellipsis}
-              label="Eraser filters and bulk removal"
-              active={flyout === 'eraser'}
-              aria-haspopup="dialog"
-              aria-expanded={flyout === 'eraser'}
-              onClick={() => toggle('eraser')}
-              data-eraser-options-trigger
-              data-erase-scope={settings.eraseScope}
+        {/* One eraser button. First press selects it in whichever mode was
+            last chosen; pressing it again opens everything else it can do. */}
+        <div className="relative">
+          <IconButton
+            icon={Eraser}
+            label={eraserIsArea ? 'Area eraser' : 'Stroke eraser'}
+            hint={eraserActive ? 'press again for eraser options' : undefined}
+            active={eraserActive}
+            badge={eraserIsArea ? 'px' : undefined}
+            hasPopover
+            tooltipDisabled={flyout === 'eraser'}
+            onClick={() => (eraserActive ? toggle('eraser') : pick(eraserIsArea ? 'eraser-pixel' : 'eraser-stroke'))}
+            data-palette-tool="eraser"
+            data-eraser-mode={settings.eraserMode}
+            data-erase-filtered={filterIsActive(settings.eraseFilter) ? 'true' : undefined}
+          />
+          <Popover open={flyout === 'eraser'} onClose={close} label="Eraser" side="top" align="center">
+            <EraserOptions
+              settings={settings}
+              onSettingsChange={onSettingsChange}
+              onClearPage={() => {
+                onClearPageInk?.();
+                close();
+              }}
+              onClearDocument={() => {
+                onClearDocumentInk?.();
+                close();
+              }}
             />
-            <Popover open={flyout === 'eraser'} onClose={close} label="Eraser filters and bulk removal" side="top" align="center">
-              <EraserOptions
-                settings={settings}
-                onSettingsChange={onSettingsChange}
-                onClearPage={() => {
-                  onClearPageInk();
-                  close();
-                }}
-                onClearDocument={() => {
-                  onClearDocumentInk();
-                  close();
-                }}
-              />
-            </Popover>
-          </div>
-        )}
+          </Popover>
+        </div>
 
         {history && (
           <>

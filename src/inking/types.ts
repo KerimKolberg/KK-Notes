@@ -5,10 +5,13 @@
  * corner. Device-pixel scaling is applied purely through the 2D context
  * transform, so stored strokes are independent of `devicePixelRatio`.
  */
-import type { EraseScope } from './engine/eraseScope';
+import type { EraseFilter } from './engine/eraseFilter';
 import type { TapePattern, TapeStyle } from './engine/tape';
 
-export type { EraseScope, TapePattern, TapeStyle };
+export type { EraseFilter, TapePattern, TapeStyle };
+
+/** The two erasers, as the flyout's radio buttons name them. */
+export type EraserMode = 'stroke' | 'area';
 
 
 /** Every tool the user can select in the UI. */
@@ -301,8 +304,15 @@ export interface ToolSettings {
   washiAccent: string;
   /** Collapse a wobbly drag into straight strips. */
   washiStraighten: boolean;
-  /** Which layer the stroke eraser is allowed to take. */
-  eraseScope: EraseScope;
+  /**
+   * Which eraser the single palette button selects: whole strokes, or the
+   * exact area swept.
+   */
+  eraserMode: EraserMode;
+  /** Area eraser diameter in page px — its own, not the pen's width. */
+  eraserSize: number;
+  /** Which layers either eraser is allowed to take. */
+  eraseFilter: EraseFilter;
   /** Laser pointer colour, kept separate from the ink colour. */
   laserColor: string;
   /** Laser pointer: cycle the hue along the trail instead of using `laserColor`. */

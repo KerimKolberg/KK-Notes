@@ -11,7 +11,9 @@ import {
   MAX_HIGHLIGHTER_OPACITY,
   MAX_STROKE_SIZE,
   MIN_CURVE_AMPLITUDE,
+  MAX_ERASER_SIZE,
   MIN_CURVE_CYCLES,
+  MIN_ERASER_SIZE,
   MIN_HIGHLIGHTER_OPACITY,
   MAX_WASHI_OPACITY,
   MAX_WASHI_WIDTH,
@@ -20,7 +22,7 @@ import {
   MIN_WASHI_WIDTH,
   STROKE_PATTERNS,
 } from '../constants';
-import { ERASE_SCOPES } from '../engine/eraseScope';
+import { ERASE_FILTERS, filterIsActive } from '../engine/eraseFilter';
 import { TAPE_PATTERNS } from '../engine/tape';
 import { BRUSHES } from '../engine/brushes';
 import type {
@@ -29,6 +31,7 @@ import type {
   BrushId,
   CoordinatePlaneConfig,
   EraserEndAction,
+  EraserMode,
   StrokePattern,
   ToolSettings,
   ToolType,
@@ -496,30 +499,82 @@ export interface EraserOptionsProps extends PanelProps {
   onClearDocument: () => void;
 }
 
+const ERASER_MODES: readonly { readonly id: EraserMode; readonly label: string; readonly hint: string }[] = [
+  { id: 'stroke', label: 'Stroke eraser', hint: 'Removes a whole stroke the moment the eraser crosses it' },
+  { id: 'area', label: 'Area eraser', hint: 'Removes only the path you sweep over' },
+];
+
 /**
- * What the eraser takes, and the two bulk removals. Both clears are scoped by
- * the same filter as the eraser itself, so "erase highlighter only" plus
- * "clear the page" strips the highlighting off a page and leaves the writing.
+ * Everything the one eraser button does: which of the two erasers it is, how
+ * wide the area one cuts, what either is allowed to take, and the two bulk
+ * removals. The filters scope the clears as well, so "highlighter only" plus
+ * "clear this page" strips the highlighting off a page and leaves the writing.
  */
 export function EraserOptions({ settings, onSettingsChange, onClearPage, onClearDocument }: EraserOptionsProps) {
-  const scope = ERASE_SCOPES.find((s) => s.id === settings.eraseScope) ?? ERASE_SCOPES[0]!;
+  const area = settings.eraserMode === 'area';
+  const filtered = filterIsActive(settings.eraseFilter);
   return (
-    <div className="flex w-[min(19rem,calc(100vw-2.5rem))] flex-col gap-1" data-eraser-options>
-      <Row label="Erase">
-        {ERASE_SCOPES.map((option) => (
+    <div className="flex w-[min(20rem,calc(100vw-2.5rem))] flex-col gap-1" data-eraser-options>
+      <Row label="Eraser">
+        <div className="flex flex-wrap items-center gap-1" role="radiogroup" aria-label="Eraser mode">
+          {ERASER_MODES.map((mode) => (
+            <button
+              key={mode.id}
+              type="button"
+              role="radio"
+              aria-checked={settings.eraserMode === mode.id}
+              aria-label={mode.hint}
+              data-eraser-mode={mode.id}
+              className={`${CHIP} ${settings.eraserMode === mode.id ? CHIP_ON : ''}`}
+              // Switching mode switches the live tool too: the button in the
+              // palette is already the eraser, so the choice has to take now.
+              onClick={() => onSettingsChange({ eraserMode: mode.id, tool: mode.id === 'area' ? 'eraser-pixel' : 'eraser-stroke' })}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+      </Row>
+      <Row label="Area size">
+        <input
+          type="range"
+          className="h-1 w-32 accent-blue-600 disabled:opacity-40"
+          min={MIN_ERASER_SIZE}
+          max={MAX_ERASER_SIZE}
+          step={1}
+          disabled={!area}
+          value={settings.eraserSize}
+          aria-label="Area eraser size"
+          onChange={(e) => onSettingsChange({ eraserSize: Number(e.target.value) })}
+          data-eraser-size
+        />
+        <span className={`w-10 text-right text-xs tabular-nums ${area ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-400 dark:text-zinc-600'}`}>
+          {Math.round(settings.eraserSize)}px
+        </span>
+      </Row>
+      <Row label="Only erase">
+        {ERASE_FILTERS.map((option) => (
           <Chip
-            key={option.id}
-            active={settings.eraseScope === option.id}
+            key={option.key}
+            active={settings.eraseFilter[option.key]}
             label={option.hint}
-            onClick={() => onSettingsChange({ eraseScope: option.id })}
+            onClick={() =>
+              onSettingsChange({ eraseFilter: { ...settings.eraseFilter, [option.key]: !settings.eraseFilter[option.key] } })
+            }
           >
-            <span data-erase-scope={option.id}>{option.label}</span>
+            <span data-erase-filter={option.key}>{option.label}</span>
           </Chip>
         ))}
       </Row>
+      {filtered && (
+        <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-erase-filter-note>
+          Both erasers pass straight over everything else. Narrowed, the area
+          eraser lifts whole matching strokes rather than cutting them.
+        </p>
+      )}
       <div className="mt-1 border-t border-zinc-200 pt-1 dark:border-zinc-700">
         <p className="px-1 pb-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Removes {scope.id === 'all' ? 'all ink' : `${scope.label.toLowerCase()} strokes`}. Images, notes and tables are left alone.
+          Removes {filtered ? 'the ink selected above' : 'all ink'}. Images, notes and tables are left alone.
         </p>
         <button
           type="button"

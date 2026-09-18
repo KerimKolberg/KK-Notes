@@ -7,7 +7,7 @@ export * from './types';
 export * from './constants';
 export { historyReducer, createHistoryState, type HistoryState, type HistoryAction } from './engine/history';
 export { getStrokeOutline, outlineToPath2D, toFreehandOptions } from './engine/strokeOutline';
-export { styleForTool, strokeEraserRadius } from './engine/toolStyles';
+export { styleForTool, eraserRadius } from './engine/toolStyles';
 export {
   isPointerAccepted,
   normalizePressure,

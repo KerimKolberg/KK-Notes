@@ -1,4 +1,5 @@
 import { DEFAULT_BRUSH } from './engine/brushes';
+import { ERASE_EVERYTHING } from './engine/eraseFilter';
 import type { CoordinatePlaneConfig, StrokePattern, StylusSettings, ToolSettings } from './types';
 
 /** Pressure substituted when a device reports `0` (mouse, many touch digitisers). */
@@ -26,8 +27,14 @@ export const MAX_HISTORY_DEPTH = 200;
 /** Highlighter width relative to the base stroke width. */
 export const HIGHLIGHTER_SIZE_MULTIPLIER = 4;
 
-/** Eraser (both kinds) diameter relative to the base stroke width. */
-export const ERASER_SIZE_MULTIPLIER = 4;
+/**
+ * Area-eraser diameter in page px. It is its own setting rather than a
+ * multiple of the pen width, because how thick you write and how precisely
+ * you want to rub something out are unrelated decisions.
+ */
+export const MIN_ERASER_SIZE = 4;
+export const MAX_ERASER_SIZE = 96;
+export const DEFAULT_ERASER_SIZE = 16;
 
 /** Default highlighter layer opacity (rendered with `multiply`). */
 export const HIGHLIGHTER_OPACITY = 0.35;
@@ -156,7 +163,9 @@ export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   washiPattern: 'stripes',
   washiAccent: DEFAULT_WASHI_ACCENT,
   washiStraighten: true,
-  eraseScope: 'all',
+  eraserMode: 'stroke',
+  eraserSize: DEFAULT_ERASER_SIZE,
+  eraseFilter: ERASE_EVERYTHING,
   laserColor: LASER_DEFAULT_COLOR,
   laserRainbow: false,
   pattern: 'solid',

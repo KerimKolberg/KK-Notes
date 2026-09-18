@@ -252,8 +252,7 @@ the title truncates; the icons stay, so nothing becomes unreachable.
 
 **Floating tool palette** — a draggable panel over the canvas. The first row
 groups the tools (select, lasso, laser, insert image / note / table · pen,
-highlighter, washi tape · line, coordinate system, stroke options · eraser,
-eraser options · settings) and the second
+highlighter, washi tape · line, coordinate system, stroke options · eraser · settings) and the second
 carries the colour swatches and the thickness slider. Tools that have more
 to say open a flyout when their own button is pressed again: the pen's five
 brushes, the coordinate plane's quadrants and labels. The eraser is one
@@ -692,8 +691,8 @@ The pen's **brush** picker chooses between ballpoint, fountain pen, pencil,
 marker and wet brush (see the brush engine above).
 | Line | drag | straight segment / vector |
 | Axes | drag from the origin | coordinate plane |
-| Stroke eraser | sweep | removes whole strokes, narrowed by the erase filter |
-| Pixel eraser | freehand | `destination-out` stroke |
+| Stroke eraser | sweep | removes whole strokes it crosses |
+| Area eraser | freehand | `destination-out` band, at its own size |
 
 **Washi tape** is a strip, not a stroke: constant width, no pressure
 response, and its pattern (solid, stripes, checks, dots) frozen onto the
@@ -704,12 +703,28 @@ pattern is a `createPattern` tile clipped to the band; a PDF has no such
 fill, so the same tile is emitted as explicit marks placed wholly inside the
 band's outline.
 
-**Erase filters.** The eraser's flyout narrows what it may take — everything,
-highlighter only, or washi tape only — so a highlight can be scrubbed off
-without lifting the writing under it. The same filter scopes the two bulk
-removals in that flyout, *clear this page* and *clear every page*; both leave
-images, notes and tables alone, and the document-wide one pushes one undo
-entry per page, so any page is a single undo from where it was.
+**The eraser** is one palette button. Pressing it selects whichever of the two
+erasers was last chosen; pressing it again opens everything else it can do:
+the mode (stroke or area), the area eraser's own size — separate from the pen
+width, because how thickly you write and how precisely you rub out are
+unrelated — the filters, and the bulk removals.
+
+*Only erase* narrows both erasers to the highlighter layer, the washi tape
+layer, or both. The two are independent switches rather than a three-way
+choice, so "highlighter and tape, but not my writing" is expressible. With a
+filter on, everything else is passed straight over, ordinary pen strokes and
+geometry included.
+
+One caveat, visible in the flyout: a narrowed **area** eraser lifts whole
+matching strokes rather than cutting them. `destination-out` takes whatever
+is beneath it on the shared canvas and cannot be told to spare one ink type,
+so the filter is honoured by hit-testing instead. Unfiltered, the area eraser
+cuts pixels exactly as before.
+
+The same filter scopes the two bulk removals, *clear this page* and *clear
+every page*; both leave images, notes and tables alone, and the document-wide
+one pushes one undo entry per page, so any page is a single undo from where
+it was.
 
 Every ink tool shares the palette's **pattern** (solid, dashed, dotted,
 dash-dot, long dash) and **arrowhead** mode (off, end, both). **15° snap**

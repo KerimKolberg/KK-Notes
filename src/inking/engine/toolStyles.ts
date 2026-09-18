@@ -1,5 +1,4 @@
 import {
-  ERASER_SIZE_MULTIPLIER,
   HIGHLIGHTER_OPACITY,
   HIGHLIGHTER_SIZE_MULTIPLIER,
   MAX_HIGHLIGHTER_OPACITY,
@@ -123,7 +122,7 @@ export function styleForTool(
     case 'eraser-pixel':
       return {
         color: '#000000',
-        size: settings.size * ERASER_SIZE_MULTIPLIER,
+        size: settings.eraserSize,
         opacity: 1,
         compositeOperation: 'destination-out',
         thinning: 0,
@@ -143,7 +142,11 @@ export function laserStyleFor(settings: Readonly<ToolSettings>): LaserStyle {
   return { color: settings.laserColor, size: settings.size, rainbow: settings.laserRainbow };
 }
 
-/** Radius of the stroke-eraser hit circle for the current settings. */
-export function strokeEraserRadius(settings: Readonly<ToolSettings>): number {
-  return (settings.size * ERASER_SIZE_MULTIPLIER) / 2;
+/**
+ * Radius of the eraser's hit circle. Both erasers use it: the stroke eraser
+ * to decide what it has crossed, and the area eraser as the width of the
+ * band it cuts.
+ */
+export function eraserRadius(settings: Readonly<ToolSettings>): number {
+  return settings.eraserSize / 2;
 }
