@@ -51,6 +51,28 @@ export function styleForTool(
         pattern: settings.pattern,
         arrowheads: settings.arrowheads,
       };
+    case 'washi-tape':
+      // A strip, not a stroke: constant width, no pressure response, and the
+      // pattern travelling with it so it survives a save and an export.
+      return {
+        color: settings.color,
+        size: settings.washiWidth,
+        opacity: settings.washiOpacity,
+        compositeOperation: 'source-over',
+        thinning: 0,
+        smoothing: 0.4,
+        streamline: 0.5,
+        simulatePressure: false,
+        taperStart: 0,
+        taperEnd: 0,
+        pattern: 'solid',
+        arrowheads: 'none',
+        tape: {
+          pattern: settings.washiPattern,
+          accent: settings.washiAccent,
+          straighten: settings.washiStraighten,
+        },
+      };
     case 'line':
       return {
         color: settings.color,

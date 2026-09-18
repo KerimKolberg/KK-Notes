@@ -7,6 +7,7 @@ import { ToolPalette } from '../../inking/palette/ToolPalette';
 import { ToolConfigRow } from '../../inking/palette/parts';
 import { useDesktopIntegration } from '../../desktop/useDesktopIntegration';
 import { useMediaInput } from '../hooks/useMediaInput';
+import { createStickyNote, createTable, nextZIndex } from '../media';
 
 /** PDF.js only loads when the import dialog is actually opened. */
 const ImportPdfDialog = lazy(() => import('../../pdf/ImportPdfDialog').then((m) => ({ default: m.ImportPdfDialog })));
@@ -33,6 +34,30 @@ export function DocumentApp() {
   const readOnly = useDocumentStore((s) => s.readOnly);
   const { undo, redo, clearPage } = useDocumentStore(
     useShallow((s) => ({ undo: s.undo, redo: s.redo, clearPage: s.clearPage })),
+  );
+
+  /** Drop a new note or table on the page the reader is looking at. */
+  const insertMedia = useCallback((make: 'note' | 'table') => {
+    const state = useDocumentStore.getState();
+    if (state.readOnly) return;
+    const page = state.document.pages[state.document.activePageIndex];
+    if (!page) return;
+    const z = nextZIndex(page.media);
+    state.addMedia(page.id, make === 'note' ? createStickyNote(page.dimensions, z) : createTable(page.dimensions, z));
+    // Both are dragged and typed into with the select tool, so switch to it
+    // rather than leaving the pen armed over something you want to edit.
+    updateSettings({ tool: 'select' });
+  }, [updateSettings]);
+  const insertNote = useCallback(() => insertMedia('note'), [insertMedia]);
+  const insertTable = useCallback(() => insertMedia('table'), [insertMedia]);
+
+  const clearPageInkActive = useCallback(
+    () => useDocumentStore.getState().clearPageInk(activePageId, settingsRef.current.eraseScope),
+    [activePageId, settingsRef],
+  );
+  const clearDocumentInkActive = useCallback(
+    () => useDocumentStore.getState().clearDocumentInk(settingsRef.current.eraseScope),
+    [settingsRef],
   );
 
   const undoActive = useCallback(() => undo(activePageId), [undo, activePageId]);
@@ -62,10 +87,10 @@ export function DocumentApp() {
     if (settings.tool !== 'lasso' && settings.tool !== 'select') useDocumentStore.getState().clearLassoSelection();
   }, [settings.tool]);
 
-  // Delete / Backspace removes the lasso selection or the selected image; Escape deselects.
+  // Delete / Backspace removes the lasso selection or the selected media; Escape deselects.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      const { selectedImage, lassoSelection, removeImage, selectImage, deleteSelection, clearLassoSelection, readOnly: locked } =
+      const { selectedMedia, lassoSelection, removeMedia, selectMedia, deleteSelection, clearLassoSelection, readOnly: locked } =
         useDocumentStore.getState();
       if (locked || isEditableTarget(e.target)) return;
       const isDelete = e.key === 'Delete' || e.key === 'Backspace';
@@ -78,12 +103,12 @@ export function DocumentApp() {
         }
         return;
       }
-      if (!selectedImage) return;
+      if (!selectedMedia) return;
       if (isDelete) {
         e.preventDefault();
-        removeImage(selectedImage.pageId, selectedImage.imageId);
+        removeMedia(selectedMedia.pageId, selectedMedia.mediaId);
       } else if (e.key === 'Escape') {
-        selectImage(null);
+        selectMedia(null);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -103,6 +128,10 @@ export function DocumentApp() {
           onClear={clearActive}
           containerRef={stageRef}
           onInsertImage={pickImage}
+          onInsertNote={insertNote}
+          onInsertTable={insertTable}
+          onClearPageInk={clearPageInkActive}
+          onClearDocumentInk={clearDocumentInkActive}
           hidden={readOnly}
         />
         {/* …and the laser still needs its colour and width, so the config row

@@ -80,9 +80,9 @@ function richDocument(): Document {
         { id: '12R', name: 'colour', kind: 'select', box: { x: 0, y: 0, width: 100, height: 20 }, readOnly: true, options: [{ label: 'Red', value: 'red' }] },
       ],
       formValues: { fullName: 'Ada', agree: true, colour: 'red' },
-      images: [
-        { id: 'img1', src: 'data:image/png;base64,iVBORw0KGgo=', mime: 'image/png', x: 10, y: 20, width: 200, height: 100, rotation: 33.3, zIndex: 2, naturalWidth: 400, naturalHeight: 200 },
-        { id: 'img2', src: 'data:image/jpeg;base64,/9j/4AAQ', mime: 'image/jpeg', x: 50, y: 60, width: 80, height: 80, rotation: 0, zIndex: 1, naturalWidth: 80, naturalHeight: 80 },
+      media: [
+        { kind: 'image' as const, id: 'img1', src: 'data:image/png;base64,iVBORw0KGgo=', mime: 'image/png', x: 10, y: 20, width: 200, height: 100, rotation: 33.3, zIndex: 2, naturalWidth: 400, naturalHeight: 200 },
+        { kind: 'image' as const, id: 'img2', src: 'data:image/jpeg;base64,/9j/4AAQ', mime: 'image/jpeg', x: 50, y: 60, width: 80, height: 80, rotation: 0, zIndex: 1, naturalWidth: 80, naturalHeight: 80 },
       ],
     }),
   };

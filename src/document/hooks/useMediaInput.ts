@@ -37,7 +37,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * which opens the file dialog the palette's "Insert image" button needs.
  */
 export function useMediaInput(onPdfDropped?: (file: File) => void) {
-  const addImage = useDocumentStore((s) => s.addImage);
+  const addMedia = useDocumentStore((s) => s.addMedia);
   const setTool = useToolStore((s) => s.update);
 
   const placeImage = useCallback(
@@ -53,13 +53,13 @@ export function useMediaInput(onPdfDropped?: (file: File) => void) {
         ...decoded,
         page: page.dimensions,
         ...(at ? { at } : {}),
-        zIndex: nextZIndex(page.images),
+        zIndex: nextZIndex(page.media),
       });
-      addImage(page.id, layer);
+      addMedia(page.id, layer);
       state.setActivePage(index);
       setTool({ tool: 'select' });
     },
-    [addImage, setTool],
+    [addMedia, setTool],
   );
 
   useEffect(() => {

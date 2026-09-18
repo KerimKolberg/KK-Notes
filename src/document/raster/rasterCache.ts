@@ -4,7 +4,7 @@
  */
 import type { Stroke } from '../../inking/types';
 import { RASTER_CACHE_SIZE } from '../constants';
-import type { ImageLayer, PageVisual } from '../types';
+import type { MediaObject, PageVisual } from '../types';
 
 const arrayIds = new WeakMap<object, number>();
 let nextArrayId = 1;
@@ -24,8 +24,8 @@ export function strokesToken(strokes: readonly Stroke[]): number {
   return arrayToken(strokes);
 }
 
-export function imagesToken(images: readonly ImageLayer[]): number {
-  return images.length === 0 ? 0 : arrayToken(images);
+export function mediaToken(media: readonly MediaObject[]): number {
+  return media.length === 0 ? 0 : arrayToken(media);
 }
 
 /** Key that changes whenever the page would render differently at `targetWidth`. */
@@ -43,7 +43,7 @@ export function visualKey(pageId: string, page: PageVisual, targetWidth: number)
     c.strokeWidth,
     c.marginOffset ?? '',
     strokesToken(page.strokes),
-    imagesToken(page.images),
+    mediaToken(page.media),
     page.pdf ? `${page.pdf.sourceId}#${page.pdf.pageIndex}@${page.pdf.rotation}` : '',
   ].join('|');
 }

@@ -34,9 +34,18 @@ import {
   type PDFPage,
 } from 'pdf-lib';
 import type { Point } from '../inking/types';
-import { dataUrlToBytes, sortedByZ } from '../document/media';
+import { dataUrlToBytes, noteTextBox, sortedByZ, tableCell, wrapText } from '../document/media';
+import {
+  NOTE_FONT_SIZE,
+  NOTE_GRIP_HEIGHT,
+  NOTE_LINE_HEIGHT,
+  NOTE_PADDING,
+  TABLE_CELL_PADDING,
+  TABLE_FONT_SIZE,
+  TABLE_GRIP_HEIGHT,
+} from '../document/constants';
 import { templateLines } from '../document/templates';
-import type { Document, FormField, FormValues, ImageLayer, Page } from '../document/types';
+import type { Document, FormField, FormValues, ImageLayer, MediaBox, Page, StickyNote, TableLayer } from '../document/types';
 import { pagePointToPdf, PX_PER_POINT } from './pdfCoords';
 import { cssColorToPdf, strokeToPdfOps, type PdfOp, type PdfProjection, type RgbColor } from './pdfOps';
 
@@ -212,28 +221,167 @@ async function embedImage(out: PDFDocument, image: ImageLayer, cache: Map<string
   return pending;
 }
 
-async function drawImages(
+/**
+ * Bottom-left corner of a media box in PDF user space, plus the rotation to
+ * hand pdf-lib. CSS rotates clockwise with y down; PDF rotates
+ * counter-clockwise, and a rotated source page shifts the frame again by its
+ * own display rotation — so every placement goes through here rather than
+ * each caller getting the signs right on its own.
+ */
+function placeBox(item: MediaBox, projection: PdfProjection): { x: number; y: number; width: number; height: number; rotateDeg: number } {
+  const centre = projection.toPdf({ x: item.x + item.width / 2, y: item.y + item.height / 2 });
+  const width = item.width * projection.scale;
+  const height = item.height * projection.scale;
+  const rotateDeg = projection.pageRotation - item.rotation;
+  const rad = (rotateDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  // pdf-lib rotates about the bottom-left corner: place that corner explicitly.
+  return {
+    x: centre.x + (-width / 2) * cos - (-height / 2) * sin,
+    y: centre.y + (-width / 2) * sin + (-height / 2) * cos,
+    width,
+    height,
+    rotateDeg,
+  };
+}
+
+/**
+ * A sticky note: its card, then its text wrapped to the same box the DOM
+ * wraps it to, measured with the PDF font so the line breaks match.
+ */
+function drawNote(target: PDFPage, note: StickyNote, projection: PdfProjection, fonts: Fonts): void {
+  const box = placeBox(note, projection);
+  const card = cssColorToPdf(note.color);
+  target.drawRectangle({
+    x: box.x,
+    y: box.y,
+    width: box.width,
+    height: box.height,
+    rotate: degrees(box.rotateDeg),
+    color: toColor(card),
+    opacity: card.alpha,
+    borderColor: toColor(cssColorToPdf('#00000022')),
+    borderWidth: 0.5,
+  });
+  if (note.text === '') return;
+
+  const size = NOTE_FONT_SIZE * projection.scale;
+  const lineHeight = size * NOTE_LINE_HEIGHT;
+  const text = noteTextBox(note);
+  const width = text.width * projection.scale;
+  const lines = wrapText(note.text, width, (t) => fonts.regular.widthOfTextAtSize(sanitizeText(t), size));
+  // Only as many lines as the card has room for; the live note scrolls, and
+  // paper cannot.
+  const maxLines = Math.max(0, Math.floor((text.height * projection.scale) / lineHeight));
+  const rad = (box.rotateDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  lines.slice(0, maxLines).forEach((line, i) => {
+    // Offset from the box's bottom-left, in the note's own frame, then rotated
+    // into the page's: x to the right, y down from the top of the text area.
+    const localX = NOTE_PADDING * projection.scale;
+    const localY = box.height - (NOTE_GRIP_HEIGHT + NOTE_PADDING) * projection.scale - lineHeight * (i + 0.8);
+    target.drawText(sanitizeText(line), {
+      x: box.x + localX * cos - localY * sin,
+      y: box.y + localX * sin + localY * cos,
+      size,
+      font: fonts.regular,
+      color: toColor(cssColorToPdf('#27272a')),
+      rotate: degrees(box.rotateDeg),
+    });
+  });
+}
+
+/** A table: its frame, every grid line, and one clipped line of text per cell. */
+function drawTable(target: PDFPage, table: TableLayer, projection: PdfProjection, fonts: Fonts): void {
+  const box = placeBox(table, projection);
+  const rad = (box.rotateDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  /** A point given in the table's own frame (x right, y down from the top). */
+  const at = (localX: number, localY: number) => {
+    const fromBottom = box.height - localY;
+    return { x: box.x + localX * cos - fromBottom * sin, y: box.y + localX * sin + fromBottom * cos };
+  };
+
+  target.drawRectangle({
+    x: box.x,
+    y: box.y,
+    width: box.width,
+    height: box.height,
+    rotate: degrees(box.rotateDeg),
+    color: toColor(cssColorToPdf('#ffffff')),
+    borderColor: toColor(cssColorToPdf('#a1a1aa')),
+    borderWidth: 0.75,
+  });
+
+  const grip = TABLE_GRIP_HEIGHT * projection.scale;
+  const gridHeight = Math.max(0, box.height - grip);
+  const cellWidth = box.width / table.columns;
+  const cellHeight = gridHeight / table.rows;
+  const rule = toColor(cssColorToPdf('#d4d4d8'));
+  for (let column = 1; column < table.columns; column++) {
+    const x = column * cellWidth;
+    target.drawLine({ start: at(x, grip), end: at(x, box.height), thickness: 0.5, color: rule });
+  }
+  for (let row = 1; row <= table.rows; row++) {
+    const y = grip + row * cellHeight;
+    target.drawLine({ start: at(0, y), end: at(box.width, y), thickness: 0.5, color: rule });
+  }
+  target.drawLine({ start: at(0, grip), end: at(box.width, grip), thickness: 0.5, color: rule });
+
+  const size = TABLE_FONT_SIZE * projection.scale;
+  const padding = TABLE_CELL_PADDING * projection.scale;
+  const ink = toColor(cssColorToPdf('#18181b'));
+  for (let row = 0; row < table.rows; row++) {
+    for (let column = 0; column < table.columns; column++) {
+      const raw = tableCell(table, row, column);
+      if (raw === '') continue;
+      // One line, truncated to the cell: a cell that overflows on screen is
+      // scrolled, which paper cannot do either.
+      const [line = ''] = wrapText(raw, Math.max(1, cellWidth - padding * 2), (t) =>
+        fonts.regular.widthOfTextAtSize(sanitizeText(t), size),
+      );
+      if (line === '') continue;
+      const baseline = grip + row * cellHeight + cellHeight / 2 + size * 0.35;
+      const p = at(column * cellWidth + padding, baseline);
+      target.drawText(sanitizeText(line), { x: p.x, y: p.y, size, font: fonts.regular, color: ink, rotate: degrees(box.rotateDeg) });
+    }
+  }
+}
+
+/**
+ * The standard PDF fonts are WinAnsi only, and pdf-lib throws on a glyph it
+ * cannot encode — which would fail the whole export over one emoji in one
+ * note. Anything outside the range becomes '?' instead.
+ */
+function sanitizeText(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[^\x20-\x7E\xA0-\xFF]/g, '?');
+}
+
+async function drawMedia(
   out: PDFDocument,
   target: PDFPage,
   page: Page,
   projection: PdfProjection,
+  fonts: Fonts,
   cache: Map<string, Promise<PDFImage | null>>,
 ): Promise<void> {
-  for (const image of sortedByZ(page.images)) {
-    const embedded = await embedImage(out, image, cache);
+  for (const item of sortedByZ(page.media)) {
+    if (item.kind === 'note') {
+      drawNote(target, item, projection, fonts);
+      continue;
+    }
+    if (item.kind === 'table') {
+      drawTable(target, item, projection, fonts);
+      continue;
+    }
+    const embedded = await embedImage(out, item, cache);
     if (!embedded) continue;
-    const centre = projection.toPdf({ x: image.x + image.width / 2, y: image.y + image.height / 2 });
-    const w = image.width * projection.scale;
-    const h = image.height * projection.scale;
-    // CSS rotation is clockwise (y down); PDF rotation is counter-clockwise, and a
-    // rotated source page shifts the frame by its display rotation.
-    const rotateDeg = projection.pageRotation - image.rotation;
-    const rad = (rotateDeg * Math.PI) / 180;
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-    // pdf-lib rotates about the bottom-left corner: place that corner explicitly.
-    const bl = { x: centre.x + (-w / 2) * cos - (-h / 2) * sin, y: centre.y + (-w / 2) * sin + (-h / 2) * cos };
-    target.drawImage(embedded, { x: bl.x, y: bl.y, width: w, height: h, rotate: degrees(rotateDeg) });
+    const box = placeBox(item, projection);
+    target.drawImage(embedded, { x: box.x, y: box.y, width: box.width, height: box.height, rotate: degrees(box.rotateDeg) });
   }
 }
 
@@ -383,7 +531,7 @@ export async function exportDocumentToPdf(document: Document, options: ExportOpt
       if (includeTemplates) drawTemplateBackground(target, page, projection, size);
     }
 
-    await drawImages(out, target, page, projection, imageCache);
+    await drawMedia(out, target, page, projection, fonts, imageCache);
     for (const stroke of page.strokes) {
       for (const op of strokeToPdfOps(stroke, projection)) drawOp(target, op, fonts);
     }

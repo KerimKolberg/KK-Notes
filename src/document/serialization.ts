@@ -6,6 +6,7 @@ import { DEFAULT_TEMPLATE_CONFIG, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM } from './con
 import { clampIndex, renumber } from './operations';
 import type {
   Document,
+  MediaObject,
   Page,
   ViewMode,
   PdfPageRef,
@@ -32,6 +33,16 @@ export function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+/**
+ * Media as this version models it. Files written before notes and tables
+ * existed carry an `images` array whose entries have no `kind`, so they are
+ * tagged on the way in; nothing else about them changed.
+ */
+function mediaOf(page: SerializedPage): MediaObject[] {
+  if (page.media) return [...page.media];
+  return (page.images ?? []).map((image) => ({ ...image, kind: 'image' }) as MediaObject);
+}
+
 export function toSerializablePage(page: Page): SerializedPage {
   return {
     id: page.id,
@@ -53,7 +64,7 @@ export function toSerializablePage(page: Page): SerializedPage {
       : {}),
     ...(page.formFields.length > 0 ? { formFields: page.formFields } : {}),
     ...(Object.keys(page.formValues).length > 0 ? { formValues: page.formValues } : {}),
-    ...(page.images.length > 0 ? { images: page.images } : {}),
+    ...(page.media.length > 0 ? { media: page.media } : {}),
   };
 }
 
@@ -111,7 +122,7 @@ export function fromSerializablePage(
     ...(pdf ? { pdf } : {}),
     formFields: page.formFields ?? [],
     formValues: page.formValues ?? {},
-    images: page.images ?? [],
+    media: mediaOf(page),
   };
 }
 

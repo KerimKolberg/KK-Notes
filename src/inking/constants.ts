@@ -59,6 +59,19 @@ export const SNAP_RELEASE_PX = 28;
 /** Strokes shorter than this are never snapped (taps, dots). */
 export const MIN_SNAP_PATH_LENGTH_PX = 24;
 
+// ---- Washi tape -----------------------------------------------------------
+
+/** A strip is wide: these are band widths in page px, not pen widths. */
+export const MIN_WASHI_WIDTH = 8;
+export const MAX_WASHI_WIDTH = 96;
+export const DEFAULT_WASHI_WIDTH = 32;
+/** Tape is translucent enough to read writing through, like the real thing. */
+export const DEFAULT_WASHI_OPACITY = 0.7;
+export const MIN_WASHI_OPACITY = 0.2;
+export const MAX_WASHI_OPACITY = 1;
+export const DEFAULT_WASHI_COLOR = '#f9a8d4';
+export const DEFAULT_WASHI_ACCENT = '#ffffff';
+
 // ---- Procedural curves ----------------------------------------------------
 
 /**
@@ -138,6 +151,12 @@ export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   touchDraw: false,
   brush: DEFAULT_BRUSH,
   highlighterOpacity: HIGHLIGHTER_OPACITY,
+  washiWidth: DEFAULT_WASHI_WIDTH,
+  washiOpacity: DEFAULT_WASHI_OPACITY,
+  washiPattern: 'stripes',
+  washiAccent: DEFAULT_WASHI_ACCENT,
+  washiStraighten: true,
+  eraseScope: 'all',
   laserColor: LASER_DEFAULT_COLOR,
   laserRainbow: false,
   pattern: 'solid',

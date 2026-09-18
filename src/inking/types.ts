@@ -5,6 +5,11 @@
  * corner. Device-pixel scaling is applied purely through the 2D context
  * transform, so stored strokes are independent of `devicePixelRatio`.
  */
+import type { EraseScope } from './engine/eraseScope';
+import type { TapePattern, TapeStyle } from './engine/tape';
+
+export type { EraseScope, TapePattern, TapeStyle };
+
 
 /** Every tool the user can select in the UI. */
 export type ToolType =
@@ -13,6 +18,7 @@ export type ToolType =
   | 'pen'
   | 'highlighter'
   | 'laser-pointer'
+  | 'washi-tape'
   | 'line'
   | 'coordinate-plane'
   | 'eraser-stroke'
@@ -37,7 +43,7 @@ export type EphemeralTool = 'laser-pointer';
 export type PersistentTool = Exclude<InkTool, EphemeralTool>;
 
 /** Tools whose raw samples become a perfect-freehand polygon. */
-export type FreehandTool = 'pen' | 'highlighter' | 'eraser-pixel' | 'laser-pointer';
+export type FreehandTool = 'pen' | 'highlighter' | 'washi-tape' | 'eraser-pixel' | 'laser-pointer';
 
 /** Freehand tools that may be accumulated into a committed stroke. */
 export type PersistentFreehandTool = Exclude<FreehandTool, EphemeralTool>;
@@ -119,6 +125,11 @@ export interface StrokeStyle {
   readonly arrowheads: ArrowheadMode;
   /** Pen preset this stroke was drawn with. Absent on strokes from other tools. */
   readonly brush?: BrushId;
+  /**
+   * Washi tape's pattern, frozen with the stroke so the band re-renders the
+   * same at any zoom and carries into an export. Absent on everything else.
+   */
+  readonly tape?: TapeStyle;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +293,16 @@ export interface ToolSettings {
   brush: BrushId;
   /** Layer opacity of the highlighter's `multiply` ink (0..1). */
   highlighterOpacity: number;
+  /** Washi tape: band width in page px, independent of the pen's width. */
+  washiWidth: number;
+  washiOpacity: number;
+  washiPattern: TapePattern;
+  /** The pattern's second colour; the stroke colour is the band. */
+  washiAccent: string;
+  /** Collapse a wobbly drag into straight strips. */
+  washiStraighten: boolean;
+  /** Which layer the stroke eraser is allowed to take. */
+  eraseScope: EraseScope;
   /** Laser pointer colour, kept separate from the ink colour. */
   laserColor: string;
   /** Laser pointer: cycle the hue along the trail instead of using `laserColor`. */

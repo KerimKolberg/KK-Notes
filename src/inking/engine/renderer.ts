@@ -24,6 +24,7 @@ import {
   strokeBrush,
 } from './brushes';
 import type { LaserRun } from './laser';
+import { TAPE_TILE, tapeSamples, tilePattern, type TapePattern } from './tape';
 import { TAU, normalizeRadians } from './angles';
 import {
   arrowheadEnds,
@@ -87,7 +88,7 @@ export function dashArray(pattern: StrokePattern, width: number): number[] {
  */
 interface PlanPass {
   readonly path: Path2D;
-  readonly kind: 'fill' | 'texture' | 'bleed';
+  readonly kind: 'fill' | 'texture' | 'bleed' | 'tape';
   /** Multiplies the style's opacity. */
   readonly alpha: number;
   /** `bleed` only: line width in drawing units. */
@@ -193,6 +194,11 @@ export function freehandCentreline(points: readonly InkPoint[], style: StrokeSty
  * - everything else is the single filled outline it always was.
  */
 function freehandBody(points: readonly InkPoint[], style: StrokeStyle, complete: boolean): PlanPass[] {
+  if (style.tape) {
+    // A band: the flat colour, then the pattern clipped inside it.
+    const path = outlineToPath2D(getStrokeOutline(tapeSamples(points, style), style, complete), true);
+    return style.tape.pattern === 'solid' ? [fillPass(path)] : [fillPass(path), { path, kind: 'tape', alpha: 1 }];
+  }
   const brush = strokeBrush(style);
   const smooth = brush ? brush.smoothOutline : true;
   if (brush?.texture === 'pencil') {
@@ -362,6 +368,10 @@ function paintPlan(ctx: InkContext, plan: RenderPlan, style: StrokeStyle): void 
       if (blur > 0) ctx.filter = 'none';
       continue;
     }
+    if (pass.kind === 'tape') {
+      paintTapePattern(ctx, pass.path, style);
+      continue;
+    }
     if (pass.kind === 'texture') {
       ctx.fillStyle = grainPattern(ctx, style.color) ?? style.color;
     }
@@ -369,6 +379,59 @@ function paintPlan(ctx: InkContext, plan: RenderPlan, style: StrokeStyle): void 
     ctx.fill(pass.path, 'nonzero');
     if (pass.kind === 'texture') ctx.fillStyle = style.color;
   }
+  ctx.restore();
+}
+
+/**
+ * Tape tiles, one per accent colour: the pattern's marks drawn onto a
+ * transparent tile that `createPattern` then repeats. Cached like the pencil
+ * grain, and for the same reason — building it per frame would be absurd.
+ */
+const tapeTiles = new Map<string, CanvasImageSource | null>();
+const MAX_TAPE_TILES = 12;
+
+function tapeTile(pattern: TapePattern, accent: string): CanvasImageSource | null {
+  const key = `${pattern}|${accent}`;
+  const cached = tapeTiles.get(key);
+  if (cached !== undefined) return cached;
+  let tile: CanvasImageSource | null = null;
+  const made = createTileCanvas(TAPE_TILE);
+  if (made) {
+    made.ctx.fillStyle = accent;
+    for (const mark of tilePattern(pattern)) {
+      if (mark.round) {
+        made.ctx.beginPath();
+        made.ctx.arc(mark.x + mark.width / 2, mark.y + mark.height / 2, Math.min(mark.width, mark.height) / 2, 0, TAU);
+        made.ctx.fill();
+      } else {
+        made.ctx.fillRect(mark.x, mark.y, mark.width, mark.height);
+      }
+    }
+    tile = made.canvas;
+  }
+  if (tapeTiles.size >= MAX_TAPE_TILES) tapeTiles.clear();
+  tapeTiles.set(key, tile);
+  return tile;
+}
+
+/**
+ * Fill the band with its pattern. Clipping to the band is what keeps the tile
+ * from spilling: `createPattern` repeats across the whole canvas, and only the
+ * clip decides where it actually lands.
+ */
+function paintTapePattern(ctx: InkContext, band: Path2D, style: StrokeStyle): void {
+  const tape = style.tape;
+  if (!tape) return;
+  const tile = tapeTile(tape.pattern, tape.accent);
+  const fill = tile ? ctx.createPattern(tile, 'repeat') : null;
+  if (!fill) return;
+  ctx.save();
+  ctx.clip(band, 'nonzero');
+  ctx.fillStyle = fill;
+  // The clip bounds the paint, so filling generously is both correct and
+  // cheaper than measuring the band first.
+  const { width, height } = ctx.canvas;
+  ctx.fillRect(-width, -height, width * 3, height * 3);
   ctx.restore();
 }
 

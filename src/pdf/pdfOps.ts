@@ -16,7 +16,10 @@ import {
   rectangleCorners,
   type Segment,
 } from '../inking/engine/shapes';
+import { bboxFromPoints } from '../inking/engine/geometry';
+import { pointInPolygon } from '../inking/engine/lasso';
 import { freehandCentreline, dashArray, trimForArrowheads } from '../inking/engine/renderer';
+import { tapeSamples, tileMarksOver } from '../inking/engine/tape';
 import { endTangent, startTangent } from '../inking/engine/simplify';
 import { getStrokeOutline } from '../inking/engine/strokeOutline';
 import type { FreehandStroke, GeometricStroke, Point, Shape, Stroke, StrokeStyle } from '../inking/types';
@@ -227,8 +230,67 @@ function strokedPolyline(points: readonly Point[], style: StrokeStyle, project: 
 // Strokes
 // ---------------------------------------------------------------------------
 
+/** A circle as a polygon, because the path vocabulary here is M/L/Z only. */
+function circlePoints(cx: number, cy: number, radius: number, segments = 16): Point[] {
+  return Array.from({ length: segments }, (_, i) => {
+    const t = (i / segments) * Math.PI * 2;
+    return { x: cx + Math.cos(t) * radius, y: cy + Math.sin(t) * radius };
+  });
+}
+
+/**
+ * Washi tape: the band, then its pattern.
+ *
+ * A PDF has no equivalent of `createPattern`, and no clipping in the op
+ * vocabulary used here — so instead of filling and clipping, each tile mark is
+ * tested against the band's own outline and only emitted when it lies wholly
+ * inside. The pattern therefore stops just short of the edges rather than
+ * bleeding over them, which is the right way round to be wrong.
+ */
+function tapeToPdfOps(stroke: FreehandStroke, project: PdfProjection): PdfOp[] {
+  const style = stroke.style;
+  const tape = style.tape;
+  if (!tape) return [];
+  const outline = getStrokeOutline(tapeSamples(stroke.points, style), style, true).map(([x, y]) => ({ x, y }));
+  if (outline.length < 3) return [];
+  const color = cssColorToPdf(style.color);
+  const opacity = style.opacity * color.alpha;
+  const band: PathOp = {
+    kind: 'path',
+    d: polylineToPath(project, outline, true),
+    fill: color,
+    opacity,
+    blend: blendOf(style),
+  };
+  if (tape.pattern === 'solid') return [band];
+
+  const accent = cssColorToPdf(tape.accent);
+  const bounds = bboxFromPoints(outline);
+  const marks = tileMarksOver(tape.pattern, bounds, (p) => pointInPolygon(p, outline));
+  const ops: PdfOp[] = [band];
+  for (const mark of marks) {
+    const points = mark.round
+      ? circlePoints(mark.x + mark.width / 2, mark.y + mark.height / 2, Math.min(mark.width, mark.height) / 2)
+      : [
+          { x: mark.x, y: mark.y },
+          { x: mark.x + mark.width, y: mark.y },
+          { x: mark.x + mark.width, y: mark.y + mark.height },
+          { x: mark.x, y: mark.y + mark.height },
+        ];
+    ops.push({
+      kind: 'path',
+      d: polylineToPath(project, points, true),
+      fill: accent,
+      opacity: opacity * accent.alpha,
+      blend: blendOf(style),
+    });
+  }
+  return ops;
+}
+
 export function freehandToPdfOps(stroke: FreehandStroke, project: PdfProjection): PdfOp[] {
   if (stroke.style.compositeOperation === 'destination-out') return []; // pixel eraser: not representable as vectors
+  if (stroke.style.tape) return tapeToPdfOps(stroke, project);
   const style = stroke.style;
   const color = cssColorToPdf(style.color);
   const arrows = arrowPaths(stroke.points, style, project);

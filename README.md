@@ -4,8 +4,8 @@ A React + TypeScript notes app for 2-in-1 pen/touch laptops: a low-latency
 inking engine (`src/inking/`) with palm rejection, pressure-sensitive strokes
 via [perfect-freehand], STEM shape tools and hold-to-snap, hosted in a
 multi-page document system (`src/document/`) with procedural page templates,
-canvas virtualisation, a Samsung Notes-style page arranger, an image layer,
-a lasso selection tool, two-finger pan / pinch-zoom navigation, a read-only
+canvas virtualisation, a Samsung Notes-style page arranger, a media layer of
+images, sticky notes and tables, a lasso selection tool, two-finger pan / pinch-zoom navigation, a read-only
 lock, a disappearing laser pointer, notebook covers, vertical *and*
 horizontal continuous scrolling, and PDF import / fillable AcroForms /
 vector PDF export (`src/pdf/`). The interface is icon-first: a fixed top
@@ -79,9 +79,11 @@ rename writes:
 **`.notex` format** (`src/desktop/notex.ts`). A versioned envelope
 `{ format: 'notex', version: 1, savedAt, app, document }` around the document
 serialization: title, view mode, zoom, pages with dimensions, template and
-config, background colour, stroke arrays (freehand and geometric), image
-layers as data URLs, AcroForm fields and values, and PDF sources stored once
-as base64. A bare serialized document (`.json`) is also accepted. Undo history
+config, background colour, stroke arrays (freehand and geometric), the media
+layer (images as data URLs, sticky notes, tables), AcroForm fields and
+values, and PDF sources stored once as base64. Files written before notes and
+tables existed carry an `images` array instead, which is migrated to `media`
+on load. A bare serialized document (`.json`) is also accepted. Undo history
 is not persisted.
 
 **Frontend integration** (`src/desktop/`). `tauri.ts` detects the shell and
@@ -114,7 +116,7 @@ the build if either library ends up in the critical path.
 
 **State.** A Zustand store (`store.ts`) owns the `Document` (pages, active
 index, view mode, zoom), a `scrollRequest` counter that asks the viewer to
-scroll, the arranger's open state, the read-only lock, and the image /
+scroll, the arranger's open state, the read-only lock, and the media /
 lasso selections; `toolStore.ts` holds the shared tool settings. All structural edits are pure functions in `operations.ts`
 (reorder, insert, duplicate with deep-cloned strokes, delete with a one-page
 guard, snapshot undo/redo per page) so they can be unit-tested without React.
@@ -249,8 +251,9 @@ As the window narrows the zoom read-out and the word "Page" drop away and
 the title truncates; the icons stay, so nothing becomes unreachable.
 
 **Floating tool palette** — a draggable panel over the canvas. The first row
-groups the tools (select, lasso, laser, insert image · pen, highlighter ·
-line, coordinate system, stroke options · eraser · settings) and the second
+groups the tools (select, lasso, laser, insert image / note / table · pen,
+highlighter, washi tape · line, coordinate system, stroke options · eraser,
+eraser options · settings) and the second
 carries the colour swatches and the thickness slider. Tools that have more
 to say open a flyout when their own button is pressed again: the pen's five
 brushes, the coordinate plane's quadrants and labels. The eraser is one
@@ -681,15 +684,32 @@ Keyboard: `Ctrl/⌘+Z` undo, `Ctrl/⌘+Shift+Z` or `Ctrl+Y` redo.
 | --- | --- | --- |
 | Lasso | freehand loop | selects enclosed strokes (see above) |
 | Pen | freehand | pressure-thinned perfect-freehand polygon |
-| Highlighter | freehand | 4× width, `multiply` at 35 % |
+| Highlighter | freehand | 4× width, `multiply`, opacity from its own slider |
+| Washi tape | freehand | wide translucent band filled with a repeating pattern |
 | Laser | freehand | glowing trail that fades out in 2.7 s, never committed |
 
 The pen's **brush** picker chooses between ballpoint, fountain pen, pencil,
 marker and wet brush (see the brush engine above).
 | Line | drag | straight segment / vector |
 | Axes | drag from the origin | coordinate plane |
-| Stroke eraser | sweep | removes whole strokes |
+| Stroke eraser | sweep | removes whole strokes, narrowed by the erase filter |
 | Pixel eraser | freehand | `destination-out` stroke |
+
+**Washi tape** is a strip, not a stroke: constant width, no pressure
+response, and its pattern (solid, stripes, checks, dots) frozen onto the
+stroke so it re-renders at any zoom and survives an export. *Straighten
+lines* runs an aggressive RDP pass over the path, which turns a wobbly drag
+into the straight strip a roll of tape actually produces. On a canvas the
+pattern is a `createPattern` tile clipped to the band; a PDF has no such
+fill, so the same tile is emitted as explicit marks placed wholly inside the
+band's outline.
+
+**Erase filters.** The eraser's flyout narrows what it may take — everything,
+highlighter only, or washi tape only — so a highlight can be scrubbed off
+without lifting the writing under it. The same filter scopes the two bulk
+removals in that flyout, *clear this page* and *clear every page*; both leave
+images, notes and tables alone, and the document-wide one pushes one undo
+entry per page, so any page is a single undo from where it was.
 
 Every ink tool shares the palette's **pattern** (solid, dashed, dotted,
 dash-dot, long dash) and **arrowhead** mode (off, end, both). **15° snap**

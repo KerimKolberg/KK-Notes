@@ -14,15 +14,16 @@ import {
   type StrokeTransform,
   type StyleChange,
 } from '../inking/engine/lasso';
+import { keepStrokes, type EraseScope } from '../inking/engine/eraseScope';
 import type { Stroke } from '../inking/types';
 import { TEMPLATE_DEFAULT_SPACING, ZOOM_STEP } from './constants';
 import { clampZoom } from './layout';
 import {
-  addImage as addImageToList,
-  bringToFront as bringImageToFrontInList,
-  removeImage as removeImageFromList,
-  sendToBack as sendImageToBackInList,
-  updateImage as updateImageInList,
+  addImage as addMediaToList,
+  bringToFront as bringMediaToFrontInList,
+  removeImage as removeMediaFromList,
+  sendToBack as sendMediaToBackInList,
+  updateImage as updateMediaInList,
 } from './media';
 import {
   appendStroke,
@@ -39,14 +40,14 @@ import {
   reorderPages,
   undoPage,
   withFormValue,
-  withImages,
+  withMedia,
   withStrokes,
 } from './operations';
 import type {
   Cover,
   Document,
   FormValue,
-  ImageLayer,
+  MediaObject,
   InsertPosition,
   Page,
   PageTarget,
@@ -55,9 +56,9 @@ import type {
   ViewMode,
 } from './types';
 
-export interface ImageSelection {
+export interface MediaSelection {
   readonly pageId: string;
-  readonly imageId: string;
+  readonly mediaId: string;
 }
 
 /** Strokes picked by the lasso tool, all on one page. */
@@ -74,7 +75,7 @@ export interface DocumentStore {
   importDialogOpen: boolean;
   /** True while a PDF export is being assembled. */
   exporting: boolean;
-  selectedImage: ImageSelection | null;
+  selectedMedia: MediaSelection | null;
   lassoSelection: LassoSelection | null;
   /** Lock / read-only mode: navigation and form filling only, no content edits. */
   readOnly: boolean;
@@ -122,12 +123,15 @@ export interface DocumentStore {
 
   // forms & media
   setFormValue: (pageId: string, name: string, value: FormValue) => void;
-  addImage: (pageId: string, image: ImageLayer) => void;
-  updateImage: (pageId: string, imageId: string, patch: Partial<ImageLayer>) => void;
-  removeImage: (pageId: string, imageId: string) => void;
-  bringImageToFront: (pageId: string, imageId: string) => void;
-  sendImageToBack: (pageId: string, imageId: string) => void;
-  selectImage: (selection: ImageSelection | null) => void;
+  addMedia: (pageId: string, item: MediaObject) => void;
+  updateMedia: (pageId: string, mediaId: string, patch: Partial<MediaObject>) => void;
+  removeMedia: (pageId: string, mediaId: string) => void;
+  bringMediaToFront: (pageId: string, mediaId: string) => void;
+  sendMediaToBack: (pageId: string, mediaId: string) => void;
+  selectMedia: (selection: MediaSelection | null) => void;
+  /** Erase every stroke on one page, or on every page as a single undo step. */
+  clearPageInk: (pageId: string, scope?: EraseScope) => void;
+  clearDocumentInk: (scope?: EraseScope) => void;
 
   // lasso selection (every edit is one undo step on the page)
   setLassoSelection: (selection: LassoSelection | null) => void;
@@ -202,7 +206,7 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
   arrangerOpen: false,
   importDialogOpen: false,
   exporting: false,
-  selectedImage: null,
+  selectedMedia: null,
   lassoSelection: null,
   readOnly: false,
   filePath: null,
@@ -239,9 +243,9 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
 
   // Locking drops the editing selections; nothing can act on them any more.
   setReadOnly: (readOnly) =>
-    set((s) => (s.readOnly === readOnly ? s : { readOnly, selectedImage: null, lassoSelection: null })),
+    set((s) => (s.readOnly === readOnly ? s : { readOnly, selectedMedia: null, lassoSelection: null })),
 
-  toggleReadOnly: () => set((s) => ({ readOnly: !s.readOnly, selectedImage: null, lassoSelection: null })),
+  toggleReadOnly: () => set((s) => ({ readOnly: !s.readOnly, selectedMedia: null, lassoSelection: null })),
   setImportDialogOpen: (open) => set({ importDialogOpen: open }),
   setExporting: (exporting) => set({ exporting }),
 
@@ -304,7 +308,7 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
       return {
         document: { ...doc, pages, activePageIndex },
         lassoSelection: s.lassoSelection?.pageId === deletedId ? null : s.lassoSelection,
-        selectedImage: s.selectedImage?.pageId === deletedId ? null : s.selectedImage,
+        selectedMedia: s.selectedMedia?.pageId === deletedId ? null : s.selectedMedia,
       };
     })),
 
@@ -378,37 +382,58 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
   setFormValue: (pageId, name, value) =>
     set((s) => ({ document: updatePageById(s.document, pageId, (page) => withFormValue(page, name, value)) })),
 
-  addImage: (pageId, image) =>
+  addMedia: (pageId, item) =>
     set(edit((s) => ({
-      document: updatePageById(s.document, pageId, (page) => withImages(page, addImageToList(page.images, image))),
-      selectedImage: { pageId, imageId: image.id },
+      document: updatePageById(s.document, pageId, (page) => withMedia(page, addMediaToList(page.media, item))),
+      selectedMedia: { pageId, mediaId: item.id },
     }))),
 
-  updateImage: (pageId, imageId, patch) =>
+  updateMedia: (pageId, mediaId, patch) =>
     set(edit((s) => ({
-      document: updatePageById(s.document, pageId, (page) => withImages(page, updateImageInList(page.images, imageId, patch))),
+      document: updatePageById(s.document, pageId, (page) => withMedia(page, updateMediaInList(page.media, mediaId, patch))),
     }))),
 
-  removeImage: (pageId, imageId) =>
+  removeMedia: (pageId, mediaId) =>
     set(edit((s) => ({
-      document: updatePageById(s.document, pageId, (page) => withImages(page, removeImageFromList(page.images, imageId))),
-      selectedImage: s.selectedImage?.imageId === imageId ? null : s.selectedImage,
+      document: updatePageById(s.document, pageId, (page) => withMedia(page, removeMediaFromList(page.media, mediaId))),
+      selectedMedia: s.selectedMedia?.mediaId === mediaId ? null : s.selectedMedia,
     }))),
 
-  bringImageToFront: (pageId, imageId) =>
+  bringMediaToFront: (pageId, mediaId) =>
     set(edit((s) => ({
-      document: updatePageById(s.document, pageId, (page) => withImages(page, bringImageToFrontInList(page.images, imageId))),
+      document: updatePageById(s.document, pageId, (page) => withMedia(page, bringMediaToFrontInList(page.media, mediaId))),
     }))),
 
-  sendImageToBack: (pageId, imageId) =>
+  sendMediaToBack: (pageId, mediaId) =>
     set(edit((s) => ({
-      document: updatePageById(s.document, pageId, (page) => withImages(page, sendImageToBackInList(page.images, imageId))),
+      document: updatePageById(s.document, pageId, (page) => withMedia(page, sendMediaToBackInList(page.media, mediaId))),
     }))),
 
-  selectImage: (selection) =>
+  selectMedia: (selection) =>
     set((s) =>
-      (s.selectedImage?.pageId === selection?.pageId && s.selectedImage?.imageId === selection?.imageId) ? s : { selectedImage: selection },
+      (s.selectedMedia?.pageId === selection?.pageId && s.selectedMedia?.mediaId === selection?.mediaId) ? s : { selectedMedia: selection },
     ),
+
+  clearPageInk: (pageId, scope) =>
+    set(edit((s) => ({
+      document: updatePageById(s.document, pageId, (page) => withStrokes(page, keepStrokes(page.strokes, scope))),
+      lassoSelection: s.lassoSelection?.pageId === pageId ? null : s.lassoSelection,
+    }))),
+
+  /**
+   * One undo entry per page, pushed in a single update: undoing is per page
+   * anyway, so this leaves every page exactly one step from where it was.
+   * Media is untouched — an image, a note or a table is not ink.
+   */
+  clearDocumentInk: (scope) =>
+    set(edit((s) => {
+      const pages = s.document.pages.map((page) => {
+        const kept = keepStrokes(page.strokes, scope);
+        return kept.length === page.strokes.length ? page : withStrokes(page, kept);
+      });
+      if (pages.every((page, i) => page === s.document.pages[i])) return s;
+      return { document: { ...s.document, pages }, lassoSelection: null };
+    })),
 
   setLassoSelection: (selection) =>
     set(edit((s) => (selection === null && s.lassoSelection === null ? s : { lassoSelection: selection }))),
@@ -482,7 +507,7 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
     set({
       document: doc,
       scrollRequest: 0,
-      selectedImage: null,
+      selectedMedia: null,
       lassoSelection: null,
       filePath: path,
       savedPages: doc.pages,
@@ -495,7 +520,7 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
     set({
       document: doc,
       scrollRequest: 0,
-      selectedImage: null,
+      selectedMedia: null,
       lassoSelection: null,
       filePath: null,
       savedPages: doc.pages,

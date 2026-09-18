@@ -13,6 +13,7 @@ const doc = () => store.getState().document;
 const page = (index = 0) => doc().pages[index]!;
 
 const image: ImageLayer = {
+  kind: 'image',
   id: 'img-1',
   src: 'data:image/png;base64,iVBORw0KGgo=',
   mime: 'image/png',
@@ -44,13 +45,13 @@ describe('read-only lock', () => {
     const pageId = page().id;
     store.getState().commitStroke(pageId, makeStroke([[0, 0], [10, 10]]));
     store.getState().setLassoSelection({ pageId, strokeIds: [page().strokes[0]!.id] });
-    store.getState().addImage(pageId, image);
+    store.getState().addMedia(pageId, image);
     expect(store.getState().lassoSelection).not.toBeNull();
-    expect(store.getState().selectedImage).not.toBeNull();
+    expect(store.getState().selectedMedia).not.toBeNull();
 
     store.getState().setReadOnly(true);
     expect(store.getState().lassoSelection).toBeNull();
-    expect(store.getState().selectedImage).toBeNull();
+    expect(store.getState().selectedMedia).toBeNull();
   });
 
   it('refuses every content edit while locked', () => {
@@ -75,11 +76,11 @@ describe('read-only lock', () => {
     s.movePage(0, 1);
     s.setPageTemplate(0, 'grid');
     s.setPageBackground(0, '#000000');
-    s.addImage(pageId, image);
-    s.updateImage(pageId, image.id, { x: 99 });
-    s.removeImage(pageId, image.id);
-    s.bringImageToFront(pageId, image.id);
-    s.sendImageToBack(pageId, image.id);
+    s.addMedia(pageId, image);
+    s.updateMedia(pageId, image.id, { x: 99 });
+    s.removeMedia(pageId, image.id);
+    s.bringMediaToFront(pageId, image.id);
+    s.sendMediaToBack(pageId, image.id);
     s.setLassoSelection({ pageId, strokeIds: [strokeId] });
     s.transformSelection(pageId, [strokeId], { kind: 'translate', dx: 25, dy: 25 });
     s.restyleSelection(pageId, [strokeId], { color: '#ff0000' });

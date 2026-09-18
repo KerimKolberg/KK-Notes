@@ -5,6 +5,7 @@ import { Tooltip } from '../../ui/Tooltip';
 import {
   AXIS_LABEL_PRESETS,
   COLOR_PALETTE,
+  DEFAULT_WASHI_ACCENT,
   MAX_CURVE_AMPLITUDE,
   MAX_CURVE_CYCLES,
   MAX_HIGHLIGHTER_OPACITY,
@@ -12,9 +13,15 @@ import {
   MIN_CURVE_AMPLITUDE,
   MIN_CURVE_CYCLES,
   MIN_HIGHLIGHTER_OPACITY,
+  MAX_WASHI_OPACITY,
+  MAX_WASHI_WIDTH,
   MIN_STROKE_SIZE,
+  MIN_WASHI_OPACITY,
+  MIN_WASHI_WIDTH,
   STROKE_PATTERNS,
 } from '../constants';
+import { ERASE_SCOPES } from '../engine/eraseScope';
+import { TAPE_PATTERNS } from '../engine/tape';
 import { BRUSHES } from '../engine/brushes';
 import type {
   ArrowheadMode,
@@ -26,6 +33,9 @@ import type {
   ToolSettings,
   ToolType,
 } from '../types';
+
+/** Print colours offered for tape; white and black cover most real rolls. */
+const WASHI_ACCENTS: readonly string[] = [DEFAULT_WASHI_ACCENT, '#1f1f24', '#fde68a', '#bfdbfe', '#fbcfe8'];
 
 /** Icon for each pen preset; the palette shows the active one on the pen button. */
 export const BRUSH_ICONS: Readonly<Record<BrushId, LucideIcon>> = {
@@ -402,6 +412,132 @@ export function LineOptions({ settings, onSettingsChange }: PanelProps) {
           15°
         </Chip>
       </Row>
+    </div>
+  );
+}
+
+/** Washi tape: how wide the strip is, how see-through, and what is printed on it. */
+export function WashiOptions({ settings, onSettingsChange }: PanelProps) {
+  return (
+    <div className="flex w-[min(19rem,calc(100vw-2.5rem))] flex-col gap-1" data-washi-options>
+      <Row label="Pattern">
+        {TAPE_PATTERNS.map((pattern) => (
+          <Chip
+            key={pattern.id}
+            active={settings.washiPattern === pattern.id}
+            label={`${pattern.label} tape`}
+            onClick={() => onSettingsChange({ washiPattern: pattern.id })}
+          >
+            <span data-washi-pattern={pattern.id}>{pattern.label}</span>
+          </Chip>
+        ))}
+      </Row>
+      <Row label="Width">
+        <input
+          type="range"
+          className="h-1 w-32 accent-blue-600"
+          min={MIN_WASHI_WIDTH}
+          max={MAX_WASHI_WIDTH}
+          step={1}
+          value={settings.washiWidth}
+          aria-label="Tape width"
+          onChange={(e) => onSettingsChange({ washiWidth: Number(e.target.value) })}
+          data-washi-width
+        />
+        <span className="w-10 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400">{Math.round(settings.washiWidth)}px</span>
+      </Row>
+      <Row label="Opacity">
+        <input
+          type="range"
+          className="h-1 w-32 accent-blue-600"
+          min={MIN_WASHI_OPACITY}
+          max={MAX_WASHI_OPACITY}
+          step={0.05}
+          value={settings.washiOpacity}
+          aria-label="Tape opacity"
+          onChange={(e) => onSettingsChange({ washiOpacity: Number(e.target.value) })}
+          data-washi-opacity
+        />
+        <span className="w-10 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+          {Math.round(settings.washiOpacity * 100)}%
+        </span>
+      </Row>
+      <Row label="Print colour">
+        {WASHI_ACCENTS.map((accent) => (
+          <button
+            key={accent}
+            type="button"
+            aria-label={`Tape print colour ${accent}`}
+            aria-pressed={settings.washiAccent.toLowerCase() === accent.toLowerCase()}
+            data-washi-accent={accent}
+            className={`h-6 w-6 rounded-full ring-1 ring-black/15 dark:ring-white/25 ${
+              settings.washiAccent.toLowerCase() === accent.toLowerCase() ? 'outline-2 outline-offset-2 outline-blue-500' : ''
+            }`}
+            style={{ background: accent }}
+            onClick={() => onSettingsChange({ washiAccent: accent })}
+          />
+        ))}
+      </Row>
+      <Row label="Shape">
+        <Chip
+          active={settings.washiStraighten}
+          label="Straighten the strip"
+          onClick={() => onSettingsChange({ washiStraighten: !settings.washiStraighten })}
+        >
+          <span data-washi-straighten>Straighten lines</span>
+        </Chip>
+      </Row>
+    </div>
+  );
+}
+
+export interface EraserOptionsProps extends PanelProps {
+  onClearPage: () => void;
+  onClearDocument: () => void;
+}
+
+/**
+ * What the eraser takes, and the two bulk removals. Both clears are scoped by
+ * the same filter as the eraser itself, so "erase highlighter only" plus
+ * "clear the page" strips the highlighting off a page and leaves the writing.
+ */
+export function EraserOptions({ settings, onSettingsChange, onClearPage, onClearDocument }: EraserOptionsProps) {
+  const scope = ERASE_SCOPES.find((s) => s.id === settings.eraseScope) ?? ERASE_SCOPES[0]!;
+  return (
+    <div className="flex w-[min(19rem,calc(100vw-2.5rem))] flex-col gap-1" data-eraser-options>
+      <Row label="Erase">
+        {ERASE_SCOPES.map((option) => (
+          <Chip
+            key={option.id}
+            active={settings.eraseScope === option.id}
+            label={option.hint}
+            onClick={() => onSettingsChange({ eraseScope: option.id })}
+          >
+            <span data-erase-scope={option.id}>{option.label}</span>
+          </Chip>
+        ))}
+      </Row>
+      <div className="mt-1 border-t border-zinc-200 pt-1 dark:border-zinc-700">
+        <p className="px-1 pb-1 text-xs text-zinc-500 dark:text-zinc-400">
+          Removes {scope.id === 'all' ? 'all ink' : `${scope.label.toLowerCase()} strokes`}. Images, notes and tables are left alone.
+        </p>
+        <button
+          type="button"
+          className="inline-flex h-8 w-full items-center justify-center rounded-lg px-2 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/50"
+          onClick={onClearPage}
+          data-clear-page-ink
+        >
+          Clear this page
+        </button>
+        <button
+          type="button"
+          className="inline-flex h-8 w-full items-center justify-center rounded-lg px-2 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/50"
+          onClick={onClearDocument}
+          data-clear-document-ink
+        >
+          Clear every page
+        </button>
+      </div>
     </div>
   );
 }

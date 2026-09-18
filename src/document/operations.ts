@@ -7,7 +7,7 @@ import { isEphemeralTool } from '../inking/engine/pointerPolicy';
 import { createStrokeId } from '../inking/engine/ids';
 import type { Stroke } from '../inking/types';
 import { A4_DIMENSIONS, DEFAULT_TEMPLATE_CONFIG, DEFAULT_ZOOM, LIGHT_PAGE_BACKGROUND, PAGE_HISTORY_DEPTH } from './constants';
-import type { Document, FormValue, FormValues, ImageLayer, Page, PageTemplate, PdfPageRef, TemplateConfig, FormField } from './types';
+import type { Document, FormValue, FormValues, MediaObject, Page, PageTemplate, PdfPageRef, TemplateConfig, FormField } from './types';
 
 export function createPageId(): string {
   return `page_${createStrokeId()}`;
@@ -27,7 +27,7 @@ export interface PageInit {
   readonly pdf?: PdfPageRef;
   readonly formFields?: readonly FormField[];
   readonly formValues?: FormValues;
-  readonly images?: readonly ImageLayer[];
+  readonly media?: readonly MediaObject[];
 }
 
 export function createPage(init: PageInit = {}, pageNumber = 1): Page {
@@ -44,7 +44,7 @@ export function createPage(init: PageInit = {}, pageNumber = 1): Page {
     ...(init.pdf ? { pdf: init.pdf } : {}),
     formFields: init.formFields ?? [],
     formValues: init.formValues ?? {},
-    images: init.images ?? [],
+    media: init.media ?? [],
   };
 }
 
@@ -107,7 +107,7 @@ export function cloneStroke(stroke: Stroke): Stroke {
   };
 }
 
-/** Duplicate a page: new id, cloned strokes / images / form values, shared PDF bytes, empty history. */
+/** Duplicate a page: new id, cloned strokes / media / form values, shared PDF bytes, empty history. */
 export function clonePage(page: Page): Page {
   return {
     ...page,
@@ -118,7 +118,7 @@ export function clonePage(page: Page): Page {
     undoStack: [],
     redoStack: [],
     formValues: { ...page.formValues },
-    images: page.images.map((image) => ({ ...image, id: `img_${createStrokeId()}` })),
+    media: page.media.map((item) => ({ ...item, id: `${item.kind}_${createStrokeId()}` })),
   };
 }
 
@@ -127,8 +127,8 @@ export function withFormValue(page: Page, name: string, value: FormValue): Page 
   return { ...page, formValues: { ...page.formValues, [name]: value } };
 }
 
-export function withImages(page: Page, images: readonly ImageLayer[]): Page {
-  return images === page.images ? page : { ...page, images };
+export function withMedia(page: Page, media: readonly MediaObject[]): Page {
+  return media === page.media ? page : { ...page, media };
 }
 
 /** Replace a page's strokes, recording the previous list for undo. */

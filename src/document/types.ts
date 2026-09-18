@@ -75,11 +75,14 @@ export type FormValues = Readonly<Record<string, FormValue>>;
 // Media
 // ---------------------------------------------------------------------------
 
-export interface ImageLayer {
+/**
+ * What every media object has in common: a rotated box on the page and its
+ * place in the stack. All the placement maths in `media.ts` works on this, so
+ * an image, a sticky note and a table move and resize by exactly one
+ * implementation.
+ */
+export interface MediaBox {
   readonly id: string;
-  /** Data URL. */
-  readonly src: string;
-  readonly mime: string;
   /** Top-left of the unrotated box, page px. */
   readonly x: number;
   readonly y: number;
@@ -88,9 +91,41 @@ export interface ImageLayer {
   /** Degrees, clockwise about the box centre. */
   readonly rotation: number;
   readonly zIndex: number;
+  /** Pinned in place: dragging and resizing do nothing until it is unlocked. */
+  readonly locked?: boolean;
+}
+
+export interface ImageLayer extends MediaBox {
+  readonly kind: 'image';
+  /** Data URL. */
+  readonly src: string;
+  readonly mime: string;
   readonly naturalWidth: number;
   readonly naturalHeight: number;
 }
+
+/** A coloured card with free text on it. */
+export interface StickyNote extends MediaBox {
+  readonly kind: 'note';
+  readonly text: string;
+  /** CSS colour of the card. */
+  readonly color: string;
+}
+
+/**
+ * A grid of text cells. `cells` is row-major and always `rows * columns`
+ * long, so a cell is addressed arithmetically and adding a row or a column
+ * is a pure reshape rather than a nested-array edit.
+ */
+export interface TableLayer extends MediaBox {
+  readonly kind: 'table';
+  readonly rows: number;
+  readonly columns: number;
+  readonly cells: readonly string[];
+}
+
+export type MediaObject = ImageLayer | StickyNote | TableLayer;
+export type MediaKind = MediaObject['kind'];
 
 export interface PageDimensions {
   readonly width: number;
@@ -124,8 +159,8 @@ export interface Page {
   /** AcroForm widgets extracted from the PDF page. */
   readonly formFields: readonly FormField[];
   readonly formValues: FormValues;
-  /** User-placed images, drawn between the background and the ink. */
-  readonly images: readonly ImageLayer[];
+  /** User-placed images, notes and tables, drawn between the background and the ink. */
+  readonly media: readonly MediaObject[];
 }
 
 /**
@@ -159,7 +194,7 @@ export interface Document {
 /** Fields that affect how a page looks (used to key raster caches). */
 export type PageVisual = Pick<
   Page,
-  'dimensions' | 'template' | 'templateConfig' | 'backgroundColor' | 'strokes' | 'images' | 'pdf'
+  'dimensions' | 'template' | 'templateConfig' | 'backgroundColor' | 'strokes' | 'media' | 'pdf'
 >;
 
 /** Serialized PDF page reference; the bytes live once per source in `pdfSources`. */
@@ -189,7 +224,9 @@ export interface SerializedPage {
   readonly pdf?: SerializedPdfPageRef;
   readonly formFields?: readonly FormField[];
   readonly formValues?: FormValues;
-  readonly images?: readonly ImageLayer[];
+  readonly media?: readonly MediaObject[];
+  /** Files written before notes and tables existed; migrated to `media` on load. */
+  readonly images?: readonly Omit<ImageLayer, 'kind'>[];
 }
 
 export interface SerializedDocument {

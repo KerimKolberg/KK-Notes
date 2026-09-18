@@ -9,8 +9,11 @@ import {
   Lasso,
   MousePointer2,
   Redo2,
+  Scissors,
   Settings2,
   Spline,
+  StickyNote,
+  Table,
   Undo2,
   Zap,
 } from 'lucide-react';
@@ -20,7 +23,18 @@ import { Tooltip } from '../../ui/Tooltip';
 import { useDraggablePanel } from '../../ui/useDraggablePanel';
 import { useSafeAreaInsets } from '../../ui/useSafeAreaInsets';
 import type { ToolSettings, ToolType } from '../types';
-import { BRUSH_ICONS, BrushFlyout, LineOptions, PaletteSettings, PlaneOptions, StrokeOptions, ToolConfigRow, brushLabel } from './parts';
+import {
+  BRUSH_ICONS,
+  BrushFlyout,
+  EraserOptions,
+  LineOptions,
+  PaletteSettings,
+  PlaneOptions,
+  StrokeOptions,
+  ToolConfigRow,
+  WashiOptions,
+  brushLabel,
+} from './parts';
 
 export interface ToolPaletteProps {
   settings: Readonly<ToolSettings>;
@@ -32,12 +46,19 @@ export interface ToolPaletteProps {
   history?: { canUndo: boolean; canRedo: boolean; onUndo: () => void; onRedo: () => void };
   /** Opens a picker and places the chosen image on the page. */
   onInsertImage?: () => void;
+  /** Places a blank sticky note on the current page. */
+  onInsertNote?: () => void;
+  /** Places a blank table on the current page. */
+  onInsertTable?: () => void;
+  /** Bulk removals offered in the eraser's flyout; scoped by `eraseScope`. */
+  onClearPageInk?: () => void;
+  onClearDocumentInk?: () => void;
   draggable?: boolean;
   /** Read-only mode fades the whole palette out. */
   hidden?: boolean;
 }
 
-type Flyout = 'brush' | 'line' | 'stroke' | 'plane' | 'settings' | null;
+type Flyout = 'brush' | 'washi' | 'line' | 'stroke' | 'plane' | 'eraser' | 'settings' | null;
 
 const ERASERS: readonly ToolType[] = ['eraser-stroke', 'eraser-pixel'];
 
@@ -69,6 +90,10 @@ export const ToolPalette = memo(function ToolPalette({
   containerRef,
   history,
   onInsertImage,
+  onInsertNote,
+  onInsertTable,
+  onClearPageInk,
+  onClearDocumentInk,
   draggable = true,
   hidden = false,
 }: ToolPaletteProps) {
@@ -104,6 +129,7 @@ export const ToolPalette = memo(function ToolPalette({
   const BrushIcon = BRUSH_ICONS[settings.brush];
   const penActive = settings.tool === 'pen';
   const lineActive = settings.tool === 'line';
+  const washiActive = settings.tool === 'washi-tape';
   const planeActive = settings.tool === 'coordinate-plane';
 
   return (
@@ -148,6 +174,8 @@ export const ToolPalette = memo(function ToolPalette({
         <IconButton icon={Lasso} label="Lasso select" active={settings.tool === 'lasso'} onClick={() => pick('lasso')} data-palette-tool="lasso" />
         <IconButton icon={Zap} label="Laser pointer" active={laser} onClick={() => pick('laser-pointer')} data-palette-tool="laser-pointer" />
         {onInsertImage && <IconButton icon={ImagePlus} label="Insert image" onClick={onInsertImage} data-insert-image />}
+        {onInsertNote && <IconButton icon={StickyNote} label="Insert sticky note" onClick={onInsertNote} data-insert-note />}
+        {onInsertTable && <IconButton icon={Table} label="Insert table" onClick={onInsertTable} data-insert-table />}
 
         {DIVIDER}
 
@@ -174,6 +202,21 @@ export const ToolPalette = memo(function ToolPalette({
           onClick={() => pick('highlighter')}
           data-palette-tool="highlighter"
         />
+        <div className="relative">
+          <IconButton
+            icon={Scissors}
+            label="Washi tape"
+            hint={washiActive ? 'press again for patterns' : undefined}
+            active={washiActive}
+            hasPopover
+            tooltipDisabled={flyout === 'washi'}
+            onClick={() => (washiActive ? toggle('washi') : pick('washi-tape'))}
+            data-palette-tool="washi-tape"
+          />
+          <Popover open={flyout === 'washi'} onClose={close} label="Washi tape" side="top" align="center">
+            <WashiOptions settings={settings} onSettingsChange={onSettingsChange} />
+          </Popover>
+        </div>
 
         {DIVIDER}
 
@@ -226,7 +269,7 @@ export const ToolPalette = memo(function ToolPalette({
 
         {DIVIDER}
 
-        {/* Erasers: one button, two modes. */}
+        {/* Erasers: one button, two modes, and a flyout for what they take. */}
         <IconButton
           icon={Eraser}
           label={eraserIsPixel ? 'Pixel eraser' : 'Stroke eraser'}
@@ -241,6 +284,34 @@ export const ToolPalette = memo(function ToolPalette({
           data-palette-tool="eraser"
           data-eraser-mode={eraserIsPixel ? 'pixel' : 'stroke'}
         />
+        {onClearPageInk && onClearDocumentInk && (
+          <div className="relative">
+            <IconButton
+              icon={Ellipsis}
+              label="Eraser filters and bulk removal"
+              active={flyout === 'eraser'}
+              aria-haspopup="dialog"
+              aria-expanded={flyout === 'eraser'}
+              onClick={() => toggle('eraser')}
+              data-eraser-options-trigger
+              data-erase-scope={settings.eraseScope}
+            />
+            <Popover open={flyout === 'eraser'} onClose={close} label="Eraser filters and bulk removal" side="top" align="center">
+              <EraserOptions
+                settings={settings}
+                onSettingsChange={onSettingsChange}
+                onClearPage={() => {
+                  onClearPageInk();
+                  close();
+                }}
+                onClearDocument={() => {
+                  onClearDocumentInk();
+                  close();
+                }}
+              />
+            </Popover>
+          </div>
+        )}
 
         {history && (
           <>

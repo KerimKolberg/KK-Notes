@@ -102,3 +102,34 @@ export function defaultCover(title: string): Cover {
 /** Placed images default to this fraction of the page width when larger. */
 export const IMAGE_MAX_FRACTION = 0.6;
 export const MIN_IMAGE_SIZE = 16;
+
+// ---- Sticky notes and tables ----------------------------------------------
+
+/** A sticky note starts about the size of a real one, in page px. */
+export const NOTE_DEFAULT_SIZE = { width: 220, height: 200 } as const;
+export const DEFAULT_NOTE_COLOR = '#fef08a';
+
+/** Quick-pick card colours, chosen to keep dark text readable on them. */
+export const NOTE_COLORS: readonly string[] = ['#fef08a', '#bbf7d0', '#bfdbfe', '#fecaca', '#e9d5ff', '#fed7aa', '#f4f4f5'];
+
+/**
+ * Layout of a note's card, in page px. Shared by the three places a note is
+ * painted — the DOM overlay, the page snapshot raster and the PDF exporter —
+ * so that what is typed, what is scrolled past and what is printed agree.
+ */
+export const NOTE_GRIP_HEIGHT = 18;
+export const NOTE_PADDING = 8;
+export const NOTE_FONT_SIZE = 15;
+export const NOTE_LINE_HEIGHT = 1.35;
+
+/** …and of a table's, for the same reason. */
+export const TABLE_GRIP_HEIGHT = 14;
+export const TABLE_FONT_SIZE = 13;
+export const TABLE_CELL_PADDING = 5;
+
+/** Page px per table cell at the size a new table is created. */
+export const TABLE_CELL_SIZE = { width: 120, height: 36 } as const;
+export const DEFAULT_TABLE_ROWS = 3;
+export const DEFAULT_TABLE_COLUMNS = 3;
+export const MAX_TABLE_ROWS = 40;
+export const MAX_TABLE_COLUMNS = 20;

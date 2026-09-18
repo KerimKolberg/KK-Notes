@@ -44,6 +44,7 @@ import { coordinatePlaneFromDrag, createGeometricStroke, curveFromDrag, lineFrom
 import { polylineLength } from '../engine/simplify';
 import { StrokeBuilder } from '../engine/strokeBuilder';
 import { beginDwell, lockDwell, noteDwellMovement, type DwellState } from '../engine/dwell';
+import { inEraseScope, type EraseScope } from '../engine/eraseScope';
 import { laserStyleFor, strokeEraserRadius, styleForTool } from '../engine/toolStyles';
 import type {
   CanvasSize,
@@ -161,6 +162,8 @@ interface LassoSession {
 
 interface EraseSession {
   readonly kind: 'erase';
+  /** Which layer this erase is allowed to take, frozen at pointerdown. */
+  readonly scope: EraseScope;
   readonly pointerId: number;
   readonly pointerType: InkPointerType;
   readonly radius: number;
@@ -416,6 +419,9 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       let dirty = false;
       for (const stroke of strokesRef.current) {
         if (session.hits.has(stroke.id)) continue;
+        // Out of scope: the eraser passes straight over it, so a highlight can
+        // be scrubbed off without taking the writing underneath with it.
+        if (!inEraseScope(stroke, session.scope)) continue;
         if (strokeHitBySegment(stroke, from.x, from.y, to.x, to.y, session.radius)) {
           session.hits.add(stroke.id);
           hidden.add(stroke.id);
@@ -588,6 +594,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       if (tool === 'eraser-stroke') {
         const session: EraseSession = {
           kind: 'erase',
+          scope: settings.eraseScope,
           pointerId: e.pointerId,
           pointerType,
           radius: strokeEraserRadius(settings),

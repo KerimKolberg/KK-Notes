@@ -138,8 +138,8 @@ describe('document serialization', () => {
     expect(b2.pdf.data).toBe(b1.pdf.data); // shared buffer
     expect(b1.formFields).toEqual(pdfPage1.formFields);
     expect(b1.formValues).toEqual({ fullName: 'Ada', agree: true });
-    expect(b2.images).toEqual(pdfPage2.images);
-    expect(b1.images).toEqual([]);
+    expect(b2.media).toEqual(pdfPage2.media);
+    expect(b1.media).toEqual([]);
   });
 
   it('serializes to a stable, history-free shape', () => {

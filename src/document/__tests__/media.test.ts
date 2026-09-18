@@ -18,6 +18,7 @@ import {
 import type { ImageLayer } from '../types';
 
 const base: ImageLayer = {
+  kind: 'image',
   id: 'a',
   src: 'data:image/png;base64,AAAA',
   mime: 'image/png',

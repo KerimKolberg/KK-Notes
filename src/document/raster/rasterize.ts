@@ -5,9 +5,18 @@
  * background bitmap because PDF.js only runs on the main thread here.
  */
 import { drawStroke, type InkContext } from '../../inking/engine/renderer';
-import { sortedByZ } from '../media';
+import {
+  NOTE_FONT_SIZE,
+  NOTE_GRIP_HEIGHT,
+  NOTE_LINE_HEIGHT,
+  NOTE_PADDING,
+  TABLE_CELL_PADDING,
+  TABLE_FONT_SIZE,
+  TABLE_GRIP_HEIGHT,
+} from '../constants';
+import { noteTextBox, sortedByZ, tableCell, wrapText } from '../media';
 import { drawTemplate } from '../templates';
-import type { ImageLayer, PageDimensions, PageVisual } from '../types';
+import type { ImageLayer, MediaObject, PageDimensions, PageVisual, StickyNote, TableLayer } from '../types';
 
 export interface RasterSize {
   readonly width: number;
@@ -39,20 +48,104 @@ export function loadImageBitmap(src: string): Promise<ImageBitmap> {
   return pending;
 }
 
-/** Draw placed images in z order; failures are skipped. */
-export function drawImageLayers(ctx: InkContext, images: readonly ImageLayer[], bitmaps: ReadonlyMap<string, ImageBitmap>): void {
-  for (const image of sortedByZ(images)) {
-    const bitmap = bitmaps.get(image.id);
-    if (!bitmap || bitmap.width === 0) continue;
+const MEDIA_FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+
+/** The card of a sticky note, with its text laid out the way the DOM lays it out. */
+function drawNote(ctx: InkContext, note: StickyNote): void {
+  ctx.fillStyle = note.color;
+  ctx.fillRect(0, 0, note.width, note.height);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
+  ctx.fillRect(0, 0, note.width, NOTE_GRIP_HEIGHT);
+  if (note.text === '') return;
+
+  const box = noteTextBox(note);
+  ctx.font = `${NOTE_FONT_SIZE}px ${MEDIA_FONT}`;
+  ctx.fillStyle = '#27272a';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  const lineHeight = NOTE_FONT_SIZE * NOTE_LINE_HEIGHT;
+  const lines = wrapText(note.text, box.width, (t) => ctx.measureText(t).width);
+  ctx.save();
+  // The live note scrolls its overflow; a snapshot has no scrollbar, so clip
+  // instead of spilling text out over the page.
+  ctx.beginPath();
+  ctx.rect(NOTE_PADDING, NOTE_GRIP_HEIGHT + NOTE_PADDING, box.width, box.height);
+  ctx.clip();
+  lines.forEach((line, i) => {
+    ctx.fillText(line, NOTE_PADDING, NOTE_GRIP_HEIGHT + NOTE_PADDING + lineHeight * (i + 0.8));
+  });
+  ctx.restore();
+}
+
+/** A table's frame, cell grid and cell text. */
+function drawTable(ctx: InkContext, table: TableLayer): void {
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, table.width, table.height);
+  ctx.fillStyle = '#e4e4e7';
+  ctx.fillRect(0, 0, table.width, TABLE_GRIP_HEIGHT);
+
+  const gridHeight = Math.max(1, table.height - TABLE_GRIP_HEIGHT);
+  const cellWidth = table.width / table.columns;
+  const cellHeight = gridHeight / table.rows;
+  ctx.strokeStyle = '#d4d4d8';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let column = 0; column <= table.columns; column++) {
+    const x = column * cellWidth;
+    ctx.moveTo(x, TABLE_GRIP_HEIGHT);
+    ctx.lineTo(x, table.height);
+  }
+  for (let row = 0; row <= table.rows; row++) {
+    const y = TABLE_GRIP_HEIGHT + row * cellHeight;
+    ctx.moveTo(0, y);
+    ctx.lineTo(table.width, y);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = '#a1a1aa';
+  ctx.strokeRect(0, 0, table.width, table.height);
+
+  ctx.font = `${TABLE_FONT_SIZE}px ${MEDIA_FONT}`;
+  ctx.fillStyle = '#18181b';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  for (let row = 0; row < table.rows; row++) {
+    for (let column = 0; column < table.columns; column++) {
+      const text = tableCell(table, row, column);
+      if (text === '') continue;
+      const x = column * cellWidth;
+      const y = TABLE_GRIP_HEIGHT + row * cellHeight;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, cellWidth, cellHeight);
+      ctx.clip();
+      ctx.fillText(text, x + TABLE_CELL_PADDING, y + cellHeight / 2);
+      ctx.restore();
+    }
+  }
+}
+
+/**
+ * Draw placed media in z order. Notes and tables are HTML on a live page, but
+ * a page far from the viewport is a bitmap — so they are painted here too, or
+ * they would blink out of existence as the reader scrolls away from them.
+ */
+export function drawMediaLayers(ctx: InkContext, media: readonly MediaObject[], bitmaps: ReadonlyMap<string, ImageBitmap>): void {
+  for (const item of sortedByZ(media)) {
+    const bitmap = item.kind === 'image' ? bitmaps.get(item.id) : undefined;
+    if (item.kind === 'image' && (!bitmap || bitmap.width === 0)) continue;
     ctx.save();
-    ctx.translate(image.x + image.width / 2, image.y + image.height / 2);
-    ctx.rotate((image.rotation * Math.PI) / 180);
-    ctx.drawImage(bitmap, -image.width / 2, -image.height / 2, image.width, image.height);
+    ctx.translate(item.x + item.width / 2, item.y + item.height / 2);
+    ctx.rotate((item.rotation * Math.PI) / 180);
+    ctx.translate(-item.width / 2, -item.height / 2);
+    if (item.kind === 'image' && bitmap) ctx.drawImage(bitmap, 0, 0, item.width, item.height);
+    else if (item.kind === 'note') drawNote(ctx, item);
+    else if (item.kind === 'table') drawTable(ctx, item);
     ctx.restore();
   }
 }
 
-async function loadImages(images: readonly ImageLayer[]): Promise<Map<string, ImageBitmap>> {
+async function loadImages(media: readonly MediaObject[]): Promise<Map<string, ImageBitmap>> {
+  const images = media.filter((item): item is ImageLayer => item.kind === 'image');
   const out = new Map<string, ImageBitmap>();
   await Promise.all(
     images.map(async (image) => {
@@ -67,11 +160,11 @@ async function loadImages(images: readonly ImageLayer[]): Promise<Map<string, Im
 }
 
 /**
- * Paint background (template or PDF raster), images and strokes at `scale`
+ * Paint background (template or PDF raster), media and strokes at `scale`
  * device px per page unit.
  */
 export async function paintPage(ctx: InkContext, page: PageVisual, scale: number, background?: ImageBitmap): Promise<void> {
-  const bitmaps = await loadImages(page.images);
+  const bitmaps = await loadImages(page.media);
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   if (background && background.width > 0) {
     ctx.fillStyle = page.backgroundColor;
@@ -81,7 +174,7 @@ export async function paintPage(ctx: InkContext, page: PageVisual, scale: number
   } else {
     drawTemplate(ctx, page);
   }
-  drawImageLayers(ctx, page.images, bitmaps);
+  drawMediaLayers(ctx, page.media, bitmaps);
   for (const stroke of page.strokes) drawStroke(ctx, stroke);
 }
 
