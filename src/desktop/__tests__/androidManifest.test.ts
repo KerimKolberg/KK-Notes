@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-// @ts-expect-error -- a build script, not TypeScript; imported for its pure helpers.
-import { OPEN_WITH_FILTERS, xmlProblems } from '../../../scripts/android-customize.mjs';
+// @ts-expect-error -- a build script, not TypeScript; imported for its pure
+// helpers. It writes nothing unless it is run as a script, so importing it
+// here cannot rewrite the generated Android project.
+import { OPEN_WITH_FILTERS, generatedActivitySource, kotlinProblems, xmlProblems } from '../../../scripts/android-customize.mjs';
 
 const filters: string = OPEN_WITH_FILTERS;
 const problems = (xml: string, label = 'test'): string[] => xmlProblems(xml, label) as string[];
+const kotlin = (source: string, label = 'test'): string[] => kotlinProblems(source, label) as string[];
 
 /**
  * The manifest is generated, not committed, so this checks the fragment the
@@ -56,6 +59,68 @@ describe('the open-with intent filters', () => {
     // The generator writes this as a template literal, where a missing quote
     // is silent until aapt2 rejects the build.
     expect(problems(`<activity>${filters}</activity>`).filter((p) => p.includes('not quoted'))).toEqual([]);
+  });
+});
+
+/**
+ * `MainActivity.kt` is emitted from a JavaScript template literal, so every
+ * backslash has to survive two levels of escaping. One that did not cost a CI
+ * run: the Kotlin string ended at its first inner quote and the rest of the
+ * line became stray identifiers, which only `kotlinc` noticed, three minutes
+ * into a Gradle build.
+ */
+describe('the generated Kotlin checker', () => {
+  it('catches the escaping bug that broke the build', () => {
+    // The literal line that failed. Note it has an *even* number of quotes,
+    // so a parity check would pass it: what makes it invalid is `"{"` sitting
+    // against `uri` with no operator between them.
+    const broken = 'openWithJson = "{"uri":${JSONObject.quote(u)},"mime":${JSONObject.quote(m)}}"';
+    expect((broken.match(/"/g) ?? []).length % 2).toBe(0);
+    expect(kotlin(broken)).not.toEqual([]);
+    expect(kotlin(broken)[0]).toContain('identifier');
+  });
+
+  it('passes the form that replaced it', () => {
+    expect(kotlin('openWithJson = JSONObject().put("uri", uri.toString()).put("mime", mime).toString()')).toEqual([]);
+  });
+
+  it('catches a string that never closes', () => {
+    expect(kotlin('val s = "hello')[0]).toContain('never closed');
+  });
+
+  it('does not cry wolf over ordinary Kotlin', () => {
+    for (const line of [
+      'webView.addJavascriptInterface(InsetBridge(), "__notexInsets")',
+      'insetsJson = "{\\"top\\":${dp(bars.top)}}"',
+      "val marker = \"a${'$'}b\"",
+      '// a comment mentioning the "open with" bridge',
+      'val s = "a" + b + "c"',
+      'private var openWithJson: String? = null',
+    ]) {
+      expect(kotlin(line)).toEqual([]);
+    }
+  });
+
+  it('reads through a raw string without tripping on its contents', () => {
+    const raw = [
+      'webView.evaluateJavascript(',
+      '  """',
+      '  (() => { const s = "x"; })();',
+      '  """.trimIndent(),',
+      '  null,',
+      ')',
+    ].join('\n');
+    expect(kotlin(raw)).toEqual([]);
+  });
+
+  it('checks the file the build actually compiles', () => {
+    // The committed generated activity, not a fixture: this is the exact text
+    // Gradle hands to kotlinc.
+    const activity = generatedActivitySource() as string | null;
+    expect(activity).not.toBeNull();
+    expect(kotlin(activity ?? '', 'MainActivity.kt')).toEqual([]);
+    // And it still carries the bridge the boot sequence reads.
+    expect(activity).toContain('__notexOpenWith');
   });
 });
 

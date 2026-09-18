@@ -75,7 +75,12 @@ class MainActivity : TauriActivity() {
     if (intent.action != Intent.ACTION_VIEW && intent.action != Intent.ACTION_SEND) return
     // The MIME the sender declared, falling back to what the resolver knows.
     val mime = intent.type ?: contentResolver.getType(uri) ?: ""
-    openWithJson = "{"uri":${JSONObject.quote(uri.toString())},"mime":${JSONObject.quote(mime)}}"
+    // Built with JSONObject rather than string concatenation: this file is
+    // emitted from a JavaScript template literal, where a backslash has to
+    // survive two levels of escaping to reach Kotlin. It did not, and the
+    // string terminated at its first inner quote — a compile error three
+    // minutes into a Gradle run. There is nothing to escape this way.
+    openWithJson = JSONObject().put("uri", uri.toString()).put("mime", mime).toString()
   }
 
   /** Push a later intent into a page that has already booted. */

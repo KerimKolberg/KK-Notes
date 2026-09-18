@@ -15,6 +15,17 @@
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+/**
+ * True only when this file is *run*, not imported.
+ *
+ * The pure helpers below (`xmlProblems`, `kotlinProblems`, the manifest
+ * fragments) are unit-tested, and a test suite that rewrote the generated
+ * Android project as a side effect of importing them would be a nasty
+ * surprise. Imported, the script computes everything and writes nothing.
+ */
+const RUNNING = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const ANDROID = join(ROOT, 'src-tauri/gen/android');
@@ -26,7 +37,7 @@ export const MIN_SDK = CONFIG.bundle?.android?.minSdkVersion ?? 26;
 /** Android 14. Tauri's template compiles against the newest SDK and targets it too. */
 export const TARGET_SDK = 34;
 
-const check = process.argv.includes('--check');
+const check = process.argv.includes('--check') || !RUNNING;
 const problems = [];
 const changes = [];
 
@@ -243,7 +254,12 @@ class MainActivity : TauriActivity() {
     if (intent.action != Intent.ACTION_VIEW && intent.action != Intent.ACTION_SEND) return
     // The MIME the sender declared, falling back to what the resolver knows.
     val mime = intent.type ?: contentResolver.getType(uri) ?: ""
-    openWithJson = "{\"uri\":${'$'}{JSONObject.quote(uri.toString())},\"mime\":${'$'}{JSONObject.quote(mime)}}"
+    // Built with JSONObject rather than string concatenation: this file is
+    // emitted from a JavaScript template literal, where a backslash has to
+    // survive two levels of escaping to reach Kotlin. It did not, and the
+    // string terminated at its first inner quote — a compile error three
+    // minutes into a Gradle run. There is nothing to escape this way.
+    openWithJson = JSONObject().put("uri", uri.toString()).put("mime", mime).toString()
   }
 
   /** Push a later intent into a page that has already booted. */
@@ -379,6 +395,121 @@ export function xmlProblems(xml, label) {
   return found;
 }
 
+/**
+ * Broken string literals in generated Kotlin.
+ *
+ * `MainActivity.kt` is emitted from a JavaScript template literal, so every
+ * backslash in it has to survive two levels of escaping. One that does not
+ * ends the Kotlin string early, and the rest of the line becomes stray
+ * identifiers — which `kotlinc` only reports three minutes into a Gradle run,
+ * on CI, after the whole web and Rust build has already passed. This catches
+ * it in a second.
+ *
+ * Two signatures, because the interesting one is not a parity error. Losing
+ * the escaping in `"{\"uri\":…}"` produces `"{"uri":…}"`, which has an
+ * *even* number of quotes: what makes it invalid is the literal `"{"` sitting
+ * directly against the identifier `uri` with no operator between them. That
+ * is precisely what kotlinc calls "Unsupported [literal prefixes and
+ * suffixes]", so it is what this looks for — along with the simpler case of a
+ * string that never closes at all.
+ *
+ * It is a scanner, not a parser: raw (`"""`) strings, comments and character
+ * literals are skipped, and everything else is read a character at a time.
+ */
+export function kotlinProblems(source, label) {
+  const found = [];
+  const identifier = /[A-Za-z0-9_]/;
+  const lines = source.split('\n');
+  let inRaw = false;
+  let inBlockComment = false;
+
+  lines.forEach((line, index) => {
+    const number = index + 1;
+    let i = 0;
+    while (i < line.length) {
+      const rest = line.slice(i);
+
+      if (inBlockComment) {
+        const close = rest.indexOf('*/');
+        if (close === -1) return;
+        i += close + 2;
+        inBlockComment = false;
+        continue;
+      }
+      if (inRaw) {
+        const close = rest.indexOf('"""');
+        if (close === -1) return;
+        i += close + 3;
+        inRaw = false;
+        continue;
+      }
+      if (rest.startsWith('"""')) {
+        inRaw = true;
+        i += 3;
+        continue;
+      }
+      if (rest.startsWith('/*')) {
+        inBlockComment = true;
+        i += 2;
+        continue;
+      }
+      if (rest.startsWith('//')) return;
+      if (rest.startsWith("'")) {
+        // A character literal — `'$'` and friends, which contain a quote often
+        // enough to matter.
+        const close = line.indexOf("'", i + 1);
+        i = close === -1 ? line.length : close + 1;
+        continue;
+      }
+      if (rest.startsWith('"')) {
+        const before = i > 0 ? line[i - 1] : '';
+        // Walk to the closing quote, respecting escapes.
+        let j = i + 1;
+        let closed = false;
+        while (j < line.length) {
+          if (line[j] === '\\') {
+            j += 2;
+            continue;
+          }
+          if (line[j] === '"') {
+            closed = true;
+            break;
+          }
+          j += 1;
+        }
+        if (!closed) {
+          found.push(`${label}:${number}: string literal is never closed`);
+          return;
+        }
+        const after = line[j + 1] ?? '';
+        if (identifier.test(before) || identifier.test(after)) {
+          found.push(
+            `${label}:${number}: a string literal runs straight into an identifier — an escaped quote was probably lost between the generator and the file`,
+          );
+          return;
+        }
+        i = j + 1;
+        continue;
+      }
+      i += 1;
+    }
+  });
+
+  if (inRaw) found.push(`${label}: a raw string is never closed`);
+  return found;
+}
+
+/**
+ * The `MainActivity.kt` currently committed under `src-tauri/gen/android`.
+ *
+ * Exported so a unit test can check the file the Gradle build will actually
+ * compile, without the test needing Node's filesystem types.
+ */
+export function generatedActivitySource() {
+  const path = join(ANDROID, `app/src/main/java/${IDENTIFIER.split('.').join('/')}/MainActivity.kt`);
+  return existsSync(path) ? readFileSync(path, 'utf8') : null;
+}
+
 const RESOURCES = [
   'app/src/main/AndroidManifest.xml',
   'app/src/main/res/values/colors.xml',
@@ -429,7 +560,16 @@ const compileSdk = Number(/compileSdk = (\d+)/.exec(appGradle)?.[1] ?? 0);
 if (compileSdk < TARGET_SDK) problems.push(`compileSdk (${compileSdk}) must be at least targetSdk (${TARGET_SDK})`);
 
 const activity = join(ANDROID, `app/src/main/java/${IDENTIFIER.split('.').join('/')}/MainActivity.kt`);
-if (!existsSync(activity)) problems.push(`MainActivity.kt is not under the ${IDENTIFIER} package`);
+if (!existsSync(activity)) {
+  problems.push(`MainActivity.kt is not under the ${IDENTIFIER} package`);
+} else {
+  // Cheap syntax guard: the alternative is finding out from kotlinc, three
+  // minutes into a Gradle run on CI.
+  problems.push(...kotlinProblems(readFileSync(activity, 'utf8'), 'MainActivity.kt'));
+  if (!readFileSync(activity, 'utf8').includes('__notexOpenWith')) {
+    problems.push('MainActivity.kt does not expose the open-with bridge');
+  }
+}
 
 // Regression guard: `tauri android init` generates buildSrc's Gradle plugin
 // classes (BuildTask.kt, RustPlugin.kt) fresh under buildSrc/src/main/java/,
@@ -451,14 +591,16 @@ if (ANDROID_CONFIG.identifier && ANDROID_CONFIG.identifier !== IDENTIFIER) {
   problems.push(`tauri.android.conf.json identifier (${ANDROID_CONFIG.identifier}) does not match ${IDENTIFIER}`);
 }
 
-if (problems.length > 0) {
-  console.error('android-customize: problems found\n' + problems.map((p) => `  - ${p}`).join('\n'));
-  process.exit(1);
+if (RUNNING) {
+  if (problems.length > 0) {
+    console.error('android-customize: problems found\n' + problems.map((p) => `  - ${p}`).join('\n'));
+    process.exit(1);
+  }
+  console.log(
+    check
+      ? `android-customize: OK (${IDENTIFIER}, minSdk ${MIN_SDK}, targetSdk ${TARGET_SDK})`
+      : changes.length > 0
+        ? `android-customize: updated\n${changes.map((c) => `  - ${c}`).join('\n')}`
+        : 'android-customize: already up to date',
+  );
 }
-console.log(
-  check
-    ? `android-customize: OK (${IDENTIFIER}, minSdk ${MIN_SDK}, targetSdk ${TARGET_SDK})`
-    : changes.length > 0
-      ? `android-customize: updated\n${changes.map((c) => `  - ${c}`).join('\n')}`
-      : 'android-customize: already up to date',
-);
