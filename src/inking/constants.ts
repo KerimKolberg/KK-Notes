@@ -202,6 +202,7 @@ export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   holdToSnap: true,
   coordinatePlane: DEFAULT_COORDINATE_PLANE,
   stylus: DEFAULT_STYLUS_SETTINGS,
+  debugMode: false,
 };
 
 /** Quick-pick swatches shown in the toolbar. */

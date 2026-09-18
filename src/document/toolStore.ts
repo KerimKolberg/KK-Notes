@@ -7,9 +7,17 @@ export interface ToolStore {
   update: (patch: Partial<ToolSettings>) => void;
 }
 
-/** Tool settings shared by every page surface. */
+/**
+ * Tool settings shared by every page surface.
+ *
+ * The performance overlay starts open in a development build and closed in a
+ * shipped one, and the settings popover can switch it either way — a
+ * dev-only overlay with no off switch is in the way the moment you want to
+ * look at the thing underneath it, and a production build that can never show
+ * one is no use when a report says "it lags on my tablet".
+ */
 export const useToolStore = create<ToolStore>()((set) => ({
-  settings: { ...DEFAULT_TOOL_SETTINGS },
+  settings: { ...DEFAULT_TOOL_SETTINGS, debugMode: import.meta.env.DEV },
   update: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
 }));
 

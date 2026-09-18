@@ -6,6 +6,7 @@ import { useUndoRedoShortcuts } from '../../inking/hooks/useUndoRedoShortcuts';
 import { ToolPalette } from '../../inking/palette/ToolPalette';
 import { ToolConfigRow } from '../../inking/palette/parts';
 import { useDesktopIntegration } from '../../desktop/useDesktopIntegration';
+import { DebugOverlay } from '../../debug/DebugOverlay';
 import { useMediaInput } from '../hooks/useMediaInput';
 import { createStickyNote, createTable, nextZIndex, type NoteInit, type TableInit } from '../media';
 import type { MediaObject, Page } from '../types';
@@ -130,6 +131,8 @@ export function DocumentApp() {
       <TopBar />
       <div ref={stageRef} className="relative min-h-0 flex-1" onDragOver={onDragOver} onDrop={onDrop}>
         <DocumentViewer settingsRef={settingsRef} currentTool={settings.tool} />
+        {/* Above everything and inert, so it can never intercept a stroke. */}
+        <DebugOverlay enabled={settings.debugMode} />
         {/* Locked: the palette fades away entirely and a slim status pill takes
             its place, keeping the laser (which marks nothing) within reach. */}
         <ToolPalette

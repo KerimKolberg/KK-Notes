@@ -15,6 +15,7 @@ import { useLatestRef } from './hooks/useLatestRef';
 import { usePointerInk } from './hooks/usePointerInk';
 import { useUndoRedoShortcuts } from './hooks/useUndoRedoShortcuts';
 import styles from './InkingCanvas.module.css';
+import { DebugOverlay } from '../debug/DebugOverlay';
 import { ToolPalette } from './palette/ToolPalette';
 import type { CanvasSize, InkingCanvasHandle, InkingCanvasProps, Stroke, ToolSettings } from './types';
 
@@ -172,6 +173,7 @@ export const InkingCanvas = forwardRef<InkingCanvasHandle, InkingCanvasProps>(fu
           history={{ canUndo: history.canUndo, canRedo: history.canRedo, onUndo: history.undo, onRedo: history.redo }}
         />
       )}
+      <DebugOverlay enabled={settings.debugMode} />
     </div>
   );
 });

@@ -949,6 +949,18 @@ export function PaletteSettings({
           <option value="eraser-pixel">Pixel eraser</option>
         </select>
       </Row>
+      <Row label="Diagnostics">
+        <Switch checked={settings.debugMode} onChange={(v) => onSettingsChange({ debugMode: v })}>
+          <span data-debug-mode>Debug mode</span>
+        </Switch>
+      </Row>
+      {settings.debugMode && (
+        <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-debug-mode-note>
+          Shows frame rate, ink latency and React commit times in the corner.
+          Nothing is measured while this is off; switching it back on clears
+          the counters.
+        </p>
+      )}
       <div className="mt-1 border-t border-zinc-200 pt-1 dark:border-zinc-700">
         <button
           type="button"

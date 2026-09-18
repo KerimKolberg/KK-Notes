@@ -258,9 +258,10 @@ to say open a flyout when their own button is pressed again: the lasso's
 layers and mode, the pen's five brushes, the highlighter's width, opacity and
 gradient, the tape's patterns, the shape tool's paths and dashes, the
 coordinate plane's quadrants, steps and labels. The eraser is one button with
-two modes, the pattern / snapping and the input / stylus settings each live
-behind a popover, and everything the old text toolbar could do is still
-there.
+two modes, the pattern / stylus / diagnostics settings each live behind a
+popover, and everything the old text toolbar could do is still there. The
+settings popover is also where *Debug mode* opens the performance overlay
+(below).
 
 **Each tool's settings are its own.** The shape tool used to share the dash
 pattern, arrowheads and 15° snapping with the pen and the highlighter, which
@@ -913,6 +914,91 @@ representation, and `parseFloat` then strips the zeros `toPrecision` leaves
 behind. A plane saved before steps existed carries neither field and counts
 in whole cells.
 
+## Performance overlay (`src/debug/`)
+
+*Debug mode* in the settings popover opens a corner read-out of what the
+inking pipeline is actually costing. It starts on in a development build and
+off in a shipped one, and the toggle switches it either way: a dev-only
+overlay with no off switch is in the way the moment you want to see what is
+underneath it, and a production build that can never show one is no use when
+a report says "it lags on my tablet".
+
+Three numbers matter on a pen device, and none of them is visible from a
+profile taken after the fact:
+
+- **Frame rate**, counted from `requestAnimationFrame` — the only honest
+  measure of whether the app is keeping up with the display.
+- **Ink latency**: how long a pointer sample takes to become pixels. This is
+  what a person feels as the pen "lagging behind the nib", and it is *not*
+  the frame rate — a steady 60 fps with two frames of buffering feels worse
+  than a jittery 50 with none.
+- **React commit duration** per boundary, to catch a state update blocking
+  the main thread between a pointer event and the frame it should have
+  produced.
+
+**Measuring the latency.** `onPointerMove` hands the profiler the timestamp
+of the *newest* coalesced sample, and the live canvas's animation frame
+closes the measurement once its last `fill` / `stroke` call returns. Three
+choices worth knowing about:
+
+- The newest sample, not the batch. A 240 Hz pen delivers four samples per
+  60 Hz frame; the frame shows where the pen is *now*, so averaging in the
+  older ones would flatter the number.
+- `PointerEvent.timeStamp` shares its time origin with `performance.now()`
+  and, for a coalesced sample, is when the digitiser reported the point — so
+  this measures from the hardware, not from when the main thread got round to
+  the event. A delta that comes out negative or implausibly large is a clock
+  that does not share that origin, or a frame drawn for something other than
+  that input (a laser trail fading out); either is discarded rather than
+  averaged in.
+- It ends when the JS call returns, not when the pixels light up. The GPU
+  work after `fill()` is not observable from here, and forcing it to be — by
+  reading a pixel back — would stall the pipeline and change the number it
+  was trying to report. So this is main-thread latency, which is the part the
+  app controls.
+
+Both the mean and the p95 are shown, because a mean of 8 ms hides a stutter
+that a p95 of 40 ms does not. `RollingWindow` keeps them: a fixed-capacity
+ring over a pre-sized `Float64Array`, so pushing from a pointer handler at
+240 Hz allocates nothing and cannot itself become the thing that drops
+frames. The mean is a running sum with the evicted value subtracted — O(1) to
+read — re-summed from the buffer once per wrap, because a sum that is only
+ever added to and subtracted from drifts as rounding errors accumulate, and a
+latency read-out that slowly diverges from the truth is worse than none. The
+maximum and the percentiles are computed on read instead, since they are read
+a few times a second and written thousands of times.
+
+**Costing nothing when off.** `profilingEnabled()` is a module-level `let`,
+and every entry point returns on it before reading a clock — timing every
+frame in order to find out whether frames are slow would be its own answer.
+The frame loop only runs while the overlay is open, and the overlay itself
+repaints four times a second rather than per frame, since one that cost a
+frame to draw would be measuring itself. It is `pointer-events: none`
+throughout, so it can never swallow a stroke aimed at the page underneath it.
+
+**React tracking.** `<RenderProfiler>` wraps `InkSurface` and
+`DocumentViewer`, and any commit over 16 ms is counted and logged with the
+boundary that produced it. The boundary is always mounted rather than
+conditional: switching a `<Profiler>` in and out changes the element type at
+that position, so React would tear down and rebuild everything inside it,
+losing the canvases, the scroll position and any stroke in progress every
+time debug mode was toggled. Keeping it and making its callback inert costs
+nothing measurable. React only supplies commit timings from a development (or
+profiling) build, so in a plain production bundle that panel stays empty
+while the frame rate and latency — measured without React's help — keep
+working.
+
+It earned its keep immediately. `DocumentApp` reads the whole tool-settings
+object, so moving a slider inside a popover re-renders it; `DocumentViewer`
+was not memoised, so that re-ran the entire page strip — laying out every
+page and re-deriving the visible ranges — for a value the canvas reads
+through a ref and never from props. And `layoutInput` built `[singlePage]`
+inline, handing the layout memo a new array on every render and busting it
+even when nothing had moved. Both are fixed;
+`src/document/__tests__/renderBoundaries.test.ts` guards the memo chain from
+the app shell down to the ink, and the overlay's per-boundary commit counts
+are how it is confirmed against a running app.
+
 ## How it works
 
 **Two stacked canvases.** `committed` holds finished strokes and is only
@@ -1017,6 +1103,12 @@ src/inking/
     ├── useHistory.ts
     ├── useUndoRedoShortcuts.ts
     └── useLatestRef.ts
+
+src/debug/
+├── rollingWindow.ts        allocation-free ring window: mean, max, percentiles
+├── profiler.ts             fps, ink latency, draw time, React commits; inert when off
+├── DebugOverlay.tsx        the corner read-out
+└── RenderProfiler.tsx      always-mounted <Profiler> boundary
 ```
 
 [perfect-freehand]: https://github.com/steveruizok/perfect-freehand

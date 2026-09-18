@@ -379,6 +379,11 @@ export interface ToolSettings {
   coordinatePlane: CoordinatePlaneConfig;
   /** Hardware stylus button mappings (Windows Ink / W3C Pointer Events). */
   stylus: StylusSettings;
+  /**
+   * Show the performance overlay and collect the metrics behind it. Off means
+   * off: no timings are taken and no frame loop runs.
+   */
+  debugMode: boolean;
 }
 
 /** A stroke together with the index it occupied before removal. */

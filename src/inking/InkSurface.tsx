@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
+import { RenderProfiler } from '../debug/RenderProfiler';
 import { drawStroke, get2dContext, replayStrokes } from './engine/renderer';
 import { useLatestRef } from './hooks/useLatestRef';
 import { usePageCanvas } from './hooks/usePageCanvas';
@@ -139,22 +140,24 @@ export const InkSurface = memo(function InkSurface({
   });
 
   return (
-    <div
-      className={styles.surface}
-      data-tool={currentTool}
-      data-layer="surface"
-      style={{ pointerEvents: interactive ? 'auto' : 'none' }}
-    >
-      <canvas ref={committedRef} className={`${styles.layer} ${styles.committed}`} data-layer="committed" aria-hidden="true" />
-      <canvas
-        ref={liveRef}
-        className={`${styles.layer} ${styles.live}`}
-        data-layer="live"
-        role="img"
-        aria-label={ariaLabel}
-        onContextMenu={(e) => e.preventDefault()}
-        {...handlers}
-      />
-    </div>
+    <RenderProfiler id="InkSurface">
+      <div
+        className={styles.surface}
+        data-tool={currentTool}
+        data-layer="surface"
+        style={{ pointerEvents: interactive ? 'auto' : 'none' }}
+      >
+        <canvas ref={committedRef} className={`${styles.layer} ${styles.committed}`} data-layer="committed" aria-hidden="true" />
+        <canvas
+          ref={liveRef}
+          className={`${styles.layer} ${styles.live}`}
+          data-layer="live"
+          role="img"
+          aria-label={ariaLabel}
+          onContextMenu={(e) => e.preventDefault()}
+          {...handlers}
+        />
+      </div>
+    </RenderProfiler>
   );
 });

@@ -57,6 +57,7 @@ import type {
   StrokeStyle,
   ToolSettings,
 } from '../types';
+import { noteFramePainted, noteInput, profilingEnabled } from '../../debug/profiler';
 import { useLatestRef } from './useLatestRef';
 
 export interface UsePointerInkOptions {
@@ -306,8 +307,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       return buildLineHud(shape, geometricSegments(strokesRef.current, hiddenIdsRef.current));
     };
 
-    const renderFrame = (): void => {
-      frameRef.current = 0;
+    const paintFrame = (): void => {
       const session = sessionRef.current;
       const live = liveContext();
       if (!live) return;
@@ -367,6 +367,27 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       }
 
       drawLiveStroke(live, builder.points, builder.style);
+    };
+
+    /**
+     * One animation frame of the live layer.
+     *
+     * When the profiler is on this brackets the whole paint, so the latency it
+     * reports runs from the pointer sample's own hardware timestamp to the
+     * moment the last `fill` / `stroke` call returns. When it is off the
+     * wrapper is a single boolean test and no clock is read at all — timing
+     * every frame in order to find out whether frames are slow would be its
+     * own answer.
+     */
+    const renderFrame = (): void => {
+      frameRef.current = 0;
+      if (!profilingEnabled()) {
+        paintFrame();
+        return;
+      }
+      const startedAt = performance.now();
+      paintFrame();
+      noteFramePainted(startedAt, performance.now());
     };
 
     const scheduleFrame = (): void => {
@@ -663,6 +684,10 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       if (!session || session.pointerId !== e.pointerId) return;
 
       const samples = expandSamples(e.nativeEvent);
+      // The newest sample is the one the next frame will show the pen at, so
+      // that is what the latency is measured against; the older coalesced
+      // samples in the same batch are already history.
+      if (profilingEnabled()) noteInput(samples[samples.length - 1]?.timeStamp ?? e.timeStamp);
       if (session.kind === 'ink') {
         const now = performance.now();
         for (const sample of samples) {
