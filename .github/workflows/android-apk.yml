@@ -77,7 +77,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: notex-debug-apk
+          name: kk-notes-debug-apk
           path: ${{ steps.apk.outputs.path }}
 
       # Attached to a release rather than left as a build artifact, because an

@@ -33,7 +33,7 @@ const PHASE_NOTE: Readonly<Record<SyncStatus['phase'], string>> = {
  * Cloud Sync, in the library's settings.
  *
  * The panel is deliberately plain about what connecting does and does not
- * mean. Notes sync into one "Notex Sync" folder that this app creates, under
+ * mean. Notes sync into one "KK-Notes Sync" folder that this app creates, under
  * a permission (`drive.file`) that lets it see nothing else in the account —
  * which is worth saying out loud, because "sign in with Google" usually is not
  * that narrow and people are right to be wary.
@@ -156,7 +156,7 @@ export function CloudSyncPanel({ status, onClose, onSyncNow }: CloudSyncPanelPro
         <div className="mt-4 rounded-xl border border-zinc-200 p-3 dark:border-zinc-700">
           <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Google Drive</h3>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            Notes sync into a <strong>Notex Sync</strong> folder in your Drive. Notex asks only for access to the files
+            Notes sync into a <strong>KK-Notes Sync</strong> folder in your Drive. KK-Notes asks only for access to the files
             it creates there — it cannot see anything else in your account.
           </p>
 

@@ -30,7 +30,7 @@ export interface OpenedDocument extends ParsedNotex {
   readonly path: string | null;
 }
 
-const NOTEX_FILTERS = [{ name: 'Notes document', extensions: [NOTEX_EXTENSION, 'json'] }];
+const NOTEX_FILTERS = [{ name: 'KK-Notes document', extensions: [NOTEX_EXTENSION, 'json'] }];
 const PDF_FILTERS = [{ name: 'PDF document', extensions: ['pdf'] }];
 const DRAFT_KEY = 'notes.autosave.draft';
 

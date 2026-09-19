@@ -148,7 +148,7 @@ export function describeAccount(info: DriveAccountInfo, inApp = true): string {
   if (!inApp) return 'Cloud sync runs in the desktop and Android apps. In a browser your notes stay in this browser.';
   if (!info.configured) return 'This build has no Google client id, so Drive sync is unavailable.';
   if (!info.connected) return 'Not connected. Your notes stay on this device.';
-  if (!info.hasDriveAccess) return 'Connected, but Notex was not given access to Drive. Sign in again to fix it.';
+  if (!info.hasDriveAccess) return 'Connected, but KK-Notes was not given access to Drive. Sign in again to fix it.';
   return info.account ? `Connected as ${info.account}.` : 'Connected.';
 }
 

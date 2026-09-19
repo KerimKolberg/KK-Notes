@@ -100,11 +100,11 @@ pub fn read_thumbnail_source(path: &Path, fallback_title: &str) -> Result<Thumbn
     let file = File::open(path).map_err(|e| format!("Cannot open {}: {e}", path.display()))?;
     let reader = BufReader::new(file);
     let head: NotexHead =
-        serde_json::from_reader(reader).map_err(|e| format!("{} is not a Notes document: {e}", path.display()))?;
+        serde_json::from_reader(reader).map_err(|e| format!("{} is not a KK-Notes document: {e}", path.display()))?;
 
     if let Some(format) = head.format.as_deref() {
         if format != "notex" {
-            return Err(format!("{} is not a Notes document", path.display()));
+            return Err(format!("{} is not a KK-Notes document", path.display()));
         }
     }
 

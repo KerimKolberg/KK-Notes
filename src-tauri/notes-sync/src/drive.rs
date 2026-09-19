@@ -17,7 +17,7 @@
 //! - A file the user drags somewhere else in Drive is still *this* file, since
 //!   its identity never depended on where it sits.
 //!
-//! Folders are still mirrored for real, under one "Notex Sync" folder, because
+//! Folders are still mirrored for real, under one "KK-Notes Sync" folder, because
 //! someone who opens Drive should see their notebooks arranged the way they
 //! arranged them — the properties are how the app finds things, not a
 //! substitute for doing that properly.
@@ -38,7 +38,7 @@ use crate::{
 };
 
 /// The one folder this app creates at the root of a user's Drive.
-pub const SYNC_FOLDER_NAME: &str = "Notex Sync";
+pub const SYNC_FOLDER_NAME: &str = "KK-Notes Sync";
 pub const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
 pub const NOTEX_MIME: &str = "application/vnd.notex+json";
 
@@ -101,7 +101,7 @@ impl<K: TokenSource> TokenSource for std::sync::Arc<K> {
 pub struct GoogleDrive<T: HttpTransport, K: TokenSource> {
     transport: T,
     tokens: K,
-    /// The id of "Notex Sync", once it has been found or created.
+    /// The id of "KK-Notes Sync", once it has been found or created.
     root_folder: Mutex<Option<String>>,
     /// Library path to Drive file id, learned from every listing. Needed
     /// because `upload` and `fetch` are given a path and Drive wants an id.
@@ -155,7 +155,7 @@ impl<T: HttpTransport, K: TokenSource> GoogleDrive<T, K> {
         Err(drive_error(&response))
     }
 
-    /// The id of "Notex Sync", creating it the first time.
+    /// The id of "KK-Notes Sync", creating it the first time.
     pub fn root_folder_id(&self) -> ProviderResult<String> {
         if let Some(id) = self.root_folder.lock().unwrap().clone() {
             return Ok(id);
@@ -212,7 +212,7 @@ impl<T: HttpTransport, K: TokenSource> GoogleDrive<T, K> {
     }
 
     /// The Drive folder that should hold `path`, creating any missing part of
-    /// the chain. `"Maths/week 1.notex"` resolves `Maths` under "Notex Sync".
+    /// the chain. `"Maths/week 1.notex"` resolves `Maths` under "KK-Notes Sync".
     fn parent_for(&self, path: &str) -> ProviderResult<String> {
         let mut parent = self.root_folder_id()?;
         let mut walked = String::new();
@@ -763,14 +763,14 @@ mod tests {
     #[test]
     fn the_sync_folder_is_found_before_it_is_created() {
         let transport = MockTransport::new();
-        transport.reply_json(200, r#"{"files":[{"id":"already-there","name":"Notex Sync"}]}"#);
+        transport.reply_json(200, r#"{"files":[{"id":"already-there","name":"KK-Notes Sync"}]}"#);
         let drive = drive(transport);
         assert_eq!(drive.root_folder_id().unwrap(), "already-there");
         // Cached: a second ask is free.
         assert_eq!(drive.root_folder_id().unwrap(), "already-there");
         assert_eq!(drive.transport.request_count(), 1);
         let query = drive.transport.request(0).url;
-        assert!(query.contains("Notex%20Sync"), "{query}");
+        assert!(query.contains("KK-Notes%20Sync"), "{query}");
         assert!(query.contains("%27root%27%20in%20parents"), "{query}");
     }
 
@@ -783,7 +783,7 @@ mod tests {
         let create = drive.transport.request(1);
         assert_eq!(create.method, Method::Post);
         let body = body_text(&create);
-        assert!(body.contains("\"name\":\"Notex Sync\""), "{body}");
+        assert!(body.contains("\"name\":\"KK-Notes Sync\""), "{body}");
         assert!(body.contains(FOLDER_MIME), "{body}");
     }
 

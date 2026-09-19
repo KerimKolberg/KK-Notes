@@ -337,11 +337,11 @@ mod tests {
         // merely wrong, it is a different query.
         let url = query_url(
             "https://www.googleapis.com/drive/v3/files",
-            &[("q", "name = 'Notex Sync' and trashed = false")],
+            &[("q", "name = 'KK-Notes Sync' and trashed = false")],
         );
         assert_eq!(
             url,
-            "https://www.googleapis.com/drive/v3/files?q=name%20%3D%20%27Notex%20Sync%27%20and%20trashed%20%3D%20false"
+            "https://www.googleapis.com/drive/v3/files?q=name%20%3D%20%27KK-Notes%20Sync%27%20and%20trashed%20%3D%20false"
         );
     }
 

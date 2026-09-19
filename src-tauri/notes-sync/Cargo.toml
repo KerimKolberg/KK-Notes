@@ -1,7 +1,7 @@
 [package]
 name = "notes-sync"
 version = "0.1.0"
-description = "Document library indexing and cross-device sync for the Notes app"
+description = "Document library indexing and cross-device sync for KK-Notes"
 edition = "2021"
 rust-version = "1.77"
 

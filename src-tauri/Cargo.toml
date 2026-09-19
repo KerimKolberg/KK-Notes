@@ -4,7 +4,7 @@ members = [".", "notes-sync", "notex-http"]
 [package]
 name = "notes-taking-app"
 version = "0.1.0"
-description = "Multi-page inking notes for pen-first 2-in-1 devices"
+description = "KK-Notes: multi-page inking notes for pen-first 2-in-1 devices"
 authors = ["Notes contributors"]
 edition = "2021"
 rust-version = "1.77"

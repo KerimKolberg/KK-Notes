@@ -11,7 +11,7 @@ export const NOTEX_VERSION = 1 as const;
 export const NOTEX_EXTENSION = 'notex';
 export const NOTEX_MIME = 'application/x-notex+json';
 
-export const APP_INFO = { name: 'Notes', version: '0.1.0' } as const;
+export const APP_INFO = { name: 'KK-Notes', version: '0.1.0' } as const;
 
 export interface NotexFile {
   readonly format: typeof NOTEX_FORMAT;
@@ -42,7 +42,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Parse a `.notex` envelope, or a bare serialized document (`.json`). */
 export function parseNotex(text: string): ParsedNotex {
   const parsed: unknown = JSON.parse(text);
-  if (!isRecord(parsed)) throw new Error('Not a Notes document');
+  if (!isRecord(parsed)) throw new Error('Not a KK-Notes document');
   if (parsed.format === NOTEX_FORMAT) {
     if (parsed.version !== NOTEX_VERSION) throw new Error(`Unsupported .notex version ${String(parsed.version)}`);
     if (!isRecord(parsed.document)) throw new Error('Corrupt .notex file: missing document');
@@ -54,7 +54,7 @@ export function parseNotex(text: string): ParsedNotex {
   if (Array.isArray(parsed.pages) && 'version' in parsed) {
     return { document: fromSerializable(parsed as unknown as SerializedDocument), savedAt: null };
   }
-  throw new Error('Not a Notes document');
+  throw new Error('Not a KK-Notes document');
 }
 
 export function decodeNotex(text: string): Document {

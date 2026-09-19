@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Notes",
+  "productName": "KK-Notes",
   "version": "0.1.0",
   "identifier": "com.notex.app",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Notes",
+        "title": "KK-Notes",
         "width": 1280,
         "height": 820,
         "minWidth": 720,
@@ -52,8 +52,8 @@
         "ext": [
           "notex"
         ],
-        "name": "Notes Document",
-        "description": "Notes inking document",
+        "name": "KK-Notes Document",
+        "description": "KK-Notes inking document",
         "mimeType": "application/x-notex+json",
         "role": "Editor"
       }

@@ -33,6 +33,10 @@ const CONFIG = JSON.parse(readFileSync(join(ROOT, 'src-tauri/tauri.conf.json'), 
 const ANDROID_CONFIG = JSON.parse(readFileSync(join(ROOT, 'src-tauri/tauri.android.conf.json'), 'utf8'));
 
 export const IDENTIFIER = CONFIG.identifier;
+/** What the launcher, the task switcher and the share sheet call this app. */
+export const PRODUCT_NAME = CONFIG.productName;
+/** The folio navy, behind the adaptive icon's foreground layer. */
+export const LAUNCHER_BACKGROUND = '#23415E';
 export const MIN_SDK = CONFIG.bundle?.android?.minSdkVersion ?? 26;
 /** Android 14. Tauri's template compiles against the newest SDK and targets it too. */
 export const TARGET_SDK = 34;
@@ -197,6 +201,27 @@ edit('app/src/main/AndroidManifest.xml', (xml) => {
   }
   return out;
 });
+
+// ---------------------------------------------------------------------------
+// Name and launcher icon
+// ---------------------------------------------------------------------------
+
+/**
+ * The launcher label.
+ *
+ * `tauri android init` writes these from `productName`, so a regenerate would
+ * get them right on its own — but the generated project is committed, and
+ * without this the committed copy would keep whatever name it was generated
+ * with. Derived from the config rather than typed out, so there is one place
+ * the app's name lives.
+ */
+export function renameStrings(xml, name) {
+  return xml
+    .replace(/<string name="app_name">[^<]*<\/string>/, `<string name="app_name">"${name}"</string>`)
+    .replace(/<string name="main_activity_title">[^<]*<\/string>/, `<string name="main_activity_title">"${name}"</string>`);
+}
+
+edit('app/src/main/res/values/strings.xml', (xml) => renameStrings(xml, PRODUCT_NAME));
 
 // ---------------------------------------------------------------------------
 // SDK levels
@@ -433,21 +458,30 @@ write(
 `,
 );
 
-// Adaptive launcher icon (API 26+, which is our minSdk).
+/**
+ * Adaptive launcher icon (API 26+, which is our minSdk).
+ *
+ * No `<monochrome>`: a themed icon is drawn from the foreground's *alpha*
+ * alone, and this foreground is a filled page with the monogram on it, so as a
+ * silhouette it would be a featureless rounded rectangle. Leaving the element
+ * out makes Android use the normal icon, which is what it did before themed
+ * icons existed and is better than a blank tile.
+ */
 const ADAPTIVE = `<?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@mipmap/ic_launcher_foreground" />
-    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
 </adaptive-icon>
 `;
 write('app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml', ADAPTIVE);
 write('app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml', ADAPTIVE);
 
+// The colour the launcher paints behind the adaptive icon's foreground, and
+// therefore what a circular or squircle mask crops down to.
 edit('app/src/main/res/values/colors.xml', (xml) =>
   xml.includes('ic_launcher_background')
-    ? xml
-    : xml.replace('</resources>', '    <color name="ic_launcher_background">#1F1F24</color>\n</resources>'),
+    ? xml.replace(/<color name="ic_launcher_background">[^<]*<\/color>/, `<color name="ic_launcher_background">${LAUNCHER_BACKGROUND}</color>`)
+    : xml.replace('</resources>', `    <color name="ic_launcher_background">${LAUNCHER_BACKGROUND}</color>\n</resources>`),
 );
 
 // ---------------------------------------------------------------------------
@@ -685,6 +719,20 @@ if (!manifest.includes('android:pathPattern=".*\\\\.pdf"')) {
 }
 // The OAuth redirect. Checked for shape, not just presence: see above.
 if (manifest) problems.push(...oauthFilterProblems(manifest, IDENTIFIER, 'AndroidManifest.xml'));
+
+const strings = existsSync(join(ANDROID, 'app/src/main/res/values/strings.xml'))
+  ? readFileSync(join(ANDROID, 'app/src/main/res/values/strings.xml'), 'utf8')
+  : '';
+if (strings && !strings.includes(`>"${PRODUCT_NAME}"<`)) {
+  problems.push(`strings.xml does not call the app ${PRODUCT_NAME}`);
+}
+
+const colors = existsSync(join(ANDROID, 'app/src/main/res/values/colors.xml'))
+  ? readFileSync(join(ANDROID, 'app/src/main/res/values/colors.xml'), 'utf8')
+  : '';
+if (colors && !colors.includes(`<color name="ic_launcher_background">${LAUNCHER_BACKGROUND}</color>`)) {
+  problems.push(`colors.xml does not set ic_launcher_background to ${LAUNCHER_BACKGROUND}`);
+}
 
 
 const appGradle = existsSync(join(ANDROID, 'app/build.gradle.kts'))

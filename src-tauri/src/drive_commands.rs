@@ -208,7 +208,7 @@ fn redeem(app: &AppHandle, session: &AuthSession, code: &str) -> Result<DriveAcc
     let mut tokens = oauth::parse_token_response(&response.body, notes_sync::now_ms(), None)?;
 
     if !tokens.has_drive_scope() {
-        return Err("Notex was not given access to Google Drive. Sign in again and leave the Drive permission ticked.".to_string());
+        return Err("KK-Notes was not given access to Google Drive. Sign in again and leave the Drive permission ticked.".to_string());
     }
 
     // Best effort: an account with no email still syncs, it just shows as

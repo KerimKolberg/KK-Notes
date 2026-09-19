@@ -295,7 +295,7 @@ async function checkCloudPanel(browser) {
   );
   check(
     'it names the folder and the narrow permission',
-    await page.$eval('[data-cloud-panel]', (el) => el.textContent ?? '').then((t) => t.includes('Notex Sync') && t.includes('cannot see anything else')),
+    await page.$eval('[data-cloud-panel]', (el) => el.textContent ?? '').then((t) => t.includes('KK-Notes Sync') && t.includes('cannot see anything else')),
   );
   check('no page errors', errors.length === 0, errors.join(' | '));
   await ctx.close();

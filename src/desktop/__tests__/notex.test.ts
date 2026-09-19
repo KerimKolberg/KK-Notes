@@ -141,8 +141,8 @@ describe('.notex round trip', () => {
     const bare = JSON.stringify(buildNotex(doc).document);
     expect(parseNotex(bare).savedAt).toBeNull();
     expect(decodeNotex(bare).title).toBe('Signals & Systems');
-    expect(() => parseNotex('{"hello":"world"}')).toThrow(/Not a Notes document/);
-    expect(() => parseNotex('[]')).toThrow(/Not a Notes document/);
+    expect(() => parseNotex('{"hello":"world"}')).toThrow(/Not a KK-Notes document/);
+    expect(() => parseNotex('[]')).toThrow(/Not a KK-Notes document/);
     expect(() => parseNotex(JSON.stringify({ format: 'notex', version: 2, document: {} }))).toThrow(/version/);
     expect(() => parseNotex('not json')).toThrow();
   });

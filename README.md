@@ -1,4 +1,6 @@
-# Notes: multi-page inking
+# KK-Notes
+
+<img src="public/icon.svg" alt="" width="96" align="right">
 
 A React + TypeScript notes app for 2-in-1 pen/touch laptops: a low-latency
 inking engine (`src/inking/`) with palm rejection, pressure-sensitive strokes
@@ -23,6 +25,7 @@ npm run typecheck      # strict tsc
 npm run build          # typecheck + production bundle + bundle guard
 npm run check:bundle   # assert pdf.js / pdf-lib are lazy chunks
 npm run check:ui       # Playwright: stacking order and hit-testing at real viewport sizes
+npm run icons          # redraw the app icons and the favicon from one geometry
 npm run check:rust     # cargo check of the Tauri shell (Windows MSVC target, no TLS)
 npm run test:rust      # the sync engine and the HTTP transport (no webview needed)
 npm run check:android  # assert the Android project carries this repo's customizations
@@ -51,7 +54,7 @@ bundles download it otherwise). Then:
 npm install                 # installs @tauri-apps/api, plugin-dialog, plugin-fs, @tauri-apps/cli
 npm run desktop:dev         # starts Vite and the Tauri window
 npm run desktop:build       # installers in src-tauri/target/release/bundle/
-npx tauri icon my-icon.png  # replace the generated placeholder icons in src-tauri/icons/
+npm run icons               # redraw every app icon from scripts/make-icons.mjs
 ```
 
 From a non-Windows host the Rust side can still be verified without the
@@ -262,7 +265,7 @@ rebuilt by walking parents; the digest arrives with the listing, so deciding
 what changed costs no downloads — which is the difference between sync being
 usable on a phone and not; and a file the user drags somewhere else in Drive
 is still the same file, because its identity never depended on where it sits.
-Folders are still mirrored for real under one **Notex Sync** folder, because
+Folders are still mirrored for real under one **KK-Notes Sync** folder, because
 someone who opens Drive should see their notebooks arranged the way they
 arranged them.
 
@@ -1420,6 +1423,40 @@ and text.
 `remove` stores strokes with their original indices, `clear` stores the list.
 Undo inverts, redo re-applies, depth is capped.
 
+## The mark (`scripts/make-icons.mjs`)
+
+A navy folio with a light page on it and a teal **KK** monogram, where the
+second K's stem is a stylus: a pen that runs past the cap height, tapers to a
+nib below the baseline, and carries its cap as a separate triangle above.
+
+**The geometry is declared once**, in a unit square, as a flat list of rounded
+rectangles, thick segments and triangles. Everything else is a projection of
+it — the desktop PNGs, the Windows `.ico`, the five Android densities and the
+SVG favicon all rasterise or emit the same shape list. An icon set where the
+48 px launcher tile and the browser tab were drawn separately drifts, and
+nobody notices until they are side by side.
+
+Rendering is a supersampled point-in-shape test (6×6 per pixel below 256 px,
+4×4 above) rather than a real rasteriser: it is what makes the K's diagonals
+legible on a 48 px tile, and a scanline polygon filler would be a hundred
+lines to do the same job for three shape kinds. Coverage is un-premultiplied
+on the way out, or every edge would fade towards black and the mark would look
+like it had a drop shadow.
+
+Two details exist because they fail *silently* otherwise, and both are pinned
+by tests:
+
+- **The Android adaptive foreground leaves the folio body out** and is drawn at
+  72/108 of the tile. The launcher paints the background layer (the same navy,
+  from `colors.xml`) and masks the edges to whatever shape it likes, so a
+  circular mask crops navy rather than the monogram. The `<monochrome>` layer
+  is deliberately absent: a themed icon is drawn from the foreground's *alpha*
+  alone, and this foreground is a filled page, so as a silhouette it would be
+  a featureless rounded rectangle.
+- **The monogram is centred on its bounding box, not its letter widths.** The
+  K's arms are thick segments whose far corners reach past the nominal tip by
+  half a stroke, so centring on the tips sits the pair visibly right of centre.
+
 ## Browser checks (`scripts/ui-check.mjs`)
 
 `vitest` runs in a `node` environment with no DOM here, which is the right
@@ -1493,6 +1530,12 @@ src/inking/
     ├── useHistory.ts
     ├── useUndoRedoShortcuts.ts
     └── useLatestRef.ts
+
+scripts/
+├── make-icons.mjs          the mark, and every icon projected from it
+├── android-customize.mjs   this project's edits to the generated Android project
+├── ui-check.mjs            Playwright: stacking order and hit-testing
+└── check-bundle.mjs        assert pdf.js / pdf-lib stay out of the critical path
 
 src/debug/
 ├── rollingWindow.ts        allocation-free ring window: mean, max, percentiles

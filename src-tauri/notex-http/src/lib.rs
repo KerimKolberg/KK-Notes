@@ -45,7 +45,7 @@ impl UreqTransport {
                 // Google redirects `www.googleapis.com` occasionally; following
                 // a couple is normal, following a chain is a loop.
                 .redirects(5)
-                .user_agent(concat!("Notex/", env!("CARGO_PKG_VERSION")))
+                .user_agent(concat!("KK-Notes/", env!("CARGO_PKG_VERSION")))
                 .build(),
         }
     }

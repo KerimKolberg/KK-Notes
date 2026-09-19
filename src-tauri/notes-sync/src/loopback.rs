@@ -138,7 +138,7 @@ fn handle(mut stream: TcpStream, expected_state: &str) -> Outcome {
             &mut stream,
             200,
             "Signed in",
-            "You are signed in to Google Drive. You can close this tab and go back to Notex.",
+            "You are signed in to Google Drive. You can close this tab and go back to KK-Notes.",
         ),
         Err(message) => respond(&mut stream, 400, "Sign-in failed", message),
     }
