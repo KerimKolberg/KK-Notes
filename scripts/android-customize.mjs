@@ -141,6 +141,22 @@ export const OPEN_WITH_FILTERS = `
             </intent-filter>`;
 
 /**
+ * The share sheet, which *sends* rather than views.
+ *
+ * Its own marker and its own filter because it arrives differently: an
+ * ACTION_SEND intent leaves `data` null and puts the document in
+ * `EXTRA_STREAM`, so it needs the Kotlin side to look in the right place as
+ * well as the manifest to accept it at all.
+ */
+export const SHARE_FILTER = `
+            <!-- notex: share-sheet. "Share → KK-Notes" from a file manager. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>`;
+
+/**
  * The OAuth redirect.
  *
  * Android has no loopback port a browser will reach, so the desktop's
@@ -199,6 +215,10 @@ edit('app/src/main/AndroidManifest.xml', (xml) => {
   if (!out.includes('notex: open-with')) {
     out = out.replace('        </activity>', `${OPEN_WITH_FILTERS}\n        </activity>`);
   }
+  // "Share" from the same place, which is a different action entirely.
+  if (!out.includes('notex: share-sheet')) {
+    out = out.replace('        </activity>', `${SHARE_FILTER}\n        </activity>`);
+  }
   return out;
 });
 
@@ -241,6 +261,7 @@ const MAIN_ACTIVITY = `package ${IDENTIFIER}
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -331,8 +352,13 @@ class MainActivity : TauriActivity() {
 
   /** Remember the document this launch was asked to open, if any. */
   private fun noteOpenWith(intent: Intent?) {
-    val uri = intent?.data ?: return
+    if (intent == null) return
     if (intent.action != Intent.ACTION_VIEW && intent.action != Intent.ACTION_SEND) return
+    // The two actions put the document in different places. ACTION_VIEW — what
+    // "Open with" sends — carries it in intent.data; ACTION_SEND, from a share
+    // sheet, carries it in EXTRA_STREAM and leaves intent.data null. Reading
+    // only the former is why a share used to do nothing at all.
+    val uri = intent.data ?: extraStream(intent) ?: return
     // Google's redirect arrives as ACTION_VIEW too, on this app's own scheme.
     // It is not a document, and handing it to the importer would try to open
     // an authorization code as a PDF.
@@ -349,6 +375,15 @@ class MainActivity : TauriActivity() {
     // minutes into a Gradle run. There is nothing to escape this way.
     openWithJson = JSONObject().put("uri", uri.toString()).put("mime", mime).toString()
   }
+
+  /** The shared document, across the API level where the accessor changed. */
+  @Suppress("DEPRECATION")
+  private fun extraStream(intent: Intent): Uri? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    } else {
+      intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+    }
 
   /** Push a later intent into a page that has already booted. */
   private fun pushOpenWith() {
@@ -716,6 +751,9 @@ if (!manifest.includes('android:mimeType="application/pdf"')) {
 }
 if (!manifest.includes('android:pathPattern=".*\\\\.pdf"')) {
   problems.push('AndroidManifest.xml has no .pdf pathPattern filter (senders that type files as octet-stream)');
+}
+if (manifest && !manifest.includes('android.intent.action.SEND')) {
+  problems.push('AndroidManifest.xml has no ACTION_SEND filter, so "Share" cannot reach the app');
 }
 // The OAuth redirect. Checked for shape, not just presence: see above.
 if (manifest) problems.push(...oauthFilterProblems(manifest, IDENTIFIER, 'AndroidManifest.xml'));

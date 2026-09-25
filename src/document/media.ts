@@ -27,7 +27,19 @@ import {
   TABLE_CELL_SIZE,
   TABLE_GRIP_HEIGHT,
 } from './constants';
-import type { ImageLayer, MediaBox, MediaObject, NoteShape, PageDimensions, StickyNote, TableLayer } from './types';
+import type {
+  ImageLayer,
+  MediaBox,
+  MediaObject,
+  NoteShape,
+  PageDimensions,
+  StickyNote,
+  TableLayer,
+  TextAlign,
+  TextBox,
+  TextFontId,
+  TextStyle,
+} from './types';
 
 export type ResizeHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 export const RESIZE_HANDLES: readonly ResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -276,6 +288,151 @@ export function createStickyNote(page: PageDimensions, zIndex: number, at?: Poin
     text: '',
     color: init.color ?? DEFAULT_NOTE_COLOR,
     shape: init.shape ?? 'rectangle',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Text boxes
+// ---------------------------------------------------------------------------
+
+/**
+ * The three families, each with the CSS that draws it and the PDF base-14
+ * name for every weight/slant combination.
+ *
+ * Both halves live here, together, on purpose: the whole reason the catalogue
+ * is closed is that a family the screen can render but the export cannot embed
+ * would silently come out as something else. Keeping the mapping in one table
+ * makes that impossible to forget when adding one.
+ */
+export const TEXT_FONTS: readonly {
+  readonly id: TextFontId;
+  readonly label: string;
+  readonly css: string;
+  /**
+   * PDF base-14 font *names* — regular, bold, italic, bold italic.
+   *
+   * The values pdf-lib's `StandardFonts` enum holds, not its key names: they
+   * are hyphenated (`Helvetica-Bold`, `Times-Roman`), and anything else is
+   * taken for a custom font and rejected for want of a fontkit instance.
+   */
+  readonly pdf: readonly [string, string, string, string];
+}[] = [
+  {
+    id: 'sans',
+    label: 'Sans',
+    css: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+    pdf: ['Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique', 'Helvetica-BoldOblique'],
+  },
+  {
+    id: 'serif',
+    label: 'Serif',
+    css: 'Georgia, "Times New Roman", Times, serif',
+    pdf: ['Times-Roman', 'Times-Bold', 'Times-Italic', 'Times-BoldItalic'],
+  },
+  {
+    id: 'mono',
+    label: 'Mono',
+    css: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    pdf: ['Courier', 'Courier-Bold', 'Courier-Oblique', 'Courier-BoldOblique'],
+  },
+];
+
+/** Sizes offered in the toolbar, in page px. */
+export const TEXT_SIZES: readonly number[] = [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64];
+
+export const DEFAULT_TEXT_STYLE: Readonly<TextStyle> = {
+  fontFamily: 'sans',
+  fontSize: 16,
+  color: '#18181b',
+  bold: false,
+  italic: false,
+  underline: false,
+  strikethrough: false,
+  align: 'left',
+};
+
+/** A new box, sized for a line or two at the default size. */
+export const TEXT_DEFAULT_SIZE = { width: 260, height: 80 } as const;
+
+/** Leading, as a multiple of the font size. Shared by the DOM and the export. */
+export const TEXT_LINE_HEIGHT = 1.35;
+
+export function fontById(id: TextFontId): (typeof TEXT_FONTS)[number] {
+  return TEXT_FONTS.find((font) => font.id === id) ?? TEXT_FONTS[0]!;
+}
+
+/**
+ * The PDF base-14 name for a style.
+ *
+ * Bold and italic are separate *fonts* in PDF, not attributes of one — there
+ * is no "make this bold" — so the combination has to be resolved to a name
+ * before anything is drawn.
+ */
+export function pdfFontName(style: Pick<TextStyle, 'fontFamily' | 'bold' | 'italic'>): string {
+  const [regular, bold, italic, boldItalic] = fontById(style.fontFamily).pdf;
+  if (style.bold && style.italic) return boldItalic;
+  if (style.bold) return bold;
+  if (style.italic) return italic;
+  return regular;
+}
+
+/** The style as CSS, for the textarea and for anything measuring it. */
+export function textCss(style: TextStyle): {
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  fontWeight: number;
+  fontStyle: 'normal' | 'italic';
+  textDecorationLine: string;
+  color: string;
+  textAlign: TextAlign;
+} {
+  const decorations = [style.underline ? 'underline' : '', style.strikethrough ? 'line-through' : ''].filter(Boolean);
+  return {
+    fontFamily: fontById(style.fontFamily).css,
+    fontSize: style.fontSize,
+    lineHeight: TEXT_LINE_HEIGHT,
+    fontWeight: style.bold ? 700 : 400,
+    fontStyle: style.italic ? 'italic' : 'normal',
+    // `none` rather than `''`: an empty string leaves whatever the browser's
+    // default decoration for the element is.
+    textDecorationLine: decorations.length > 0 ? decorations.join(' ') : 'none',
+    color: style.color,
+    textAlign: style.align,
+  };
+}
+
+/** Everything a stored box might be missing, for files written before it had it. */
+export function textStyleOf(box: TextBox): TextStyle {
+  return {
+    fontFamily: box.fontFamily ?? DEFAULT_TEXT_STYLE.fontFamily,
+    fontSize: Number.isFinite(box.fontSize) && box.fontSize > 0 ? box.fontSize : DEFAULT_TEXT_STYLE.fontSize,
+    color: box.color || DEFAULT_TEXT_STYLE.color,
+    bold: box.bold === true,
+    italic: box.italic === true,
+    underline: box.underline === true,
+    strikethrough: box.strikethrough === true,
+    align: box.align ?? DEFAULT_TEXT_STYLE.align,
+  };
+}
+
+export type TextInit = Partial<TextStyle>;
+
+export function createTextBox(page: PageDimensions, zIndex: number, at?: Point, init: TextInit = {}): TextBox {
+  const { width, height } = TEXT_DEFAULT_SIZE;
+  const { x, y } = placement(page, width, height, at);
+  return {
+    kind: 'text',
+    id: `text_${createStrokeId()}`,
+    x,
+    y,
+    width,
+    height,
+    rotation: 0,
+    zIndex,
+    text: '',
+    ...DEFAULT_TEXT_STYLE,
+    ...init,
   };
 }
 

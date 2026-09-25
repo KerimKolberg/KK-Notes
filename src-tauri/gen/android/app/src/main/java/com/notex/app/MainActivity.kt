@@ -2,6 +2,7 @@ package com.notex.app
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -92,8 +93,13 @@ class MainActivity : TauriActivity() {
 
   /** Remember the document this launch was asked to open, if any. */
   private fun noteOpenWith(intent: Intent?) {
-    val uri = intent?.data ?: return
+    if (intent == null) return
     if (intent.action != Intent.ACTION_VIEW && intent.action != Intent.ACTION_SEND) return
+    // The two actions put the document in different places. ACTION_VIEW — what
+    // "Open with" sends — carries it in intent.data; ACTION_SEND, from a share
+    // sheet, carries it in EXTRA_STREAM and leaves intent.data null. Reading
+    // only the former is why a share used to do nothing at all.
+    val uri = intent.data ?: extraStream(intent) ?: return
     // Google's redirect arrives as ACTION_VIEW too, on this app's own scheme.
     // It is not a document, and handing it to the importer would try to open
     // an authorization code as a PDF.
@@ -110,6 +116,15 @@ class MainActivity : TauriActivity() {
     // minutes into a Gradle run. There is nothing to escape this way.
     openWithJson = JSONObject().put("uri", uri.toString()).put("mime", mime).toString()
   }
+
+  /** The shared document, across the API level where the accessor changed. */
+  @Suppress("DEPRECATION")
+  private fun extraStream(intent: Intent): Uri? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    } else {
+      intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+    }
 
   /** Push a later intent into a page that has already booted. */
   private fun pushOpenWith() {

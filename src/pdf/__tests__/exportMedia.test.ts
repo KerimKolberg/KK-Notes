@@ -5,10 +5,11 @@
  * against the finished file rather than against the code that produced it.
  */
 import { describe, expect, it } from 'vitest';
-import { PDFDocument, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
 import { A4_DIMENSIONS, NOTE_GRIP_HEIGHT, TABLE_GRIP_HEIGHT } from '../../document/constants';
 import { createDocument } from '../../document/operations';
-import type { MediaObject, StickyNote, TableLayer } from '../../document/types';
+import { DEFAULT_TEXT_STYLE } from '../../document/media';
+import type { MediaObject, StickyNote, TableLayer, TextBox } from '../../document/types';
 import { exportDocumentToPdf } from '../export';
 import { PX_PER_POINT } from '../pdfCoords';
 
@@ -173,5 +174,127 @@ describe('exporting media together', () => {
     expect(drawn).toContain('Remember the milk');
     expect(drawn).toContain('a1');
     expect(drawn.indexOf('Remember the milk')).toBeLessThan(drawn.indexOf('a1'));
+  });
+});
+
+/**
+ * A text box is the one media kind whose *formatting* has to survive the
+ * export, and PDF has no formatting: bold is a different font, and an
+ * underline is a rectangle somebody drew. So these check the finished file
+ * for the font resource and for the rules, rather than trusting that asking
+ * for bold produced bold.
+ */
+const textBox: TextBox = {
+  kind: 'text',
+  id: 'x1',
+  x: 100,
+  y: 200,
+  width: 300,
+  height: 120,
+  rotation: 0,
+  zIndex: 1,
+  text: 'Signals and Systems',
+  ...DEFAULT_TEXT_STYLE,
+};
+
+/**
+ * The strings the page actually shows.
+ *
+ * pdf-lib writes text as a hex string — `<5369676E616C73> Tj` — not as a
+ * literal, so searching the raw stream for the words finds nothing.
+ */
+function textRuns(stream: string): string[] {
+  return [...stream.matchAll(/<([0-9A-Fa-f]*)>\s*Tj/g)].map(([, hex = '']) =>
+    (hex.match(/../g) ?? []).map((pair) => String.fromCharCode(parseInt(pair, 16))).join(''),
+  );
+}
+
+/**
+ * How many filled paths the page draws.
+ *
+ * The underline and strikethrough rules are rectangles, but pdf-lib emits them
+ * as closed filled paths (`… h f`) rather than with the `re` operator, so
+ * that is what to count.
+ */
+function filledPaths(stream: string): number {
+  return (stream.match(/^h\nf$/gm) ?? []).length;
+}
+
+/** The names of the fonts the page actually references. */
+async function fontsUsedBy(...media: MediaObject[]): Promise<string[]> {
+  const base = createDocument(1);
+  const document = { ...base, pages: [{ ...base.pages[0]!, media }] };
+  const loaded = await PDFDocument.load(await exportDocumentToPdf(document, { includeTemplates: false }));
+  const resources = loaded.getPage(0).node.Resources();
+  const fonts = resources?.lookupMaybe(PDFName.of('Font'), PDFDict);
+  if (!fonts) return [];
+  return fonts
+    .values()
+    .map((value) => loaded.context.lookup(value))
+    .flatMap((font) => (font instanceof PDFDict ? [String(font.get(PDFName.of('BaseFont'))?.toString() ?? '')] : []))
+    .map((name) => name.replace(/^\//, ''));
+}
+
+describe('exporting a text box', () => {
+  it('writes the text at the box, in PDF points', async () => {
+    const stream = await exportWith(textBox);
+    expect(textRuns(stream).join(' ')).toContain('Signals and Systems');
+
+    // The text matrix says where the baseline starts. x is the box's left
+    // edge converted to points; y is measured from the *bottom* of the page,
+    // which is the conversion worth checking since it is the one that is easy
+    // to get upside down.
+    const [, x = '', y = ''] = /1 0 0 1 (-?[\d.]+) (-?[\d.]+) Tm/.exec(stream) ?? [];
+    expect(Number(x)).toBeCloseTo(100 * K, 1);
+    expect(Number(y)).toBeLessThan(PAGE_HEIGHT_PT - 200 * K);
+    expect(Number(y)).toBeGreaterThan(PAGE_HEIGHT_PT - (200 + textBox.height) * K);
+  });
+
+  it('uses a different font for bold, because PDF has no bold', async () => {
+    expect(await fontsUsedBy(textBox)).toContain('Helvetica');
+    expect(await fontsUsedBy({ ...textBox, bold: true })).toContain('Helvetica-Bold');
+    expect(await fontsUsedBy({ ...textBox, italic: true })).toContain('Helvetica-Oblique');
+    expect(await fontsUsedBy({ ...textBox, bold: true, italic: true })).toContain('Helvetica-BoldOblique');
+    expect(await fontsUsedBy({ ...textBox, fontFamily: 'serif', bold: true })).toContain('Times-Bold');
+    expect(await fontsUsedBy({ ...textBox, fontFamily: 'mono' })).toContain('Courier');
+  });
+
+  it('draws a rule for an underline and for a strikethrough', async () => {
+    // PDF text carries no decoration at all: an underline in a viewer is a
+    // line somebody drew. A plain box draws none, so every filled path that
+    // appears is one of these.
+    const plain = filledPaths(await exportWith(textBox));
+    const underlined = filledPaths(await exportWith({ ...textBox, underline: true }));
+    const struck = filledPaths(await exportWith({ ...textBox, strikethrough: true }));
+    const both = filledPaths(await exportWith({ ...textBox, underline: true, strikethrough: true }));
+
+    expect(plain).toBe(0);
+    expect(underlined).toBe(1);
+    expect(struck).toBe(1);
+    // One rule each, on the one line this text wraps to.
+    expect(both).toBe(2);
+  });
+
+  it('honours the text colour', async () => {
+    // pdf-lib writes a non-stroking colour as `r g b rg`.
+    const stream = await exportWith({ ...textBox, color: '#ff0000' });
+    expect(stream).toMatch(/\b1(\.0+)? 0(\.0+)? 0(\.0+)? rg\b/);
+  });
+
+  it('writes nothing at all for an empty box', async () => {
+    // An empty box is an editing affordance, not content: it shows a dashed
+    // outline on screen and must leave no trace on paper.
+    const stream = await exportWith({ ...textBox, text: '' });
+    expect(filledPaths(stream)).toBe(0);
+    expect(textRuns(stream)).toEqual([]);
+  });
+
+  it('keeps long text inside the box rather than running past it', async () => {
+    const stream = await exportWith({ ...textBox, text: 'word '.repeat(300), height: 60 });
+    const lines = textRuns(stream);
+    // 60 px of box at the default size and leading holds very few lines; the
+    // live box hides its overflow and paper cannot scroll.
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.length).toBeLessThan(6);
   });
 });

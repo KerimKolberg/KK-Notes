@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, ChevronRight, Cloud, FolderPlus, Grid2x2, House, List, Plus } from 'lucide-react';
+import { ArrowUp, ChevronRight, Cloud, FolderOpen, FolderPlus, Grid2x2, House, List, Plus } from 'lucide-react';
 import { openDocumentFromLibrary } from './openDocument';
 import { CloudSyncPanel } from './CloudSyncPanel';
 import { ConflictDialog } from './ConflictDialog';
@@ -16,6 +16,8 @@ import {
   syncStatus,
   watchSyncStatus,
 } from './libraryService';
+import { useDesktopStore } from '../desktop/desktopStore';
+import { openFileFromLibrary } from './openFile';
 import { useRouteStore } from './routeStore';
 import {
   DEFAULT_SORT,
@@ -78,6 +80,12 @@ export function LibraryView() {
   const [status, setStatus] = useState<SyncStatus>(OFFLINE_STATUS);
   const [showConflicts, setShowConflicts] = useState(false);
   const [showCloud, setShowCloud] = useState(false);
+  // Notices raised outside the library — an "open with" that could not be
+  // read, most of all. The document top bar shows these too, but only at xl,
+  // so on the phone where "open with" actually happens this is the only place
+  // the message is ever seen.
+  const notice = useDesktopStore((s) => s.notice);
+  const setNotice = useDesktopStore((s) => s.setNotice);
   const generation = useRef(0);
 
   useEffect(() => store(LAYOUT_KEY, layout), [layout]);
@@ -186,6 +194,23 @@ export function LibraryView() {
     [refresh],
   );
 
+  /**
+   * Open a file that is not in the library — a PDF to annotate, or a document
+   * shared from somewhere else. The library is the home screen, so "open
+   * something" belongs here rather than only inside a note you had to create
+   * first in order to reach the menu.
+   */
+  const openFile = useCallback(() => {
+    setBusy(true);
+    setError(null);
+    void openFileFromLibrary()
+      .then((target) => {
+        if (target) useRouteStore.getState().openDocument(target.path);
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  }, []);
+
   const trail = useMemo(() => crumbs(listing), [listing]);
   const entries = listing?.entries ?? [];
 
@@ -242,6 +267,17 @@ export function LibraryView() {
         >
           <Plus size={16} aria-hidden="true" />
           New note
+        </button>
+        <button
+          type="button"
+          onClick={openFile}
+          disabled={busy}
+          data-open-file
+          title="Open a PDF or a document from this device"
+          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
+        >
+          <FolderOpen size={16} aria-hidden="true" />
+          Open
         </button>
         <button
           type="button"
@@ -319,6 +355,33 @@ export function LibraryView() {
         <p className="shrink-0 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/50 dark:text-rose-300" role="alert">
           {error}
         </p>
+      )}
+
+      {notice && (
+        <div
+          className="flex shrink-0 items-start gap-2 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
+          role="status"
+          data-library-notice
+        >
+          <span className="min-w-0 flex-1">{notice.text}</span>
+          {notice.action && (
+            <button
+              type="button"
+              className="shrink-0 rounded px-1.5 py-0.5 font-medium text-blue-700 hover:bg-blue-100 dark:text-blue-300 dark:hover:bg-blue-950"
+              onClick={notice.action.run}
+            >
+              {notice.action.label}
+            </button>
+          )}
+          <button
+            type="button"
+            className="shrink-0 rounded px-1.5 text-amber-700 hover:text-amber-950 dark:text-amber-400 dark:hover:text-amber-100"
+            aria-label="Dismiss"
+            onClick={() => setNotice(null)}
+          >
+            ×
+          </button>
+        </div>
       )}
 
       <div className="min-h-0 flex-1 overflow-auto p-3" style={{ paddingBottom: 'calc(0.75rem + var(--safe-bottom))' }}>

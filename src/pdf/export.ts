@@ -46,6 +46,10 @@ import {
   tableCell,
   trackEdges,
   wrapText,
+  TEXT_FONTS,
+  TEXT_LINE_HEIGHT,
+  pdfFontName,
+  textStyleOf,
 } from '../document/media';
 import {
   DEFAULT_TABLE_LINE_OPACITY,
@@ -57,7 +61,7 @@ import {
   TABLE_GRIP_HEIGHT,
 } from '../document/constants';
 import { templateLines } from '../document/templates';
-import type { Document, FormField, FormValues, ImageLayer, MediaBox, Page, StickyNote, TableLayer } from '../document/types';
+import type { Document, FormField, FormValues, ImageLayer, MediaBox, Page, StickyNote, TableLayer, TextBox } from '../document/types';
 import { pagePointToPdf, PX_PER_POINT } from './pdfCoords';
 import { cssColorToPdf, fmt, strokeToPdfOps, type PdfOp, type PdfProjection, type RgbColor } from './pdfOps';
 
@@ -108,6 +112,12 @@ function projectionFor(page: Page): { projection: PdfProjection; size: { width: 
 interface Fonts {
   readonly regular: PDFFont;
   readonly italic: PDFFont;
+  /**
+   * Every family/weight/slant the text tool can choose, keyed by its base-14
+   * name. PDF has no "bold" attribute — bold *is* a different font — so the
+   * combination has to be resolved to one of these before anything is drawn.
+   */
+  readonly text: ReadonlyMap<string, PDFFont>;
 }
 
 function drawOp(target: PDFPage, op: PdfOp, fonts: Fonts): void {
@@ -350,6 +360,71 @@ function drawNote(target: PDFPage, note: StickyNote, projection: PdfProjection, 
   });
 }
 
+/**
+ * A text box: its words, wrapped the way the page wrapped them, in the font
+ * the box was set in, with any rules drawn underneath or through.
+ *
+ * Underline and strikethrough are *drawn*, not typeset. PDF text has no
+ * decoration property at all — a viewer that shows you an underline is looking
+ * at a line someone drew — so each one is a thin filled rectangle at a
+ * measured offset from the baseline, rotated with the box like everything
+ * else.
+ */
+function drawTextBox(target: PDFPage, item: TextBox, projection: PdfProjection, fonts: Fonts): void {
+  if (item.text === '') return;
+  const style = textStyleOf(item);
+  const font = fonts.text.get(pdfFontName(style)) ?? fonts.regular;
+  const box = placeBox(item, projection);
+  const rad = (box.rotateDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  /** A point in the box's own frame, in PDF units (x right, y down from its top). */
+  const at = (localX: number, localY: number): { x: number; y: number } => {
+    const fromBottom = box.height - localY;
+    return { x: box.x + localX * cos - fromBottom * sin, y: box.y + localX * sin + fromBottom * cos };
+  };
+
+  const size = style.fontSize * projection.scale;
+  const lineHeight = size * TEXT_LINE_HEIGHT;
+  const width = box.width;
+  const measure = (t: string): number => font.widthOfTextAtSize(sanitizeText(t), size);
+  const lines = wrapText(item.text, width, measure);
+  // Only what fits. The live box hides its overflow; paper cannot scroll.
+  const maxLines = Math.max(0, Math.floor(box.height / lineHeight));
+  const colour = toColor(cssColorToPdf(style.color));
+
+  lines.slice(0, maxLines).forEach((line, i) => {
+    const clean = sanitizeText(line);
+    if (clean === '') return;
+    const lineWidth = measure(line);
+    // The same three cases the DOM's `text-align` covers.
+    const offset = style.align === 'center' ? (width - lineWidth) / 2 : style.align === 'right' ? width - lineWidth : 0;
+    // 0.8 of the line box puts the baseline where a browser puts it closely
+    // enough that a page and its export line up when laid side by side.
+    const baseline = lineHeight * (i + 0.8);
+    const p = at(offset, baseline);
+    target.drawText(clean, { x: p.x, y: p.y, size, font, color: colour, rotate: degrees(box.rotateDeg) });
+
+    const rule = (fromBaseline: number, thickness: number): void => {
+      const start = at(offset, baseline + fromBaseline);
+      target.drawRectangle({
+        x: start.x,
+        y: start.y,
+        width: lineWidth,
+        height: thickness,
+        rotate: degrees(box.rotateDeg),
+        color: colour,
+      });
+    };
+    // Proportional to the size, so a rule under 48pt text is not a hairline.
+    const thickness = Math.max(0.5, size * 0.06);
+    if (style.underline) rule(size * 0.12, thickness);
+    // Through the middle of the x-height rather than the line box, or it cuts
+    // descenders instead of the letters.
+    if (style.strikethrough) rule(-size * 0.28, thickness);
+  });
+}
+
 /** A table: its frame, every grid line, and one clipped line of text per cell. */
 function drawTable(target: PDFPage, table: TableLayer, projection: PdfProjection, fonts: Fonts): void {
   const box = placeBox(table, projection);
@@ -439,6 +514,10 @@ async function drawMedia(
     }
     if (item.kind === 'table') {
       drawTable(target, item, projection, fonts);
+      continue;
+    }
+    if (item.kind === 'text') {
+      drawTextBox(target, item, projection, fonts);
       continue;
     }
     const embedded = await embedImage(out, item, cache);
@@ -540,9 +619,19 @@ export async function exportDocumentToPdf(document: Document, options: ExportOpt
   const out = await PDFDocument.create();
   out.setTitle(document.title);
   out.setProducer('notes-taking-app');
+  // The base-14 are referenced rather than embedded, so taking all twelve
+  // costs a handful of dictionary entries and removes any chance of a text box
+  // exporting in a font nobody chose.
+  const textFonts = new Map<string, PDFFont>();
+  for (const family of TEXT_FONTS) {
+    for (const name of family.pdf) {
+      if (!textFonts.has(name)) textFonts.set(name, await out.embedFont(name as StandardFonts));
+    }
+  }
   const fonts: Fonts = {
     regular: await out.embedFont(StandardFonts.Helvetica),
     italic: await out.embedFont(StandardFonts.HelveticaOblique),
+    text: textFonts,
   };
   const sources = new Map<string, Promise<SourceEntry>>();
   const imageCache = new Map<string, Promise<PDFImage | null>>();

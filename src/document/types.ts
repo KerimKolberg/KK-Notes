@@ -139,7 +139,48 @@ export interface TableLayer extends MediaBox {
   readonly lineOpacity?: number;
 }
 
-export type MediaObject = ImageLayer | StickyNote | TableLayer;
+/**
+ * The families a text box can be set in.
+ *
+ * Three, and only three, because every one of them has to exist in two places
+ * at once: as a CSS stack the screen can render, and as a font the PDF export
+ * can *embed*. These map onto PDF's base-14 — Helvetica, Times, Courier — in
+ * all four weight/slant combinations, which means what is typed is what comes
+ * out. A fourth family would mean shipping a font file in the bundle for the
+ * sake of one that only looks right on screen.
+ */
+export type TextFontId = 'sans' | 'serif' | 'mono';
+
+export type TextAlign = 'left' | 'center' | 'right';
+
+/**
+ * How a text box is set.
+ *
+ * Flat, and applied to the whole box rather than to a selection within it.
+ * Rich text with per-character runs is a different feature with a different
+ * data model, an editor to match and a much harder export; a box per style is
+ * the thing that is actually wanted when annotating a page, and it round-trips
+ * to PDF exactly.
+ */
+export interface TextStyle {
+  readonly fontFamily: TextFontId;
+  /** Page px, so it scales with zoom like everything else on the page. */
+  readonly fontSize: number;
+  readonly color: string;
+  readonly bold: boolean;
+  readonly italic: boolean;
+  readonly underline: boolean;
+  readonly strikethrough: boolean;
+  readonly align: TextAlign;
+}
+
+/** Typed text on the page: no card, no border, just the words. */
+export interface TextBox extends MediaBox, TextStyle {
+  readonly kind: 'text';
+  readonly text: string;
+}
+
+export type MediaObject = ImageLayer | StickyNote | TableLayer | TextBox;
 export type MediaKind = MediaObject['kind'];
 
 export interface PageDimensions {

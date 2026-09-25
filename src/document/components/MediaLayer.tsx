@@ -1,6 +1,17 @@
 import { memo, useCallback, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Lock, LockOpen } from 'lucide-react';
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Bold,
+  Italic,
+  Lock,
+  LockOpen,
+  Strikethrough,
+  Underline,
+  type LucideIcon,
+} from 'lucide-react';
 import {
   DEFAULT_TABLE_LINE_OPACITY,
   DEFAULT_TABLE_LINE_WIDTH,
@@ -36,12 +47,16 @@ import {
   setTableCell,
   sortedByZ,
   tableCell,
+  TEXT_FONTS,
+  TEXT_SIZES,
+  textCss,
+  textStyleOf,
   toLocalDelta,
   trackEdges,
   type ResizeHandle,
 } from '../media';
 import { useDocumentStore } from '../store';
-import type { MediaObject, NoteShape, Page, StickyNote, TableLayer } from '../types';
+import type { MediaObject, NoteShape, Page, StickyNote, TableLayer, TextBox, TextFontId, TextStyle } from '../types';
 
 export interface MediaLayerProps {
   page: Page;
@@ -243,6 +258,19 @@ export const MediaLayer = memo(function MediaLayer({ page, zoom, active }: Media
                 note={item}
                 box={box}
                 editable={active && !isLocked(item)}
+                onDragBody={bodyHandlers(raw)}
+                onText={(text) => updateMedia(page.id, item.id, { text })}
+              />
+            );
+          }
+          if (item.kind === 'text') {
+            return (
+              <TextCard
+                key={item.id}
+                item={item}
+                box={box}
+                editable={active && !isLocked(item)}
+                selected={item.id === selectedId}
                 onDragBody={bodyHandlers(raw)}
                 onText={(text) => updateMedia(page.id, item.id, { text })}
               />
@@ -509,6 +537,229 @@ function NoteCard({ note, box, editable, onDragBody, onText }: NoteCardProps) {
   );
 }
 
+interface TextCardProps {
+  item: TextBox;
+  box: CSSProperties;
+  editable: boolean;
+  selected: boolean;
+  onDragBody: BodyHandlers;
+  onText: (text: string) => void;
+}
+
+/**
+ * Typed text on the page.
+ *
+ * A `textarea` rather than a canvas draw, because the point of this tool is
+ * the *keyboard*: an editable field is what gives a caret, a selection, IME
+ * composition for non-Latin input, autocorrect on a phone and the system's own
+ * text handles — none of which are worth reimplementing, and all of which are
+ * what typing into a page should feel like.
+ *
+ * The box has no card and no border of its own. An empty one would therefore
+ * be invisible and unfindable, so while the media layer is live an empty box
+ * shows a dashed outline; it disappears the moment there is text, and never
+ * appears in the export.
+ */
+/**
+ * How tall the drag strip above a text box is, in page px.
+ *
+ * Above rather than over: a text box is all text, so a strip laid on top of it
+ * would eat the first line's taps.
+ */
+const TEXT_GRAB_HEIGHT = 14;
+
+function TextCard({ item, box, editable, selected, onDragBody, onText }: TextCardProps) {
+  const style = textStyleOf(item);
+  const css = textCss(style);
+  const empty = item.text === '';
+  return (
+    <div data-media-id={item.id} data-media-kind="text" style={{ ...box, overflow: 'visible' }}>
+      {(empty || selected) && editable && (
+        <div
+          aria-hidden="true"
+          data-text-outline
+          style={{
+            position: 'absolute',
+            inset: 0,
+            border: '1px dashed rgba(113, 113, 122, 0.55)',
+            borderRadius: 3,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+      {/* A grab strip along the top edge, so a box full of text can still be
+          picked up without selecting the text inside it. */}
+      <div
+        aria-hidden="true"
+        title="Drag to move"
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: -TEXT_GRAB_HEIGHT,
+          width: '100%',
+          height: TEXT_GRAB_HEIGHT,
+          cursor: editable ? 'move' : 'default',
+        }}
+        {...onDragBody}
+      />
+      <textarea
+        aria-label="Text"
+        data-text-content
+        value={item.text}
+        readOnly={!editable}
+        placeholder={editable ? 'Type…' : ''}
+        onChange={(e) => onText(e.target.value)}
+        onPointerDown={(e) => e.stopPropagation()}
+        spellCheck={false}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          resize: 'none',
+          border: 'none',
+          outline: 'none',
+          background: 'transparent',
+          padding: 0,
+          overflow: 'hidden',
+          fontFamily: css.fontFamily,
+          fontSize: css.fontSize,
+          lineHeight: css.lineHeight,
+          fontWeight: css.fontWeight,
+          fontStyle: css.fontStyle,
+          textDecorationLine: css.textDecorationLine,
+          color: css.color,
+          textAlign: css.textAlign,
+        }}
+      />
+    </div>
+  );
+}
+
+/** One control on the floating toolbar over a selected object. */
+const toolbarButton =
+  'inline-flex h-7 items-center rounded-md px-2 text-xs font-medium text-white hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-blue-300';
+
+/** Colours a text box can be set in: ink colours, on paper. */
+const TEXT_COLORS: readonly string[] = ['#18181b', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#2563eb', '#7c3aed', '#ffffff'];
+
+/**
+ * The formatting controls for the selected text box.
+ *
+ * Everything applies to the whole box, which is what makes the model simple
+ * enough to export exactly: PDF has no "bold" attribute, only separate fonts,
+ * so a box that is one style throughout resolves to one font. Mixed runs
+ * inside a box would need a different data model and a much harder export.
+ */
+function TextToolbar({ item, onPatch }: { item: TextBox; onPatch: (patch: Partial<MediaObject>) => void }) {
+  const style = textStyleOf(item);
+  const patch = (next: Partial<TextStyle>): void => onPatch(next as Partial<MediaObject>);
+  const toggle = (
+    key: 'bold' | 'italic' | 'underline' | 'strikethrough',
+    Icon: LucideIcon,
+    label: string,
+  ) => (
+    <button
+      type="button"
+      className={`${toolbarButton} ${style[key] ? 'bg-blue-500 hover:bg-blue-500' : ''}`}
+      aria-pressed={style[key]}
+      data-text-toggle={key}
+      onClick={() => patch({ [key]: !style[key] } as Partial<TextStyle>)}
+      title={label}
+      aria-label={label}
+    >
+      <Icon size={14} aria-hidden="true" />
+    </button>
+  );
+
+  return (
+    <>
+      <select
+        aria-label="Font"
+        data-text-font
+        className="h-6 rounded bg-white/10 px-1 text-xs text-white focus-visible:outline-2 focus-visible:outline-blue-300"
+        value={style.fontFamily}
+        onChange={(e) => patch({ fontFamily: e.target.value as TextFontId })}
+      >
+        {TEXT_FONTS.map((font) => (
+          <option key={font.id} value={font.id} className="text-zinc-900">
+            {font.label}
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label="Font size"
+        data-text-size
+        className="h-6 rounded bg-white/10 px-1 text-xs tabular-nums text-white focus-visible:outline-2 focus-visible:outline-blue-300"
+        value={style.fontSize}
+        onChange={(e) => patch({ fontSize: Number(e.target.value) })}
+      >
+        {TEXT_SIZES.map((size) => (
+          <option key={size} value={size} className="text-zinc-900">
+            {size}
+          </option>
+        ))}
+      </select>
+
+      <span className="mx-0.5 h-5 w-px bg-white/20" aria-hidden="true" />
+      <div className="flex items-center gap-0.5" role="group" aria-label="Text style">
+        {toggle('bold', Bold, 'Bold')}
+        {toggle('italic', Italic, 'Italic')}
+        {toggle('underline', Underline, 'Underline')}
+        {toggle('strikethrough', Strikethrough, 'Strikethrough')}
+      </div>
+
+      <span className="mx-0.5 h-5 w-px bg-white/20" aria-hidden="true" />
+      <div className="flex items-center gap-0.5" role="group" aria-label="Alignment">
+        {([
+          ['left', AlignLeft, 'Align left'],
+          ['center', AlignCenter, 'Align centre'],
+          ['right', AlignRight, 'Align right'],
+        ] as const).map(([value, Icon, label]) => (
+          <button
+            key={value}
+            type="button"
+            className={`${toolbarButton} ${style.align === value ? 'bg-blue-500 hover:bg-blue-500' : ''}`}
+            aria-pressed={style.align === value}
+            data-text-align={value}
+            onClick={() => patch({ align: value })}
+            title={label}
+            aria-label={label}
+          >
+            <Icon size={14} aria-hidden="true" />
+          </button>
+        ))}
+      </div>
+
+      <span className="mx-0.5 h-5 w-px bg-white/20" aria-hidden="true" />
+      <div className="flex items-center gap-0.5" role="group" aria-label="Text colour">
+        {TEXT_COLORS.map((color) => (
+          <button
+            key={color}
+            type="button"
+            className={`h-5 w-5 rounded-full ring-1 hover:ring-white focus-visible:outline-2 focus-visible:outline-blue-300 ${
+              style.color.toLowerCase() === color ? 'ring-2 ring-white' : 'ring-white/40'
+            }`}
+            style={{ background: color }}
+            data-text-color={color}
+            onClick={() => patch({ color })}
+            title={`Text colour ${color}`}
+            aria-label={`Text colour ${color}`}
+          />
+        ))}
+        <input
+          type="color"
+          aria-label="Custom text colour"
+          data-text-color-custom
+          className="h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
+          value={/^#[0-9a-f]{6}$/i.test(style.color) ? style.color : '#18181b'}
+          onChange={(e) => patch({ color: e.target.value })}
+        />
+      </div>
+    </>
+  );
+}
+
 interface TableCardProps {
   table: TableLayer;
   box: CSSProperties;
@@ -760,9 +1011,6 @@ function TransformBox({ item, zoom, onBegin, onMove, onEnd, onDelete, onFront, o
     y: topMid.y - Math.cos(rad) * (ROTATION_HANDLE_OFFSET / zoom),
   };
   const toolbarPos = { x: centre.x, y: Math.min(...Object.values(handles).map((h) => h.y)) - 44 / zoom };
-  const toolbarButton =
-    'inline-flex h-7 items-center rounded-md px-2 text-xs font-medium text-white hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-blue-300';
-
   return (
     <>
       <div
@@ -832,6 +1080,7 @@ function TransformBox({ item, zoom, onBegin, onMove, onEnd, onDelete, onFront, o
         >
           {locked ? <Lock size={14} aria-hidden="true" /> : <LockOpen size={14} aria-hidden="true" />}
         </button>
+        {item.kind === 'text' && <TextToolbar item={item} onPatch={onPatch} />}
         {item.kind === 'note' && (
           <>
             <div className="flex items-center gap-0.5" role="group" aria-label="Note colour">

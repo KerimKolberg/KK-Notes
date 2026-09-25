@@ -9,7 +9,7 @@ multi-page document system (`src/document/`) behind a document library home
 screen with folders and cross-device sync (`src/library/`,
 `src-tauri/notes-sync/`), with procedural page templates,
 canvas virtualisation, a Samsung Notes-style page arranger, a media layer of
-images, sticky notes and tables, a lasso selection tool, two-finger pan / pinch-zoom navigation, a read-only
+images, sticky notes, typed text and tables, a lasso selection tool, two-finger pan / pinch-zoom navigation, a read-only
 lock, a disappearing laser pointer, notebook covers, vertical *and*
 horizontal continuous scrolling, and PDF import / fillable AcroForms /
 vector PDF export (`src/pdf/`). The interface is icon-first: a fixed top
@@ -820,12 +820,47 @@ a `content://` URI typed `application/octet-stream`, which is common. The
 `pdf`. `.notex` gets the same treatment, since the app is the only thing that
 can open one.
 
+The share sheet is a *third* filter, because sharing is not viewing:
+`ACTION_SEND` leaves `intent.data` null and puts the document in
+`EXTRA_STREAM` instead. Reading only `data` is why "Share → KK-Notes" used to
+do nothing at all.
+
 The intent itself never reaches the process as an argument, so `MainActivity`
 catches it and exposes it through a bridge object — the same pull-then-push
 shape as the insets, and for the same reason: a JavaScript interface added to
 a WebView is only visible to the *next* navigation, so the page asks rather
 than waiting to be told. It is consumed on read, because opening the app a
 week later must not re-import the PDF someone opened once.
+
+**Both halves of that have to be wired, and for a while only one was.** The
+activity is `launchMode="singleTask"`, so tapping a PDF while the app is
+already in memory — which is most of the time — does not start it afresh:
+Android brings the existing instance forward and delivers the intent to
+`onNewIntent`. The boot path cannot see that, because it runs once and
+*consumes* the bridge. The push half went to a `notex-open-with` event that
+nothing listened for, so the app came to the front showing whatever it had
+been showing and the file vanished without a word.
+
+| when | how it arrives | handled by |
+| --- | --- | --- |
+| app not running | the bridge, read at boot | `resolveBootTarget` |
+| app already running | the `notex-open-with` event | `useOpenWith` |
+
+`useOpenWith` is mounted above the router, because opening a file may mean
+switching views. It asks before replacing unsaved work — the page already on
+screen is the one that cannot be recovered — and stays put when the file could
+not be read, rather than swapping the user's document for an empty one to show
+them a failure.
+
+That failure is now *visible*, which it was not: the top bar's notice is
+`hidden … xl:flex`, so on the phone where "open with" actually happens there
+was nowhere for the message to appear. The library renders the same notice.
+
+**Opening from inside the app.** The library's *Open* button is the third door
+into the same decision. A PDF picked there has to become the same document a
+PDF tapped in a file manager becomes, so it goes through `openRequested` too
+rather than repeating the import. The browser is the exception only because it
+has to be: there is no path to hand anybody, just a `File`.
 
 Launched from a PDF, the app skips the library: it creates a new document with
 the PDF's pages imported at their own size and opens straight into it. Someone
@@ -1102,6 +1137,52 @@ viewer hosts. `InkingCanvas` fills its parent. `ref` exposes `undo()`,
 | `maxHistory` | `200` | Undo depth |
 
 Keyboard: `Ctrl/⌘+Z` undo, `Ctrl/⌘+Shift+Z` or `Ctrl+Y` redo.
+
+## Typed text (`TextBox`)
+
+A text box is a `textarea` positioned on the page, not text drawn onto a
+canvas — because the point of the tool is the *keyboard*. An editable field is
+what gives a caret, a selection, IME composition for non-Latin input,
+autocorrect on a phone and the system's own text handles, none of which are
+worth reimplementing and all of which are what typing into a page should feel
+like. It has no card and no border, so an empty one shows a dashed outline
+while the media layer is live and is otherwise invisible; a strip along its top
+edge is what picks it up, since a box that is all text would otherwise have no
+dead space to grab.
+
+**The style applies to the whole box**, not to a selection inside it. That is
+a deliberate limit rather than a missing feature: PDF has no bold attribute —
+bold *is* a different font — so a box that is one style throughout resolves to
+exactly one font and round-trips perfectly. Mixed runs within a box would need
+a different data model, an editor to match, and a much harder export.
+
+**The font catalogue is closed, at three families**, because every entry has
+to be true in two worlds at once: a CSS stack the screen can render, *and* a
+base-14 name the PDF export can embed. They are declared together in one table
+so the two cannot drift.
+
+| id | screen | PDF (regular / bold / italic / bold italic) |
+| --- | --- | --- |
+| `sans` | system UI stack | Helvetica, `-Bold`, `-Oblique`, `-BoldOblique` |
+| `serif` | Georgia, Times | Times-Roman, `-Bold`, `-Italic`, `-BoldItalic` |
+| `mono` | ui-monospace, Menlo | Courier, `-Bold`, `-Oblique`, `-BoldOblique` |
+
+A fourth family would mean shipping a font file in the bundle for something
+that only looks right on screen. A test checks every name against pdf-lib's
+own `StandardFonts` — the first version used the enum's *key* names
+(`HelveticaBold`) rather than its values (`Helvetica-Bold`), which pdf-lib
+takes for a custom font and refuses outright for want of a fontkit instance.
+
+**Underline and strikethrough are drawn, not typeset.** Neither PDF text nor
+canvas text has a decoration property; an underline in a viewer is a line
+somebody drew. Both the exporter and the rasteriser draw them as filled rules
+at the same offsets from the baseline — under at `0.12em`, through at `0.28em`
+above it, thickness `0.06em` so a rule under 48pt text is not a hairline — so
+a page on screen, its thumbnail and its export agree.
+
+Text is wrapped with the same `wrapText` the notes and tables use, measured
+with the font that will actually draw it, and clipped to the box: the live box
+hides its overflow and paper cannot scroll.
 
 ## Tools
 

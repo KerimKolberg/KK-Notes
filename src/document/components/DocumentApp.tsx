@@ -8,7 +8,7 @@ import { ToolConfigRow } from '../../inking/palette/parts';
 import { useDesktopIntegration } from '../../desktop/useDesktopIntegration';
 import { DebugOverlay } from '../../debug/DebugOverlay';
 import { useMediaInput } from '../hooks/useMediaInput';
-import { createStickyNote, createTable, nextZIndex, type NoteInit, type TableInit } from '../media';
+import { createStickyNote, createTable, createTextBox, nextZIndex, type NoteInit, type TableInit } from '../media';
 import { usePageDefaultsSource } from '../../preferences/usePageDefaultsSource';
 import type { MediaObject, Page } from '../types';
 import { InsertMenu } from './InsertMenu';
@@ -58,6 +58,7 @@ export function DocumentApp() {
     (init: NoteInit) => insertMedia((page, z) => createStickyNote(page.dimensions, z, undefined, init)),
     [insertMedia],
   );
+  const insertText = useCallback(() => insertMedia((page, z) => createTextBox(page.dimensions, z)), [insertMedia]);
   const insertTable = useCallback(
     (init: TableInit) => insertMedia((page, z) => createTable(page.dimensions, z, undefined, init)),
     [insertMedia],
@@ -147,6 +148,7 @@ export function DocumentApp() {
             <InsertMenu
               onInsertImage={pickImage}
               onInsertNote={insertNote}
+              onInsertText={insertText}
               onInsertTable={insertTable}
               onDone={onInsertDone}
             />

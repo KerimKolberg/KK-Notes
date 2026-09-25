@@ -29,10 +29,19 @@ function notify(text: string, action?: { label: string; run: () => void }): void
   useDesktopStore.getState().setNotice(action ? { text, action } : { text });
 }
 
-async function guardDirty(): Promise<boolean> {
+/**
+ * True when it is safe to replace what is on screen.
+ *
+ * Exported because "open with" needs the same guard: an intent from a file
+ * manager is explicit, but so is the unsaved page already in front of the
+ * user.
+ */
+export async function confirmDiscardIfDirty(): Promise<boolean> {
   if (!selectIsDirty(useDocumentStore.getState())) return true;
   return confirmDiscard('This document has unsaved changes. Discard them?');
 }
+
+const guardDirty = confirmDiscardIfDirty;
 
 export async function refreshRecent(): Promise<void> {
   if (!isTauri()) return;

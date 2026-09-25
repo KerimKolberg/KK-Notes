@@ -66,6 +66,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="com.notex.app" />
             </intent-filter>
+
+            <!-- notex: share-sheet. "Share → KK-Notes" from a file manager. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
         </activity>
 
         <provider

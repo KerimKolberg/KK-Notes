@@ -1,4 +1,5 @@
 import { DocumentApp } from './document';
+import { useOpenWith } from './desktop/useOpenWith';
 import { LibraryView } from './library/LibraryView';
 import { useRouteStore } from './library/routeStore';
 import { useBoot } from './library/useBoot';
@@ -17,6 +18,9 @@ export default function App() {
   // is rendered until that is settled — otherwise the library would flash up
   // on the way to a document the user actually double-clicked.
   const ready = useBoot();
+  // A file opened from elsewhere while this app was already running. Mounted
+  // above the router because it may need to switch views to show the result.
+  useOpenWith();
   const view = useRouteStore((s) => s.route.view);
   return (
     <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100dvh' }}>

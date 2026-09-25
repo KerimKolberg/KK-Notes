@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Image as ImageIcon, StickyNote, Table } from 'lucide-react';
+import { Image as ImageIcon, StickyNote, Table, Type } from 'lucide-react';
 import { Chip, Row } from '../../inking/palette/parts';
 import { NoteShapeGlyph } from './MediaLayer';
 import {
@@ -22,6 +22,7 @@ export interface InsertMenuProps {
   /** Opens the file picker and places the chosen image. */
   onInsertImage: () => void;
   onInsertNote: (init: NoteInit) => void;
+  onInsertText: () => void;
   onInsertTable: (init: TableInit) => void;
   /** Closes the popover the menu is rendered in. */
   onDone: () => void;
@@ -42,7 +43,7 @@ const COLUMNS = Array.from({ length: MAX_TABLE_COLUMNS }, (_, i) => i + 1);
  * adding and removing rows one at a time, and the line weight is part of what
  * the table is for (a faint grid to write over, or a hard-ruled one).
  */
-export function InsertMenu({ onInsertImage, onInsertNote, onInsertTable, onDone }: InsertMenuProps) {
+export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onInsertTable, onDone }: InsertMenuProps) {
   const [noteShape, setNoteShape] = useState<NoteShape>('rectangle');
   const [rows, setRows] = useState(DEFAULT_TABLE_ROWS);
   const [columns, setColumns] = useState(DEFAULT_TABLE_COLUMNS);
@@ -72,6 +73,18 @@ export function InsertMenu({ onInsertImage, onInsertNote, onInsertTable, onDone 
       >
         <ImageIcon size={18} aria-hidden="true" />
         Image
+      </button>
+      <button
+        type="button"
+        className={ENTRY}
+        data-insert-text
+        onClick={() => {
+          onInsertText();
+          onDone();
+        }}
+      >
+        <Type size={18} aria-hidden="true" />
+        Text
       </button>
       <div className="flex items-center gap-1">
         <button

@@ -63,10 +63,29 @@ export async function openRequested(request: OpenWithRequest): Promise<BootTarge
 async function importPdfAsDocument(uri: string): Promise<void> {
   const { readFile } = await import('@tauri-apps/plugin-fs');
   const bytes = await readFile(uri);
-  const { buildPdfPages, loadPdfData } = await import('../pdf/import');
+  const { loadPdfData } = await import('../pdf/import');
   const name = fileBaseName(uri.split(/[?#]/)[0] ?? uri) || 'Imported PDF';
   const copy = bytes.slice();
-  const loaded = await loadPdfData(copy.buffer as ArrayBuffer, name);
+  await adoptPdf(await loadPdfData(copy.buffer as ArrayBuffer, name), name);
+}
+
+/**
+ * The same thing from a `File`, which is all a browser can offer.
+ *
+ * Kept beside its sibling rather than reimplemented next to the picker: the
+ * interesting part is what a PDF *becomes*, and having two copies of that is
+ * how a document opened one way ends up subtly different from the same
+ * document opened the other.
+ */
+export async function importPdfFileAsDocument(file: File): Promise<void> {
+  const { loadPdfFile } = await import('../pdf/import');
+  const name = fileBaseName(file.name) || 'Imported PDF';
+  await adoptPdf(await loadPdfFile(file), name);
+}
+
+/** Turn a loaded PDF into the open document. */
+async function adoptPdf(loaded: Awaited<ReturnType<typeof import('../pdf/import')['loadPdfData']>>, name: string): Promise<void> {
+  const { buildPdfPages } = await import('../pdf/import');
   const pages = await buildPdfPages(
     loaded,
     loaded.pages.map((_, index) => index),
