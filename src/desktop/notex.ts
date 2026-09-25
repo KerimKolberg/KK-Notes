@@ -67,7 +67,13 @@ export function fileBaseName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-/** Document title derived from a file name (`My notes.notex` → `My notes`). */
+/**
+ * Document title derived from a file name (`My notes.notex` → `My notes`).
+ *
+ * Every extension the app can open is stripped, imports included: a notebook
+ * imported from GoodNotes should be called `Chemistry`, not
+ * `Chemistry.goodnotes`.
+ */
 export function titleFromFileName(path: string): string {
-  return fileBaseName(path).replace(/\.(notex|json)$/i, '') || 'Untitled note';
+  return fileBaseName(path).replace(/\.(notex|json|goodnotes|pdf)$/i, '') || 'Untitled note';
 }

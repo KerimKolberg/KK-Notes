@@ -12,18 +12,33 @@
  * path to hand anybody, just a `File`, so the same two outcomes are reached
  * from the bytes instead.
  */
-import { importPdfFileAsDocument, openRequested, type BootTarget } from '../desktop/boot';
+import {
+  importGoodNotesFileAsDocument,
+  importPdfFileAsDocument,
+  openRequested,
+  type BootTarget,
+} from '../desktop/boot';
 import { useDesktopStore } from '../desktop/desktopStore';
 import { useDocumentStore } from '../document/store';
 import { NOTEX_EXTENSION, NOTEX_MIME, parseNotex } from '../desktop/notex';
 import { isTauri, tauriDialog } from '../desktop/tauri';
 import { pickBrowserFile } from '../desktop/fileService';
+// From `names`, not `import`: a static import of the importer would put the ZIP
+// reader, the LZ4 decoder and the protobuf walker on the critical path for the
+// sake of one string comparison.
+import { GOODNOTES_EXTENSION, isGoodNotesName } from '../goodnotes/names';
 
 /** What the picker offers. Documents first, since that is the common case. */
-export const OPENABLE_EXTENSIONS: readonly string[] = [NOTEX_EXTENSION, 'json', 'pdf'];
+export const OPENABLE_EXTENSIONS: readonly string[] = [NOTEX_EXTENSION, 'json', 'pdf', GOODNOTES_EXTENSION];
 
-/** The `accept` string for a browser file input. */
-export const OPENABLE_ACCEPT = `.${NOTEX_EXTENSION},.json,.pdf,${NOTEX_MIME},application/json,application/pdf`;
+/**
+ * The `accept` string for a browser file input.
+ *
+ * `.goodnotes` is listed by extension only. Browsers match `accept` against the
+ * type the OS reports, and no OS but iPadOS has ever heard of a GoodNotes
+ * notebook — a MIME entry would filter the file out rather than in.
+ */
+export const OPENABLE_ACCEPT = `.${NOTEX_EXTENSION},.json,.pdf,.${GOODNOTES_EXTENSION},${NOTEX_MIME},application/json,application/pdf`;
 
 /**
  * Is this something the app can open?
@@ -51,9 +66,10 @@ export async function openFileFromLibrary(): Promise<BootTarget | null> {
       multiple: false,
       directory: false,
       filters: [
-        { name: 'Notes and PDFs', extensions: [...OPENABLE_EXTENSIONS] },
+        { name: 'Notes, PDFs and notebooks', extensions: [...OPENABLE_EXTENSIONS] },
         { name: 'KK-Notes document', extensions: [NOTEX_EXTENSION, 'json'] },
         { name: 'PDF', extensions: ['pdf'] },
+        { name: 'GoodNotes notebook', extensions: [GOODNOTES_EXTENSION] },
       ],
     });
     if (typeof picked !== 'string') return null;
@@ -77,6 +93,10 @@ export async function openBrowserFile(file: File): Promise<BootTarget | null> {
     if (file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf') {
       await importPdfFileAsDocument(file);
       // A PDF becomes a new, unsaved document: it has no path of its own.
+      return { view: 'document', path: null };
+    }
+    if (isGoodNotesName(file.name)) {
+      await importGoodNotesFileAsDocument(file);
       return { view: 'document', path: null };
     }
     const parsed = parseNotex(await file.text());

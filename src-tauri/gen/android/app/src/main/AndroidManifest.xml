@@ -57,6 +57,7 @@
                 <data android:mimeType="*/*" />
                 <data android:pathPattern=".*\\.pdf" />
                 <data android:pathPattern=".*\\.notex" />
+                <data android:pathPattern=".*\\.goodnotes" />
             </intent-filter>
 
             <!-- notex: OAuth redirect. Google sends the authorization code back here. -->

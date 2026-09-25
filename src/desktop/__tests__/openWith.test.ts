@@ -14,11 +14,26 @@ describe('classifying what a launch pointed at', () => {
     expect(classifyOpenWith(request('/sdcard/Notes/export.json'))).toBe('notex');
   });
 
+  it('recognises a GoodNotes notebook', () => {
+    expect(classifyOpenWith(request('/sdcard/Download/Chemistry.goodnotes'))).toBe('goodnotes');
+    expect(classifyOpenWith(request('content://x/9', 'com.goodnotes.document'))).toBe('goodnotes');
+  });
+
+  it('does not take every archive for a notebook', () => {
+    // A notebook is a ZIP, so the type a sender declares for one is the type it
+    // declares for every archive. Claiming those would put the app in the
+    // chooser for backups and font packs.
+    expect(classifyOpenWith(request('content://x/9', 'application/zip'))).toBe('unknown');
+    expect(classifyOpenWith(request('/x/photos.zip'))).toBe('unknown');
+  });
+
   it('trusts the extension over what the sender claimed', () => {
     // File managers routinely hand over a content:// URI typed
     // application/octet-stream; the extension is the better evidence.
     expect(classifyOpenWith(request('/x/lecture.pdf', 'application/octet-stream'))).toBe('pdf');
     expect(classifyOpenWith(request('/x/notes.notex', 'text/plain'))).toBe('notex');
+    // And a document is still a document when a sender calls it an archive.
+    expect(classifyOpenWith(request('/x/notes.notex', 'application/zip'))).toBe('notex');
   });
 
   it('falls back to the MIME type when there is no extension to read', () => {

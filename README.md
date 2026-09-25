@@ -1101,6 +1101,79 @@ flat-coloured pieces, since the op vocabulary has no shading), and coordinate
 planes become lines, arrowheads and text. The pixel eraser cannot be represented as vectors
 and is skipped. *Export PDF* in the top bar downloads the result.
 
+## GoodNotes import (`src/goodnotes/`)
+
+A `.goodnotes` notebook can be opened and its handwriting recovered as strokes.
+Read only: nothing is ever written back into the format.
+
+**The honest caveat first**, because it shapes every decision below: GoodNotes
+publishes no format description and no `.proto` files, and this importer has
+never been run against a real notebook — only against archives built in its own
+tests. It is inference, it says so to the user after every import, and when it
+recovers nothing it says what the archive held and points at the route that does
+work (export the notebook as a PDF from GoodNotes, then open that — the pages
+arrive exactly as they look, annotatable).
+
+Four layers, each independently testable and none of them a new dependency:
+
+| Module | Job |
+| --- | --- |
+| `zip.ts` | A `.goodnotes` file is a ZIP. Central directory, backwards scan for the end record past a 64 kB comment, data offset taken from the *local* header (the two records' extra-field lengths need not agree). Inflate is `DecompressionStream('deflate-raw')`, which the Android WebView has — a ZIP library would be 30 kB on the critical path for 200 lines of record reading. Listing is synchronous and separate from reading, so a failed import can report the archive's contents without inflating any of it. |
+| `lz4.ts` | Some payloads are wrapped in **Apple's** framed LZ4 (`bv41` compressed / `bv4-` raw / `bv4$` end), not lz4.org's. The one subtlety is that a match may overlap the output it copies from — offset 1, length 40 means "repeat the last byte forty times" — so the copy is byte by byte, deliberately. |
+| `protobuf.ts` | Walks a message by wire format alone: a tag is a varint carrying a field number and a wire type, and the wire type says how long the value is. That is enough to turn an opaque payload into a tree with no schema. Varints stay `bigint`; a length-delimited field keeps its raw bytes and *offers* the readings (message, string, packed floats) rather than committing to one, because on the wire they are genuinely ambiguous. |
+| `strokes.ts` | Finds ink by **shape, not field number**. |
+
+**Why shape.** Guessing that stroke points live in field 7 is a guess that is
+wrong the moment GoodNotes renumbers anything. What a stroke *is*, in any
+version, is a packed run of little-endian float32s holding interleaved
+coordinates, beside a run of the same length holding pressures in 0..1, beside a
+scalar holding a width. So the search walks every message the file parses into
+and keeps the float runs whose contents could only plausibly be geometry. Each
+test rejects a shape ink cannot have: a run that never varies (zeroed padding), a
+run holding a NaN or a coordinate no page could hold, an odd length that is
+neither pairs nor `x, y, pressure` triples, and — the ambiguous one — a run of
+exactly four floats all inside 0..1, which is an RGBA colour far more often than
+it is two sub-pixel points. Each candidate carries a confidence that is simply
+the count of corroborating shapes found beside it; the importer draws those above
+a threshold and reports the rest as set aside.
+
+**One transform for the notebook, not one per page.** Every page's candidates are
+gathered before anything is scaled. Fitting each page as it was read would give
+each its own scale, so handwriting that was the same size throughout would arrive
+a different size on every page. The scale comes from snapping to the first paper
+size (in points) that contains all the ink, starting at **A4** — never smaller.
+The ink's bounding box is only a lower bound on the page, so somebody who wrote
+in one corner of an A4 sheet leaves ink that would fit on A6; guessing small
+magnifies their handwriting to fill the sheet, which is the error that cannot be
+told apart from correct output. Guessing large leaves the writing smaller than it
+was, which looks like what it is and which the lasso can scale back up. When no
+paper contains the ink the units are not points, and the report says the fit came
+from the ink's own bounding box.
+
+**Everything arrives as a ballpoint pen stroke.** GoodNotes marks highlighters,
+shapes, text boxes and images in ways this importer cannot identify, and guessing
+would produce a page where some strokes are silently translucent. One honest pen
+beats three confident wrong ones — and the dialog says so.
+
+**The report** (`reportStore.ts`, `ImportReportDialog.tsx`). Shown after every
+import and dismissed by hand. It exists because the top-bar notice is the wrong
+surface: it truncates to one line and is `hidden … xl:flex`, so on a phone — the
+device most likely to be handed a notebook — it is not rendered at all. The
+dialog carries the counts, which paper the scale came from, the caveats, and a
+collapsible listing of what the archive held; a *failed* import uses the same
+dialog, which is the only place the listing and the PDF advice fit. Covered end
+to end at phone width by `npm run check:ui`.
+
+**Three doors, one decision.** `.goodnotes` joins `.notex` and `.pdf` in
+`classifyOpenWith`, so an Android intent, a desktop file association and the
+library's *Open* button all reach the same importer. Android matches the
+extension only (`android:pathPattern=".*\\.goodnotes"`): a notebook *is* a ZIP,
+so claiming `application/zip` would put this app in the chooser for every
+archive, backup and font pack on the device. The name test lives in its own
+module (`names.ts`) because a static import of the importer for one string
+comparison drags the ZIP reader, the LZ4 decoder and the protobuf walker onto the
+critical path — which `scripts/check-bundle.mjs` now guards against.
+
 ## Inking engine (`src/inking/`)
 
 ```tsx
@@ -1570,6 +1643,12 @@ hit-testing can answer:
 - **the Cloud Sync panel** — it opens from the library's cloud button, and in
   a browser it says cloud sync needs the app rather than blaming a missing
   client id nobody could act on.
+- **the GoodNotes import summary, at phone width** — a notebook that cannot be
+  read raises the dialog and names why, and a readable one (a synthetic archive
+  the check builds itself, since a real notebook is somebody's notes) reports its
+  page and stroke counts and admits everything came in as pen. On a phone this
+  dialog is the *only* surface that reports an import at all, so a check that it
+  appears is a check that the feature does not silently lie.
 
 A blocked tap is reported as a failed check naming the element in the way
 (Playwright's own actionability error says which), not as a timeout that hides

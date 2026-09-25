@@ -1,8 +1,15 @@
+import { Suspense, lazy } from 'react';
 import { DocumentApp } from './document';
 import { useOpenWith } from './desktop/useOpenWith';
 import { LibraryView } from './library/LibraryView';
 import { useRouteStore } from './library/routeStore';
 import { useBoot } from './library/useBoot';
+import { useImportReportStore } from './goodnotes/reportStore';
+
+// Lazy, so the dialog costs nothing until a notebook is actually imported.
+const ImportReportDialog = lazy(() =>
+  import('./goodnotes/ImportReportDialog').then((m) => ({ default: m.ImportReportDialog })),
+);
 
 /**
  * Multi-page notes app. The library is the home screen and one document is
@@ -22,9 +29,18 @@ export default function App() {
   // above the router because it may need to switch views to show the result.
   useOpenWith();
   const view = useRouteStore((s) => s.route.view);
+  // Above the router for the same reason: an import may land in either view, and
+  // a failed one leaves the user in the library — the summary has to outlive the
+  // switch either way.
+  const hasImportReport = useImportReportStore((s) => s.outcome !== null);
   return (
     <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100dvh' }}>
       {!ready ? null : view === 'library' ? <LibraryView /> : <DocumentApp />}
+      {ready && hasImportReport && (
+        <Suspense fallback={null}>
+          <ImportReportDialog />
+        </Suspense>
+      )}
     </div>
   );
 }

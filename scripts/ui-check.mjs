@@ -301,6 +301,129 @@ async function checkCloudPanel(browser) {
   await ctx.close();
 }
 
+/**
+ * A synthetic `.goodnotes` notebook: a stored-only ZIP holding one protobuf page
+ * with two strokes in it.
+ *
+ * Built here rather than committed as a fixture because a real notebook is
+ * somebody's notes. It is the same construction the unit tests use, which is the
+ * point: this check is about the *surface* — that the summary is visible on a
+ * phone, where the top-bar notice is not rendered at all — rather than about the
+ * parsing, which the unit suite covers.
+ */
+function goodnotesFixture() {
+  const varint = (n) => {
+    const out = [];
+    for (;;) {
+      if (n < 0x80) return (out.push(n), out);
+      out.push((n & 0x7f) | 0x80);
+      n >>>= 7;
+    }
+  };
+  const packFloats = (values) => {
+    const buffer = new ArrayBuffer(values.length * 4);
+    const view = new DataView(buffer);
+    values.forEach((value, i) => view.setFloat32(i * 4, value, true));
+    return [...new Uint8Array(buffer)];
+  };
+  const floatField = (field, values) => {
+    const body = packFloats(values);
+    return [...varint((field << 3) | 2), ...varint(body.length), ...body];
+  };
+  const nest = (field, body) => [...varint((field << 3) | 2), ...varint(body.length), ...body];
+
+  const page = [];
+  for (let s = 0; s < 2; s++) {
+    const points = [];
+    const pressures = [];
+    for (let i = 0; i < 6; i++) {
+      points.push(90 + s * 60 + i * 6, 140 + i * 20);
+      pressures.push(0.3 + i * 0.1);
+    }
+    page.push(...nest(3, [...floatField(4, points), ...floatField(5, pressures), ...floatField(6, [0.1, 0.1, 0.1, 1])]));
+  }
+
+  const name = [...new TextEncoder().encode('notes/1.data')];
+  const body = page;
+  const u32 = (n) => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff];
+  const u16 = (n) => [n & 0xff, (n >> 8) & 0xff];
+  const localHeader = [
+    0x50, 0x4b, 0x03, 0x04, ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0),
+    ...u32(body.length), ...u32(body.length), ...u16(name.length), ...u16(0), ...name,
+  ];
+  const central = [
+    0x50, 0x4b, 0x01, 0x02, ...u16(20), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0),
+    ...u32(body.length), ...u32(body.length), ...u16(name.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+    ...u32(0), ...u32(0), ...name,
+  ];
+  const offset = localHeader.length + body.length;
+  const end = [0x50, 0x4b, 0x05, 0x06, ...u16(0), ...u16(0), ...u16(1), ...u16(1), ...u32(central.length), ...u32(offset), ...u16(0)];
+  return Buffer.from([...localHeader, ...body, ...central, ...end]);
+}
+
+/** Hand a file to the next picker the page opens. */
+async function pickFile(page, selector, file) {
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 5_000 }), page.click(selector)]);
+  await chooser.setFiles(file);
+}
+
+/**
+ * The GoodNotes import summary.
+ *
+ * Checked on a phone specifically. The import is inference and has to say what
+ * it recovered, and the top bar's notice is `hidden … xl:flex` — so on the device
+ * most likely to open a notebook, this dialog is the *only* thing that reports
+ * the result. If it does not appear here, the feature silently lies.
+ */
+async function checkGoodNotesImport(browser) {
+  console.log('goodnotes import summary, 412x915, touch only:');
+  const ctx = await browser.newContext({ viewport: { width: PHONE.width, height: PHONE.height }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-open-file]', { timeout: 20_000 });
+
+  // A file that is named like a notebook and is not one: the honest fallback.
+  await pickFile(page, '[data-open-file]', {
+    name: 'Chemistry.goodnotes',
+    mimeType: 'application/octet-stream',
+    buffer: Buffer.from('not a notebook at all'),
+  });
+  const failed = await page.waitForSelector('[data-goodnotes-report]', { state: 'visible', timeout: 5_000 }).then(() => true, () => false);
+  check('a notebook that cannot be read says so in a dialog, not only in the top bar', failed);
+  if (failed) {
+    const message = await page.textContent('[data-report-message]');
+    check('it says the file is not an archive', (message ?? '').includes('not a GoodNotes archive'), message ?? '');
+    await page.click('[data-report-dismiss]');
+    check(
+      'dismissing it closes it',
+      await page.waitForSelector('[data-goodnotes-report]', { state: 'detached', timeout: 3_000 }).then(() => true, () => false),
+    );
+  }
+
+  // And a notebook that can be read: the summary over the document it opened.
+  await page.waitForSelector('[data-open-file]', { timeout: 5_000 });
+  await pickFile(page, '[data-open-file]', {
+    name: 'Week 3.goodnotes',
+    mimeType: 'application/octet-stream',
+    buffer: goodnotesFixture(),
+  });
+  const imported = await page.waitForSelector('[data-report-counts]', { state: 'visible', timeout: 8_000 }).then(() => true, () => false);
+  check('a readable notebook reports what came in', imported);
+  if (imported) {
+    const counts = await page.textContent('[data-report-counts]');
+    check('it counts the pages and strokes it recovered', /1 page and 2 strokes/.test(counts ?? ''), counts ?? '');
+    const warnings = await page.textContent('[data-report-warnings]');
+    check('it admits everything came in as pen', (warnings ?? '').includes('came in as pen strokes'), (warnings ?? '').slice(0, 80));
+    // Over the document, since a successful import navigates there.
+    const box = await page.$eval('[data-goodnotes-report]', (el) => el.getBoundingClientRect().width);
+    check('the summary is on screen at phone width', box > 0 && box <= PHONE.width, `${Math.round(box)}px`);
+  }
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
 // --------------------------------------------------------------------- main
 
 const executablePath = findChromium();
@@ -333,6 +456,7 @@ try {
   await checkSmallTablet(browser);
   await checkDesktop(browser);
   await checkCloudPanel(browser);
+  await checkGoodNotesImport(browser);
 } finally {
   await browser.close();
   if (server) {

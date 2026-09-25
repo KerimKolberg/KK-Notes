@@ -1,7 +1,11 @@
 /**
  * Bundle guard: the entry chunk referenced by dist/index.html (and every
- * chunk it imports statically) must not contain pdfjs-dist or pdf-lib, and
- * both libraries must exist in separate, lazily-loaded chunks.
+ * chunk it imports statically) must not contain pdfjs-dist, pdf-lib or the
+ * GoodNotes importer, and each must exist in a separate, lazily-loaded chunk.
+ *
+ * The GoodNotes importer is in here because it is easy to pull onto the critical
+ * path by accident: one static import of a constant from it drags a ZIP reader,
+ * an LZ4 decoder and a protobuf walker along, and nothing else complains.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -18,6 +22,13 @@ if (!entry) {
 const SIGNATURES = {
   'pdfjs-dist': [/GlobalWorkerOptions/, /pdf\.worker/, /PDFPageProxy|getDocument\(/],
   'pdf-lib': [/PDFDocument\b/, /PDFHexString|PDFContentStream|drawSvgPath/],
+  // Error strings the importer's layers own, and which minification keeps.
+  'goodnotes import': [
+    /end-of-central-directory/,
+    /compressed block/,
+    /not a protobuf wire type/,
+    /No strokes could be recovered/,
+  ],
 };
 
 const files = readdirSync(assets).filter((f) => f.endsWith('.js') || f.endsWith('.mjs'));

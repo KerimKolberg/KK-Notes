@@ -56,6 +56,14 @@
         "description": "KK-Notes inking document",
         "mimeType": "application/x-notex+json",
         "role": "Editor"
+      },
+      {
+        "ext": [
+          "goodnotes"
+        ],
+        "name": "GoodNotes Notebook",
+        "description": "GoodNotes notebook, imported as pen strokes",
+        "role": "Viewer"
       }
     ],
     "windows": {

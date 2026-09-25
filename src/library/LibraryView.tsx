@@ -195,10 +195,10 @@ export function LibraryView() {
   );
 
   /**
-   * Open a file that is not in the library — a PDF to annotate, or a document
-   * shared from somewhere else. The library is the home screen, so "open
-   * something" belongs here rather than only inside a note you had to create
-   * first in order to reach the menu.
+   * Open a file that is not in the library — a PDF to annotate, a document
+   * shared from somewhere else, or a GoodNotes notebook to import. The library
+   * is the home screen, so "open something" belongs here rather than only
+   * inside a note you had to create first in order to reach the menu.
    */
   const openFile = useCallback(() => {
     setBusy(true);
@@ -273,7 +273,7 @@ export function LibraryView() {
           onClick={openFile}
           disabled={busy}
           data-open-file
-          title="Open a PDF or a document from this device"
+          title="Open a PDF, a document or a GoodNotes notebook from this device"
           className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
         >
           <FolderOpen size={16} aria-hidden="true" />

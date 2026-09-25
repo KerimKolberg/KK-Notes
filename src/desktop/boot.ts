@@ -45,6 +45,10 @@ export async function openRequested(request: OpenWithRequest): Promise<BootTarge
       // A new, unsaved document: it has no path of its own yet.
       return { view: 'document', path: null };
     }
+    if (kind === 'goodnotes') {
+      await importGoodNotesAsDocument(request.uri);
+      return { view: 'document', path: null };
+    }
   } catch (error) {
     useDesktopStore.getState().setNotice({
       text: `Could not open that file: ${error instanceof Error ? error.message : String(error)}`,
@@ -70,6 +74,23 @@ async function importPdfAsDocument(uri: string): Promise<void> {
 }
 
 /**
+ * Turn a GoodNotes notebook into a fresh document.
+ *
+ * Read the same way a PDF is, for the same reason: on Android the launch hands
+ * over a `content://` URI and only the content resolver can open one.
+ *
+ * The import is inference — GoodNotes publishes no format — so the notice it
+ * raises afterwards is part of the feature rather than decoration. Someone who
+ * is told "11 pages, 1,430 strokes, everything came in as pen" can judge the
+ * result; someone shown a silently half-empty notebook cannot.
+ */
+async function importGoodNotesAsDocument(uri: string): Promise<void> {
+  const { readFile } = await import('@tauri-apps/plugin-fs');
+  const bytes = await readFile(uri);
+  await adoptGoodNotes(bytes, uri.split(/[?#]/)[0] ?? uri);
+}
+
+/**
  * The same thing from a `File`, which is all a browser can offer.
  *
  * Kept beside its sibling rather than reimplemented next to the picker: the
@@ -81,6 +102,47 @@ export async function importPdfFileAsDocument(file: File): Promise<void> {
   const { loadPdfFile } = await import('../pdf/import');
   const name = fileBaseName(file.name) || 'Imported PDF';
   await adoptPdf(await loadPdfFile(file), name);
+}
+
+/** The same, from a `File`. */
+export async function importGoodNotesFileAsDocument(file: File): Promise<void> {
+  await adoptGoodNotes(new Uint8Array(await file.arrayBuffer()), file.name);
+}
+
+/**
+ * Turn recovered ink into the open document, and say what was recovered.
+ *
+ * The one place that decides what an import *becomes*, so a notebook opened
+ * through an intent, a file association and the library picker are the same
+ * document with the same notice — the drift the PDF path already avoids this way.
+ */
+async function adoptGoodNotes(bytes: Uint8Array, fileName: string): Promise<void> {
+  const { GoodNotesImportError, describeGoodNotesArchive, importGoodNotes } = await import('../goodnotes/import');
+  const { useImportReportStore } = await import('../goodnotes/reportStore');
+  let result;
+  try {
+    result = await importGoodNotes(bytes, { fileName });
+  } catch (error) {
+    // A failure is reported through the same dialog as a success. It is the only
+    // surface that can carry the archive listing and the advice to export a PDF
+    // instead — a one-line notice truncates both away.
+    useImportReportStore.getState().setOutcome({
+      kind: 'failed',
+      fileName,
+      message: error instanceof Error ? error.message : String(error),
+      entries: error instanceof GoodNotesImportError ? error.entries : describeGoodNotesArchive(bytes),
+    });
+    throw error;
+  }
+  useDocumentStore.getState().loadDocument(result.document, null);
+  // Imported but not saved anywhere: keep Save and autosave armed.
+  useDocumentStore.setState({ savedPages: null, savedTitle: null });
+  useImportReportStore.getState().setOutcome({ kind: 'imported', report: result.report });
+  // A one-line notice as well, for the desktop top bar; the detail is in the
+  // dialog, which is the only one of the two a phone shows.
+  useDesktopStore.getState().setNotice({
+    text: `Imported ${result.report.pages} page${result.report.pages === 1 ? '' : 's'} and ${result.report.strokes.toLocaleString()} stroke${result.report.strokes === 1 ? '' : 's'} from GoodNotes.`,
+  });
 }
 
 /** Turn a loaded PDF into the open document. */

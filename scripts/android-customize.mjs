@@ -118,7 +118,10 @@ const PERMISSIONS = `    <uses-permission android:name="android.permission.INTER
  * matches any character before `pdf`.
  *
  * `.notex` gets the same treatment, since the app is the only thing that can
- * open one.
+ * open one. `.goodnotes` gets only the extension filter: a notebook is a ZIP,
+ * so every sender either types it `application/octet-stream` or types it
+ * `application/zip`, and claiming `application/zip` would put this app in the
+ * chooser for every archive on the device.
  */
 export const OPEN_WITH_FILTERS = `
             <!-- notex: open-with. PDFs are imported as pages; .notex files open directly. -->
@@ -138,6 +141,7 @@ export const OPEN_WITH_FILTERS = `
                 <data android:mimeType="*/*" />
                 <data android:pathPattern=".*\\\\.pdf" />
                 <data android:pathPattern=".*\\\\.notex" />
+                <data android:pathPattern=".*\\\\.goodnotes" />
             </intent-filter>`;
 
 /**
@@ -214,6 +218,15 @@ edit('app/src/main/AndroidManifest.xml', (xml) => {
   // "Open with" from a file manager or a mail attachment.
   if (!out.includes('notex: open-with')) {
     out = out.replace('        </activity>', `${OPEN_WITH_FILTERS}\n        </activity>`);
+  }
+  // Patched in beside the others rather than with the block, because a manifest
+  // generated before GoodNotes import existed already carries the open-with
+  // marker and would skip the whole block.
+  if (!out.includes('.goodnotes')) {
+    out = out.replace(
+      '                <data android:pathPattern=".*\\\\.notex" />',
+      '                <data android:pathPattern=".*\\\\.notex" />\n                <data android:pathPattern=".*\\\\.goodnotes" />',
+    );
   }
   // "Share" from the same place, which is a different action entirely.
   if (!out.includes('notex: share-sheet')) {
@@ -751,6 +764,9 @@ if (!manifest.includes('android:mimeType="application/pdf"')) {
 }
 if (!manifest.includes('android:pathPattern=".*\\\\.pdf"')) {
   problems.push('AndroidManifest.xml has no .pdf pathPattern filter (senders that type files as octet-stream)');
+}
+if (!manifest.includes('android:pathPattern=".*\\\\.goodnotes"')) {
+  problems.push('AndroidManifest.xml has no .goodnotes pathPattern filter (a notebook has no MIME type to match on)');
 }
 if (manifest && !manifest.includes('android.intent.action.SEND')) {
   problems.push('AndroidManifest.xml has no ACTION_SEND filter, so "Share" cannot reach the app');

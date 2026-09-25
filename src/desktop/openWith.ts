@@ -31,7 +31,7 @@ export interface OpenWithRequest {
   readonly mime: string;
 }
 
-export type OpenWithKind = 'pdf' | 'notex' | 'unknown';
+export type OpenWithKind = 'pdf' | 'notex' | 'goodnotes' | 'unknown';
 
 /**
  * What kind of document this is.
@@ -47,9 +47,14 @@ export function classifyOpenWith(request: OpenWithRequest): OpenWithKind {
   const path = uri.split(/[?#]/)[0] ?? uri;
   if (path.endsWith('.pdf')) return 'pdf';
   if (path.endsWith('.notex') || path.endsWith('.json')) return 'notex';
+  if (path.endsWith('.goodnotes')) return 'goodnotes';
   const mime = request.mime.toLowerCase().split(';')[0]?.trim() ?? '';
   if (mime === 'application/pdf') return 'pdf';
   if (mime === 'application/x-notex+json') return 'notex';
+  // GoodNotes' own declared types. `application/zip` is deliberately not one of
+  // them: a notebook *is* a ZIP, but so is almost everything else, and opening
+  // every archive on the device as a notebook is worse than opening none.
+  if (mime === 'com.goodnotes.document' || mime === 'application/vnd.goodnotes') return 'goodnotes';
   return 'unknown';
 }
 

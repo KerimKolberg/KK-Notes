@@ -18,10 +18,15 @@ afterEach(() => {
 
 describe('what the picker offers', () => {
   it('covers documents and PDFs', () => {
-    expect([...OPENABLE_EXTENSIONS]).toEqual(['notex', 'json', 'pdf']);
-    for (const fragment of ['.notex', '.pdf', 'application/pdf']) {
+    expect([...OPENABLE_EXTENSIONS]).toEqual(['notex', 'json', 'pdf', 'goodnotes']);
+    for (const fragment of ['.notex', '.pdf', '.goodnotes', 'application/pdf']) {
       expect(OPENABLE_ACCEPT).toContain(fragment);
     }
+    // No MIME entry for a notebook: browsers match `accept` against the type the
+    // OS reports, and no desktop OS has a type for a GoodNotes file, so naming
+    // one would filter the file out rather than in.
+    const mimes = OPENABLE_ACCEPT.split(',').filter((entry) => entry.includes('/'));
+    expect(mimes.some((mime) => mime.includes('goodnotes'))).toBe(false);
   });
 
   it('recognises a file by extension, through a query string', () => {
@@ -31,6 +36,7 @@ describe('what the picker offers', () => {
     expect(isOpenable('/sdcard/Download/Lecture.PDF')).toBe(true);
     expect(isOpenable('content://downloads/42/report.pdf?take=1')).toBe(true);
     expect(isOpenable('notes.json')).toBe(true);
+    expect(isOpenable('Chemistry.goodnotes')).toBe(true);
 
     expect(isOpenable('photo.png')).toBe(false);
     expect(isOpenable('pdf')).toBe(false);
@@ -43,7 +49,11 @@ describe('the desktop path', () => {
   async function load(picked: string | null) {
     const openRequested = vi.fn().mockResolvedValue({ view: 'document', path: picked });
     const open = vi.fn().mockResolvedValue(picked);
-    vi.doMock('../../desktop/boot', () => ({ openRequested, importPdfFileAsDocument: vi.fn() }));
+    vi.doMock('../../desktop/boot', () => ({
+      openRequested,
+      importPdfFileAsDocument: vi.fn(),
+      importGoodNotesFileAsDocument: vi.fn(),
+    }));
     vi.doMock('../../desktop/tauri', () => ({ isTauri: () => true, tauriDialog: async () => ({ open }) }));
     const mod = await import('../openFile');
     return { ...mod, openRequested, open };
@@ -60,7 +70,7 @@ describe('the desktop path', () => {
     const m = await load('/x.notex');
     await m.openFileFromLibrary();
     const filters = m.open.mock.calls[0]![0].filters as { name: string; extensions: string[] }[];
-    expect(filters[0]!.extensions).toEqual(['notex', 'json', 'pdf']);
+    expect(filters[0]!.extensions).toEqual(['notex', 'json', 'pdf', 'goodnotes']);
   });
 
   it('opens nothing when the picker is cancelled', async () => {
@@ -75,12 +85,17 @@ describe('the browser path', () => {
     const loadDocument = vi.fn();
     const setNotice = vi.fn();
     const importPdfFileAsDocument = vi.fn().mockResolvedValue(undefined);
-    vi.doMock('../../desktop/boot', () => ({ openRequested: vi.fn(), importPdfFileAsDocument }));
+    const importGoodNotesFileAsDocument = vi.fn().mockResolvedValue(undefined);
+    vi.doMock('../../desktop/boot', () => ({
+      openRequested: vi.fn(),
+      importPdfFileAsDocument,
+      importGoodNotesFileAsDocument,
+    }));
     vi.doMock('../../desktop/tauri', () => ({ isTauri: () => false, tauriDialog: vi.fn() }));
     vi.doMock('../../document/store', () => ({ useDocumentStore: { getState: () => ({ loadDocument }) } }));
     vi.doMock('../../desktop/desktopStore', () => ({ useDesktopStore: { getState: () => ({ setNotice }) } }));
     const mod = await import('../openFile');
-    return { ...mod, loadDocument, setNotice, importPdfFileAsDocument };
+    return { ...mod, loadDocument, setNotice, importPdfFileAsDocument, importGoodNotesFileAsDocument };
   }
 
   const asFile = (name: string, body: string, type = ''): File =>
@@ -102,6 +117,16 @@ describe('the browser path', () => {
     const m = await load();
     expect(await m.openBrowserFile(asFile('Lecture.pdf', '', 'application/pdf'))).toEqual({ view: 'document', path: null });
     expect(m.importPdfFileAsDocument).toHaveBeenCalled();
+    expect(m.loadDocument).not.toHaveBeenCalled();
+  });
+
+  it('imports a GoodNotes notebook rather than trying to parse it as a document', async () => {
+    // A notebook is a ZIP, so parsing it as JSON would fail with something
+    // unhelpful about an unexpected token.
+    const m = await load();
+    expect(await m.openBrowserFile(asFile('Chemistry.goodnotes', ''))).toEqual({ view: 'document', path: null });
+    expect(m.importGoodNotesFileAsDocument).toHaveBeenCalled();
+    expect(m.importPdfFileAsDocument).not.toHaveBeenCalled();
     expect(m.loadDocument).not.toHaveBeenCalled();
   });
 

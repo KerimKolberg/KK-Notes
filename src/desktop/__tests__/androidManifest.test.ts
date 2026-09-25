@@ -58,6 +58,15 @@ describe('the open-with intent filters', () => {
     // `application/octet-stream`; only the path pattern catches those.
     expect(filters).toContain('android:pathPattern=".*\\\\.pdf"');
     expect(filters).toContain('android:pathPattern=".*\\\\.notex"');
+    // A GoodNotes notebook has no MIME type worth matching — it is a ZIP — so
+    // the extension is the only thing that can put the app in the chooser.
+    expect(filters).toContain('android:pathPattern=".*\\\\.goodnotes"');
+  });
+
+  it('does not claim every ZIP on the device', () => {
+    // Which is what declaring `application/zip` would do: a notebook is a ZIP,
+    // and so is every download, backup and font pack.
+    expect(filters).not.toContain('application/zip');
   });
 
   it('escapes the dot in every path pattern', () => {
