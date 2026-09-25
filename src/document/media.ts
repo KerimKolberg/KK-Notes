@@ -416,6 +416,32 @@ export function textStyleOf(box: TextBox): TextStyle {
   };
 }
 
+/**
+ * The minimum a finger can reliably hit, in CSS px.
+ *
+ * Android's own guidance is 48dp and Apple's is 44pt; 44 is the number both
+ * agree is enough, and it is what the palette's own buttons use. Anything
+ * grabbable on the page is measured against it.
+ */
+export const TOUCH_TARGET = 44;
+
+/**
+ * Where a text box's drag strip sits, and how big it is.
+ *
+ * In *screen* px rather than page px, which is the whole point: a strip
+ * measured in page units shrinks with the zoom, so the gesture that works on
+ * one page is unusable on the overview. Dividing by the zoom keeps the target
+ * the same size under the finger whatever the page is doing.
+ *
+ * It sits above the box rather than over it because a text box is all text —
+ * a strip laid on top would eat the first line's taps.
+ */
+export function textGrabStrip(zoom: number): { readonly height: number; readonly top: number } {
+  const scale = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  const height = TOUCH_TARGET / scale;
+  return { height, top: -height };
+}
+
 export type TextInit = Partial<TextStyle>;
 
 export function createTextBox(page: PageDimensions, zIndex: number, at?: Point, init: TextInit = {}): TextBox {

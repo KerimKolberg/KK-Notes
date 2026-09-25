@@ -46,10 +46,12 @@ import {
   setRowFractions,
   setTableCell,
   sortedByZ,
+  TOUCH_TARGET,
   tableCell,
   TEXT_FONTS,
   TEXT_SIZES,
   textCss,
+  textGrabStrip,
   textStyleOf,
   toLocalDelta,
   trackEdges,
@@ -271,6 +273,7 @@ export const MediaLayer = memo(function MediaLayer({ page, zoom, active }: Media
                 box={box}
                 editable={active && !isLocked(item)}
                 selected={item.id === selectedId}
+                zoom={zoom}
                 onDragBody={bodyHandlers(raw)}
                 onText={(text) => updateMedia(page.id, item.id, { text })}
               />
@@ -360,10 +363,12 @@ interface MediaGripsProps {
  */
 function MediaGrips({ item, zoom, selected, locked, onSelect, onDragBody }: MediaGripsProps) {
   // Constant on-screen size, like the resize handles: a grip that shrank with
-  // the zoom would be unhittable on the page overview.
-  const gripHeight = 10 / zoom;
-  const gripWidth = Math.min(item.width * 0.6, 44 / zoom);
-  const dot = 2.5 / zoom;
+  // the zoom would be unhittable on the page overview. Sized for a finger
+  // rather than a cursor — this is the only way to move an object that is full
+  // of inputs, so it has to be hittable without aiming.
+  const gripHeight = 18 / zoom;
+  const gripWidth = Math.min(item.width, TOUCH_TARGET / zoom);
+  const dot = 3 / zoom;
   return (
     <div
       aria-hidden="true"
@@ -542,6 +547,7 @@ interface TextCardProps {
   box: CSSProperties;
   editable: boolean;
   selected: boolean;
+  zoom: number;
   onDragBody: BodyHandlers;
   onText: (text: string) => void;
 }
@@ -560,16 +566,9 @@ interface TextCardProps {
  * shows a dashed outline; it disappears the moment there is text, and never
  * appears in the export.
  */
-/**
- * How tall the drag strip above a text box is, in page px.
- *
- * Above rather than over: a text box is all text, so a strip laid on top of it
- * would eat the first line's taps.
- */
-const TEXT_GRAB_HEIGHT = 14;
-
-function TextCard({ item, box, editable, selected, onDragBody, onText }: TextCardProps) {
+function TextCard({ item, box, editable, selected, zoom, onDragBody, onText }: TextCardProps) {
   const style = textStyleOf(item);
+  const strip = textGrabStrip(zoom);
   const css = textCss(style);
   const empty = item.text === '';
   return (
@@ -588,17 +587,20 @@ function TextCard({ item, box, editable, selected, onDragBody, onText }: TextCar
         />
       )}
       {/* A grab strip along the top edge, so a box full of text can still be
-          picked up without selecting the text inside it. */}
+          picked up without selecting the text inside it. Sized in screen px
+          (hence `/ zoom`) so it stays a finger-sized target at any zoom. */}
       <div
         aria-hidden="true"
         title="Drag to move"
+        data-text-grab
         style={{
           position: 'absolute',
           left: 0,
-          top: -TEXT_GRAB_HEIGHT,
+          top: strip.top,
           width: '100%',
-          height: TEXT_GRAB_HEIGHT,
+          height: strip.height,
           cursor: editable ? 'move' : 'default',
+          touchAction: 'none',
         }}
         {...onDragBody}
       />

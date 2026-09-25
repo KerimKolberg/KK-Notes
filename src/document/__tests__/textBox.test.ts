@@ -5,10 +5,12 @@ import {
   TEXT_FONTS,
   TEXT_LINE_HEIGHT,
   TEXT_SIZES,
+  TOUCH_TARGET,
   createTextBox,
   fontById,
   pdfFontName,
   textCss,
+  textGrabStrip,
   textStyleOf,
 } from '../media';
 import { A4_DIMENSIONS } from '../constants';
@@ -103,6 +105,34 @@ describe('textStyleOf', () => {
   it('treats a missing flag as off rather than as truthy', () => {
     const style = textStyleOf(box({ bold: undefined as unknown as boolean }) as TextBox);
     expect(style.bold).toBe(false);
+  });
+});
+
+describe('the drag strip', () => {
+  it('is a finger-sized target at any zoom', () => {
+    // The bug this replaced: a strip measured in *page* px shrinks with the
+    // zoom, so the gesture that works on one page is unusable on the overview.
+    for (const zoom of [0.25, 0.5, 1, 2, 4]) {
+      const strip = textGrabStrip(zoom);
+      expect(strip.height * zoom).toBeCloseTo(TOUCH_TARGET);
+      expect(strip.height * zoom).toBeGreaterThanOrEqual(44);
+    }
+  });
+
+  it('sits above the box, never over its first line', () => {
+    // A text box is all text; a strip laid on top would eat the taps meant for
+    // the words under it.
+    for (const zoom of [0.5, 1, 3]) {
+      const strip = textGrabStrip(zoom);
+      expect(strip.top).toBe(-strip.height);
+      expect(strip.top).toBeLessThan(0);
+    }
+  });
+
+  it('survives a nonsense zoom rather than producing a strip of no size', () => {
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(textGrabStrip(bad).height).toBe(TOUCH_TARGET);
+    }
   });
 });
 

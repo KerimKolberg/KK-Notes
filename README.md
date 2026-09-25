@@ -1184,6 +1184,17 @@ Text is wrapped with the same `wrapText` the notes and tables use, measured
 with the font that will actually draw it, and clipped to the box: the live box
 hides its overflow and paper cannot scroll.
 
+**Grabbing it is measured in screen px, not page px.** A box full of text has
+no dead space to press, so it is moved by a strip above its top edge — and the
+first version sized that strip in *page* units, which meant it shrank with the
+zoom and the gesture that worked on one page was unusable on the overview.
+`textGrabStrip` divides by the zoom instead, so the target stays `TOUCH_TARGET`
+(44 px — the size Android's 48dp and Apple's 44pt guidance agree on) under the
+finger whatever the page is doing. The shared grip pill above every media
+object is sized the same way and for the same reason: it is the only way to
+move something that is full of inputs, so it has to be hittable without
+aiming.
+
 ## Tools
 
 | Tool | Gesture | Output |
