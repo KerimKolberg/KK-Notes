@@ -57,6 +57,25 @@ jobs:
 
       - run: npm ci
 
+      # Google pins an Android OAuth client to package name *plus* the signing
+      # certificate's SHA-1, so the key the APK is signed with has to be the same
+      # one every build. Gradle's debug signing config reads
+      # `~/.android/debug.keystore` and *mints a fresh one* when it is missing —
+      # which, on a clean runner, is every build. Without this step Drive sign-in
+      # on Android works for exactly one APK and then fails with
+      # `invalid_request`/`Custom scheme URIs are not allowed`.
+      - name: Restore the debug keystore, so the signing SHA-1 is stable
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          mkdir -p ~/.android
+          if [ -n "$KEYSTORE_B64" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+            echo "Restored the debug keystore from ANDROID_DEBUG_KEYSTORE_B64."
+          else
+            echo "::warning::No ANDROID_DEBUG_KEYSTORE_B64 secret is set, so Gradle will mint a throwaway debug key and this APK's signing SHA-1 will differ from the last one. Google Drive sign-in on Android pins that SHA-1, so it will stop working until the new one is registered. Run the 'Android debug keystore' workflow once and save its output as that secret — see docs/google-drive-setup.md."
+          fi
+
       - name: Build debug APK
         env:
           # The Google OAuth client id for Drive sync. Not a secret — an
@@ -66,6 +85,19 @@ jobs:
           # APK whose Cloud Sync panel says it has no client id.
           NOTEX_GOOGLE_CLIENT_ID: ${{ vars.NOTEX_GOOGLE_CLIENT_ID }}
         run: ./build-android.sh --debug --abi aarch64
+
+      # Printed every build, because it is the value Google needs and because a
+      # *change* in it is the one thing that silently breaks Android sign-in.
+      # Fingerprints identify a certificate; they are not secret.
+      - name: Print the signing SHA-1 (Google pins this for Android OAuth)
+        run: |
+          if [ ! -f ~/.android/debug.keystore ]; then
+            echo "No debug keystore was produced, so this APK is not debug-signed."
+            exit 0
+          fi
+          keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey \
+            -storepass android -keypass android 2>/dev/null |
+            grep -E 'SHA1:|SHA256:' || echo "Could not read the fingerprints."
 
       - name: Locate the APK
         id: apk

@@ -246,6 +246,11 @@ panel, which is where an account is connected and disconnected.
 
 ### Google Drive
 
+> **Setting it up:** [`docs/google-drive-setup.md`](docs/google-drive-setup.md) is
+> the step-by-step for the Google Cloud side — the project, the two OAuth clients
+> (Desktop and Android), the stable signing key Android needs, and where each
+> client id goes. This section is how it works, not how to configure it.
+
 The first real provider, in `notes-sync/src/drive.rs`. It still talks to no
 socket: every request goes through an `HttpTransport`, so the whole of it —
 URLs, multipart framing, error envelopes, conflict detection — is tested
@@ -330,6 +335,16 @@ same variable at runtime). It is **not a secret** — that is what PKCE is for �
 so the APK workflow reads it from a repo *variable*. A build without one still
 runs; its Cloud Sync panel says it has no client id instead of offering a
 button that cannot work.
+
+Android needs one thing more, and it is not obvious: Google ties an Android
+OAuth client to the package name **plus the SHA-1 of the signing certificate**,
+and Gradle's debug signing config mints a fresh key whenever
+`~/.android/debug.keystore` is missing — which on a clean CI runner is every
+build. So the APK workflow restores that keystore from an
+`ANDROID_DEBUG_KEYSTORE_B64` secret and prints the resulting SHA-1 in its log,
+and the one-shot `Android debug keystore` workflow mints the key in the first
+place (so nothing has to be installed locally to run `keytool`). Without it,
+Android sign-in works for exactly one APK.
 
 #### Where the TLS lives, and why
 
