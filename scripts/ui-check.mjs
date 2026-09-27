@@ -518,6 +518,81 @@ async function checkFileDrop(browser) {
   await ctx.close();
 }
 
+/**
+ * Tabs.
+ *
+ * Driven through the real drop path, because the interesting claim is the one
+ * the user asked for: dropping a second document must *not* replace the first.
+ * So this drops two notebooks and checks both are still open afterwards, and
+ * that the strip appears only once there is more than one.
+ */
+async function checkTabs(browser) {
+  console.log('tabs, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-library-view]', { timeout: 20_000 });
+
+  const drop = async (name) => {
+    const transfer = await page.evaluateHandle(
+      ({ name, bytes }) => {
+        const t = new DataTransfer();
+        t.items.add(new File([new Uint8Array(bytes)], name, { type: 'application/octet-stream' }));
+        return t;
+      },
+      { name, bytes: [...goodnotesFixture()] },
+    );
+    // The element that *has* the handler, since a synthesised event dispatched on
+    // a descendant is not guaranteed to bubble to it.
+    const target = (await page.$('[data-library-view]')) ? '[data-library-view]' : '[data-page-stage]';
+    await page.dispatchEvent(target, 'dragover', { dataTransfer: transfer });
+    await page.dispatchEvent(target, 'drop', { dataTransfer: transfer });
+    await page.waitForSelector('[data-report-dismiss]', { state: 'visible', timeout: 8_000 }).catch(() => undefined);
+    await page.click('[data-report-dismiss]').catch(() => undefined);
+  };
+
+  await drop('First.goodnotes');
+  check(
+    'one document open shows no strip',
+    (await page.$('[data-tab-strip]')) === null,
+    'a strip for a single tab wastes a row',
+  );
+
+  await drop('Second.goodnotes');
+  const strip = await page.waitForSelector('[data-tab-strip]', { state: 'visible', timeout: 5_000 }).then(() => true, () => false);
+  check('a second document opens a tab rather than replacing the first', strip);
+  if (!strip) {
+    check('no page errors', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+    return;
+  }
+
+  const titles = await page.$$eval('[data-tab] [role="tab"]', (els) => els.map((el) => el.textContent?.trim() ?? ''));
+  check('both documents are listed', titles.length === 2, titles.join(' | '));
+  check('the newest is the active one', await page.$eval('[data-tab-active] [role="tab"]', (el) => el.textContent ?? '').then((t) => t.includes('Second')));
+
+  // Switching back must bring the first document's own pages with it.
+  await page.click('[data-tab]:not([data-tab-active]) [role="tab"]');
+  check(
+    'clicking a tab switches to it',
+    await page
+      .$eval('[data-tab-active] [role="tab"]', (el) => el.textContent ?? '')
+      .then((t) => t.includes('First'), () => false),
+  );
+
+  // Closing leaves the other one open, and the strip goes away with it.
+  await page.click('[data-tab]:not([data-tab-active]) [data-tab-close]');
+  check(
+    'closing the other tab leaves one document and hides the strip',
+    await page.waitForSelector('[data-tab-strip]', { state: 'detached', timeout: 3_000 }).then(() => true, () => false),
+  );
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
 // --------------------------------------------------------------------- main
 
 const executablePath = findChromium();
@@ -552,6 +627,7 @@ try {
   await checkCloudPanel(browser);
   await checkGoodNotesImport(browser);
   await checkFileDrop(browser);
+  await checkTabs(browser);
 } finally {
   await browser.close();
   if (server) {

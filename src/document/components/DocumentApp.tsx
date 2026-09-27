@@ -20,7 +20,9 @@ import { useDocumentStore } from '../store';
 import { useToolStore } from '../toolStore';
 import { DocumentViewer } from './DocumentViewer';
 import { PageArranger } from './PageArranger';
+import { TabStrip } from './TabStrip';
 import { TopBar } from './TopBar';
+import { useTabStore, watchActiveTab } from '../tabStore';
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -60,6 +62,27 @@ export function DocumentApp() {
     [insertMedia],
   );
   const insertText = useCallback(() => insertMedia((page, z) => createTextBox(page.dimensions, z)), [insertMedia]);
+  /**
+   * A dropped text file, as a text box holding its contents.
+   *
+   * Sized to the text rather than left at the default box, since a paragraph in a
+   * 260×80 box would arrive scrolled out of sight. Capped, because a log file is
+   * also a text file and a box taller than the page is no use to anybody — the
+   * rest is still there, in the box, reachable by scrolling it.
+   */
+  const addTextFromFile = useCallback(
+    (text: string) =>
+      insertMedia((page, z) => {
+        const lines = text.split('\n').length;
+        const height = Math.min(page.dimensions.height * 0.8, Math.max(80, lines * 22 + 24));
+        return createTextBox(page.dimensions, z, undefined, {
+          text,
+          width: Math.min(page.dimensions.width * 0.8, 420),
+          height,
+        });
+      }),
+    [insertMedia],
+  );
   const insertTable = useCallback(
     (init: TableInit) => insertMedia((page, z) => createTable(page.dimensions, z, undefined, init)),
     [insertMedia],
@@ -119,20 +142,48 @@ export function DocumentApp() {
       return;
     }
 
+    // A plain text file becomes a text box on the page, which is the same thing
+    // the Insert menu's text tool does — dropping one is "add this", not "open
+    // this", and there is no document in a `.txt` to open.
+    if (file.type.startsWith('text/') || /\.(txt|md|markdown|text)$/i.test(name)) {
+      if (useDocumentStore.getState().readOnly) {
+        setNotice({ text: 'This document is locked for presenting, so text cannot be added to it.' });
+        return;
+      }
+      void (async () => {
+        const text = await file.text();
+        if (text.trim() === '') {
+          setNotice({ text: `${file.name} is empty.` });
+          return;
+        }
+        addTextFromFile(text);
+      })().catch(fail);
+      return;
+    }
+
+    // A note or a notebook is a whole document, so it opens in its own tab
+    // rather than replacing what is in front of you.
     void (async () => {
       const { isOpenable, openBrowserFile } = await import('../../library/openFile');
       if (!isOpenable(file.name)) {
         setNotice({ text: `${file.name} is not something this app can open.` });
         return;
       }
-      const { confirmDiscardIfDirty } = await import('../../desktop/fileActions');
-      if (!(await confirmDiscardIfDirty())) return;
-      await openBrowserFile(file);
+      const { openDocumentInTab } = await import('../tabStore');
+      await openDocumentInTab(async () => (await openBrowserFile(file)) !== null);
     })().catch(fail);
-  }, []);
+  }, [addTextFromFile]);
   const { onDragOver, onDrop, pickImage } = useMediaInput(openDroppedFile);
   /** The palette floats inside this area and is clamped to it. */
   const stageRef = useRef<HTMLDivElement>(null);
+
+  // Whatever is open becomes the first tab, and the strip follows the document's
+  // title and dirty state from here on. Both are idempotent, so remounting the
+  // document view does not multiply tabs.
+  useEffect(() => {
+    useTabStore.getState().adoptCurrent();
+    return watchActiveTab();
+  }, []);
 
   // A lasso selection only lives while the lasso / select tools are active.
   useEffect(() => {
@@ -170,7 +221,14 @@ export function DocumentApp() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       <TopBar />
-      <div ref={stageRef} className="relative min-h-0 flex-1" onDragOver={onDragOver} onDrop={onDrop}>
+      <TabStrip />
+      <div
+        ref={stageRef}
+        className="relative min-h-0 flex-1"
+        data-page-stage
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+      >
         <DocumentViewer settingsRef={settingsRef} currentTool={settings.tool} />
         {/* Above everything and inert, so it can never intercept a stroke. */}
         <DebugOverlay enabled={settings.debugMode} />

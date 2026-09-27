@@ -213,10 +213,16 @@ export function LibraryView() {
   const openFile = useCallback(() => {
     setBusy(true);
     setError(null);
-    void openFileFromLibrary()
-      .then((target) => {
-        if (target) useRouteStore.getState().openDocument(target.path);
-      })
+    void (async () => {
+      const { openDocumentInTab } = await import('../document/tabStore');
+      let path: string | null = null;
+      const opened = await openDocumentInTab(async () => {
+        const target = await openFileFromLibrary();
+        path = target?.path ?? null;
+        return target !== null;
+      });
+      if (opened) useRouteStore.getState().openDocument(path);
+    })()
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
   }, []);
@@ -245,10 +251,19 @@ export function LibraryView() {
     }
     setBusy(true);
     setError(null);
-    void openBrowserFile(plan.open)
-      .then((target) => {
-        if (target) useRouteStore.getState().openDocument(target.path);
-      })
+    const file = plan.open;
+    void (async () => {
+      const { openDocumentInTab } = await import('../document/tabStore');
+      let path: string | null = null;
+      // In a tab, so opening from the library adds to what is already open
+      // instead of discarding it.
+      const opened = await openDocumentInTab(async () => {
+        const target = await openBrowserFile(file);
+        path = target?.path ?? null;
+        return target !== null;
+      });
+      if (opened) useRouteStore.getState().openDocument(path);
+    })()
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
   }, [setNotice]);

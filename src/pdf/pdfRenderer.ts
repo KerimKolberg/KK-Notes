@@ -7,7 +7,7 @@ import type { PdfPageRef } from '../document/types';
 import { displaySizePoints } from './pdfCoords';
 
 export { backgroundWidthBucket } from './pdfCoords';
-import { ANNOTATION_MODE_FORMS, openPdfDocument, type PDFDocumentProxy } from './pdfjs';
+import { ANNOTATION_MODE_FORMS, destroyPdfDocument, openPdfDocument, type PDFDocumentProxy } from './pdfjs';
 
 const documents = new Map<string, Promise<PDFDocumentProxy>>();
 const backgrounds = new RasterCache(24);
@@ -61,4 +61,41 @@ export function renderPdfPageBitmap(ref: PdfPageRef, targetWidth: number): Promi
     pending.finally(() => inflight.delete(key)).catch(() => undefined);
   }
   return pending;
+}
+
+/**
+ * Forget everything cached for one PDF source.
+ *
+ * Nothing used to call this, and nothing needed to: a document stayed open for
+ * the life of the process, so a parsed PDF that was still cached was still
+ * wanted. With several documents open at once that stops being true — every PDF
+ * ever opened would stay parsed, and PDF.js holds the whole file plus its
+ * structures, so a handful of lecture PDFs is a hundred megabytes nobody is
+ * looking at.
+ *
+ * Three things go: the parsed document (destroyed, not merely dropped — PDF.js
+ * owns a worker and buffers that a lost reference does not free), the page
+ * rasters, and any render still in flight, whose result would otherwise
+ * repopulate the cache moments after it was cleared.
+ *
+ * Safe to call for a source that was never opened. The caller decides *when* it
+ * is safe, which is when no open document still refers to it.
+ */
+export function releasePdfSource(sourceId: string): void {
+  const pending = documents.get(sourceId);
+  documents.delete(sourceId);
+  // Destroyed asynchronously and without waiting: the map entry is already gone,
+  // so a later request re-opens from the bytes rather than racing this.
+  pending?.then(destroyPdfDocument).catch(() => undefined);
+
+  const prefix = `${sourceId}:`;
+  backgrounds.deleteWithPrefix(prefix);
+  for (const key of [...inflight.keys()]) {
+    if (key.startsWith(prefix)) inflight.delete(key);
+  }
+}
+
+/** How many page rasters are cached. For the tests and the profiler. */
+export function cachedPdfBackgrounds(): number {
+  return backgrounds.size;
 }

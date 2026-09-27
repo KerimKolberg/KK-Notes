@@ -810,6 +810,64 @@ reviewed and diffed. Three kinds of files live there:
 overrides; Tauri merges it on top of `tauri.conf.json` automatically for
 mobile builds.
 
+### Tabs (`src/document/tabs.ts`, `tabStore.ts`)
+
+Several documents open at once, without several documents in memory at once.
+
+**A tab is not a mounted view.** The document store holds exactly one document
+and always has — one set of canvases, one pointer pipeline, one raster cache —
+and that is why drawing is fast, not an accident to be undone for tabs. Mounting
+five document trees would multiply the expensive part by five to show four copies
+nobody is looking at. So a tab is a **session**: the handful of store fields that
+make up "the open document" (`document`, `filePath`, the three `saved*` fields
+and the presenting lock). Switching captures those out of the store and puts the
+next tab's in. Every existing action, selector and undo stack keeps working on
+one live document and knows nothing about tabs.
+
+Interaction state is deliberately *not* part of a session. A selection restored
+into a document the user has just come back to is a selection they did not make.
+
+**Parking is the memory story.** Remembered is still memory: strokes, image data
+URLs, and above all the source bytes of every imported PDF, which are megabytes
+each. Past a few open tabs that adds up on a tablet. So a tab outside the three
+most recently used is *parked* — its session is dropped entirely, only title and
+path are kept, and it is read back from disk when next activated. The rule for
+what may be parked is the whole design:
+
+> A tab can be parked when re-opening it would lose nothing: it is saved on disk
+> and has no unsaved changes. A tab with unsaved work is never parked, however
+> old, because there is nowhere to read it back from.
+
+That keeps `dirty → session !== null` true at all times, and it is what stops
+"optimising memory" from meaning "throwing away your work". Bounding memory is
+best-effort; not losing work is not, so `tabsToPark` can legitimately return
+fewer tabs than the budget wants.
+
+**A leak tabs would have multiplied.** `pdfRenderer` caches the parsed PDF.js
+document per source id and nothing ever evicted it — harmless when one document
+stayed open for the life of the process, and one parsed PDF per tab ever opened
+once tabs exist. Parking and closing now call `releasePdfSource`, which destroys
+the document (via its *loading task* — `PDFDocumentProxy` has no `destroy` and the
+task owns the worker holding the file), drops its page rasters by key prefix, and
+forgets any render in flight that would otherwise repopulate the cache moments
+later. `releasableSources` decides what is safe: only sources no *live* session
+still refers to. Parked tabs deliberately do not count, because a parked tab
+re-opens its PDF from the file it reads back.
+
+**Opening adds rather than replaces**, which is the point. Every loader opens a
+document by writing straight into the document store — reasonably, since that is
+what opening meant before tabs — so `openDocumentInTab` brackets them: capture
+what was open, run the loader, then hand the result a new tab. A loader that
+opens nothing leaves no trace, because some of them overwrite the store before
+discovering they cannot finish. The subtlety that bit once, and now has a test:
+the bracket must restore the outgoing tab's *label* along with its session, or
+the subscription that keeps the active tab's title current will already have
+relabelled it with the incoming document's name.
+
+The strip appears only with two or more tabs open, shows a dot for unsaved
+changes, and asks before closing a tab with unsaved work — the one place work can
+vanish without the document being on screen to show for it.
+
 ### Four doors into the app
 
 A file can arrive four ways, and they all reach one decision so that a PDF
@@ -820,7 +878,7 @@ opened any of them becomes the same document:
 | File association / Android intent | `get_startup_file`, or `MainActivity`'s bridge | `classifyOpenWith` → `openRequested` |
 | The library's **Open** button | `tauriDialog` on the desktop, `<input type=file>` in a browser | `openRequested`, or `openBrowserFile` |
 | Dropped on the library | HTML5 drop → `planDrop` | `openBrowserFile` |
-| Dropped on a page | HTML5 drop → `useMediaInput` | images placed here; the rest to `DocumentApp` |
+| Dropped on a page | HTML5 drop → `useMediaInput` | images and text placed here; documents to a new tab |
 
 **Dropping is two features, and the second is the one that matters.** A webview's
 default action for a file drop nothing handled is to *navigate to the file* — so
@@ -838,9 +896,12 @@ appended to the document already open — the gesture says "add these pages to w
 I am working on", and replacing the document with a fresh import would throw that
 work away. A PDF dropped on the *library* opens as a new document, the same as
 picking it. A note or a notebook can only mean the second thing wherever it
-lands, so it replaces what is open behind the same unsaved-work prompt every
-other way of leaving a document uses. Images are the page's business alone;
-dropping one on the library says so rather than appearing to ignore it.
+lands, so it opens in **its own tab** — nothing on screen is replaced, which is
+why no prompt is needed any more. A plain text file becomes a text box holding
+its contents, sized to the text rather than left at the default box, because
+dropping one is "add this", not "open this", and there is no document in a `.txt`
+to open. Images are the page's business alone; dropping one on the library says
+so rather than appearing to ignore it.
 
 Opening is one-at-a-time by nature — each document would replace the last — so a
 multi-file drop opens the first and names the rest (`planDrop`, pure and tested)

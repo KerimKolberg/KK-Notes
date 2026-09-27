@@ -8,7 +8,7 @@
  * the polyfills for both the API and the worker.
  */
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
-import type { PDFDocumentProxy } from 'pdfjs-dist';
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
@@ -20,10 +20,23 @@ export const PDFJS_ASSET_BASE = `${import.meta.env.BASE_URL}pdfjs/`;
 export const ANNOTATION_MODE_FORMS: number = pdfjsLib.AnnotationMode.ENABLE_FORMS;
 
 /**
+ * The loading task that produced each open document.
+ *
+ * `PDFDocumentProxy` has no `destroy` of its own — the *task* owns the transport
+ * and the worker that holds the parsed file — and `openPdfDocument` returns only
+ * the proxy, which every caller wants. Rather than change that signature, the
+ * task is kept beside its proxy here so {@link destroyPdfDocument} can reach it.
+ *
+ * Weak, so a document nobody released still becomes collectable; this map is a
+ * way to *find* the task, not a reason to keep one alive.
+ */
+const tasks = new WeakMap<PDFDocumentProxy, PDFDocumentLoadingTask>();
+
+/**
  * Open a PDF from bytes. PDF.js transfers the buffer it is given to its
  * worker, so we always hand it a copy and keep the original intact.
  */
-export function openPdfDocument(data: ArrayBuffer): Promise<PDFDocumentProxy> {
+export async function openPdfDocument(data: ArrayBuffer): Promise<PDFDocumentProxy> {
   const task = pdfjsLib.getDocument({
     data: new Uint8Array(data.slice(0)),
     cMapUrl: `${PDFJS_ASSET_BASE}cmaps/`,
@@ -32,7 +45,27 @@ export function openPdfDocument(data: ArrayBuffer): Promise<PDFDocumentProxy> {
     wasmUrl: `${PDFJS_ASSET_BASE}wasm/`,
     iccUrl: `${PDFJS_ASSET_BASE}iccs/`,
   });
-  return task.promise;
+  const doc = await task.promise;
+  tasks.set(doc, task);
+  return doc;
+}
+
+/**
+ * Tear a document down, worker copy included.
+ *
+ * `cleanup()` on its own releases page resources and fonts but leaves the parsed
+ * file in the worker, which is the megabytes — so the task's `destroy()` is what
+ * this wants, and `cleanup()` is only the fallback for a document that arrived
+ * from somewhere without one.
+ */
+export async function destroyPdfDocument(doc: PDFDocumentProxy): Promise<void> {
+  const task = tasks.get(doc);
+  tasks.delete(doc);
+  if (task) {
+    await task.destroy();
+    return;
+  }
+  await doc.cleanup();
 }
 
 export { pdfjsLib };

@@ -11,9 +11,9 @@ import { OPEN_WITH_EVENT, onOpenWith, type OpenWithRequest } from '../openWith';
  *
  * So what these tests pin is the *wiring* — that a dispatched event reaches a
  * handler at all — plus the rules around it that are easy to get wrong when
- * reconnecting it: unsaved work is not replaced without asking, a failed open
- * does not navigate away from what the user is looking at, and unsubscribing
- * really unsubscribes.
+ * reconnecting it: the file opens in its own tab so nothing on screen is
+ * replaced, a failed open does not navigate away from what the user is looking
+ * at, and unsubscribing really unsubscribes.
  */
 
 const globalWindow = globalThis as unknown as {
@@ -84,18 +84,20 @@ describe('the running-app listener', () => {
 
 describe('handleOpenWith', () => {
   /** Load the module with `boot` and `fileActions` replaced. */
-  async function load(options: { dirty?: boolean; opened?: { view: 'document'; path: string | null } | null }) {
+  async function load(options: { opened?: { view: 'document'; path: string | null } | null }) {
     const openRequested = vi.fn().mockResolvedValue(options.opened ?? null);
-    const confirmDiscardIfDirty = vi.fn().mockResolvedValue(!options.dirty);
     const openDocument = vi.fn();
+    // The tab bracket, stubbed to the shape `handleOpenWith` relies on: run the
+    // loader, and report whether it opened anything.
+    const openDocumentInTab = vi.fn(async (load: () => Promise<boolean>) => load());
 
     vi.doMock('../boot', () => ({ openRequested }));
-    vi.doMock('../fileActions', () => ({ confirmDiscardIfDirty }));
+    vi.doMock('../../document/tabStore', () => ({ openDocumentInTab }));
     vi.doMock('../../library/routeStore', () => ({
       useRouteStore: { getState: () => ({ openDocument }) },
     }));
     const { handleOpenWith } = await import('../useOpenWith');
-    return { handleOpenWith, openRequested, confirmDiscardIfDirty, openDocument };
+    return { handleOpenWith, openRequested, openDocument, openDocumentInTab };
   }
 
   it('opens the file and routes to it', async () => {
@@ -113,14 +115,15 @@ describe('handleOpenWith', () => {
     expect(m.openDocument).toHaveBeenCalledWith('/sdcard/week 1.notex');
   });
 
-  it('asks before replacing unsaved work, and obeys a refusal', async () => {
-    // Someone mid-page who taps a PDF in another app has two things they care
-    // about, and the one already on screen is the one that cannot be recovered.
-    const m = await load({ dirty: true, opened: { view: 'document', path: null } });
+  it('opens in a tab rather than asking to discard what is on screen', async () => {
+    // Before tabs, arriving here meant replacing the open document, so unsaved
+    // work needed a prompt. Now the file gets its own tab and the page stays
+    // open beside it — so there is nothing to discard and nothing to ask.
+    const m = await load({ opened: { view: 'document', path: null } });
     await m.handleOpenWith(PDF);
-    expect(m.confirmDiscardIfDirty).toHaveBeenCalled();
-    expect(m.openRequested).not.toHaveBeenCalled();
-    expect(m.openDocument).not.toHaveBeenCalled();
+    expect(m.openDocumentInTab).toHaveBeenCalledTimes(1);
+    expect(m.openRequested).toHaveBeenCalledWith(PDF);
+    expect(m.openDocument).toHaveBeenCalledWith(null);
   });
 
   it('stays put when the file could not be opened', async () => {

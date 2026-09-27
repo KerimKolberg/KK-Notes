@@ -442,10 +442,23 @@ export function textGrabStrip(zoom: number): { readonly height: number; readonly
   return { height, top: -height };
 }
 
-export type TextInit = Partial<TextStyle>;
+/**
+ * Overrides for a new text box.
+ *
+ * The style, plus the content and box size — which a text box created from a
+ * *file* needs: a paragraph dropped into the default 260×80 box would arrive
+ * with most of itself scrolled out of sight.
+ */
+export type TextInit = Partial<TextStyle> & {
+  readonly text?: string;
+  readonly width?: number;
+  readonly height?: number;
+};
 
 export function createTextBox(page: PageDimensions, zIndex: number, at?: Point, init: TextInit = {}): TextBox {
-  const { width, height } = TEXT_DEFAULT_SIZE;
+  // Read before placement, because centring a box depends on how big it is.
+  const width = init.width ?? TEXT_DEFAULT_SIZE.width;
+  const height = init.height ?? TEXT_DEFAULT_SIZE.height;
   const { x, y } = placement(page, width, height, at);
   return {
     kind: 'text',

@@ -85,6 +85,25 @@ export class RasterCache {
   }
 
   /**
+   * Drop every entry whose key starts with `prefix`, closing each bitmap.
+   *
+   * Both caches key on an id followed by a separator — a PDF source, or a page —
+   * so a prefix is how "everything belonging to this document" is expressed
+   * without the cache needing to know what a document is. Returns how many went,
+   * which is what makes releasing testable.
+   */
+  deleteWithPrefix(prefix: string): number {
+    let removed = 0;
+    for (const key of [...this.entries.keys()]) {
+      if (!key.startsWith(prefix)) continue;
+      this.entries.get(key)?.close();
+      this.entries.delete(key);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  /**
    * Drop every bitmap, closing each one.
    *
    * `ImageBitmap` holds memory outside the JS heap, so letting the map go out

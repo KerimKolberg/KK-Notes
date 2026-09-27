@@ -19,8 +19,8 @@
  */
 import { useEffect } from 'react';
 import { useRouteStore } from '../library/routeStore';
+import { openDocumentInTab } from '../document/tabStore';
 import { openRequested } from './boot';
-import { confirmDiscardIfDirty } from './fileActions';
 import { onOpenWith, type OpenWithRequest } from './openWith';
 
 /**
@@ -29,15 +29,19 @@ import { onOpenWith, type OpenWithRequest } from './openWith';
  * Exported for the tests, which drive it without a React tree.
  */
 export async function handleOpenWith(request: OpenWithRequest): Promise<void> {
-  // Picking this app to open a file is explicit, but so is the unsaved page
-  // already on screen. Replacing that without asking is the one thing here
-  // that cannot be undone, so it is the one thing worth a prompt.
-  if (!(await confirmDiscardIfDirty())) return;
-  const target = await openRequested(request);
+  // Opened in its own tab, so there is nothing to discard and nothing to ask
+  // about: the page already on screen stays open beside it. Before tabs this
+  // needed a prompt, because arriving here meant replacing it.
+  let path: string | null = null;
+  const opened = await openDocumentInTab(async () => {
+    const target = await openRequested(request);
+    path = target?.path ?? null;
+    return target !== null;
+  });
   // `openRequested` has already raised a notice if it failed; going nowhere is
   // right in that case, because the document the user was looking at is still
   // the document they are looking at.
-  if (target) useRouteStore.getState().openDocument(target.path);
+  if (opened) useRouteStore.getState().openDocument(path);
 }
 
 /** Listen for intents delivered to a running app. */
