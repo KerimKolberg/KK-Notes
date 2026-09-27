@@ -53,6 +53,36 @@ export function isOpenable(name: string): boolean {
 }
 
 /**
+ * What to do with a set of dropped files.
+ *
+ * Opening is inherently one-at-a-time — each document would replace the one
+ * before it — so a multi-file drop opens the first and says so rather than
+ * flickering through all of them and leaving the last one standing, which looks
+ * like the others were lost.
+ *
+ * A pure function because the decision is the interesting part and a React
+ * handler is a poor place to test one.
+ */
+export interface DropPlan {
+  /** The file to open, if any of them can be. */
+  readonly open: File | null;
+  /** Openable files left for another drop. */
+  readonly deferred: readonly File[];
+  /** Files this screen cannot open at all. */
+  readonly rejected: readonly File[];
+}
+
+export function planDrop(files: readonly File[]): DropPlan {
+  const openable = files.filter((file) => isOpenable(file.name));
+  const [first, ...deferred] = openable;
+  return {
+    open: first ?? null,
+    deferred,
+    rejected: files.filter((file) => !isOpenable(file.name)),
+  };
+}
+
+/**
  * Show a picker and open what comes back.
  *
  * Resolves `null` when the user cancelled, or when the file could not be

@@ -35,8 +35,13 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * Clipboard paste, drag-and-drop and an explicit picker for placing images on
  * pages. Returns drop handlers for the viewer container plus `pickImage`,
  * which opens the file dialog the palette's "Insert image" button needs.
+ *
+ * Images are this hook's own business and are placed where they were dropped.
+ * Everything else is handed to `onOtherFile`, because what a dropped *document*
+ * should do is not a media question — it replaces or extends what is open, which
+ * only the view above here can decide.
  */
-export function useMediaInput(onPdfDropped?: (file: File) => void) {
+export function useMediaInput(onOtherFile?: (file: File) => void) {
   const addMedia = useDocumentStore((s) => s.addMedia);
   const setTool = useToolStore((s) => s.update);
 
@@ -121,10 +126,10 @@ export function useMediaInput(onPdfDropped?: (file: File) => void) {
       }
       for (const file of files) {
         if (file.type.startsWith('image/')) void placeImage(file, pageIndex, at);
-        else if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) onPdfDropped?.(file);
+        else onOtherFile?.(file);
       }
     },
-    [placeImage, onPdfDropped],
+    [placeImage, onOtherFile],
   );
 
   return { onDragOver, onDrop, placeImage, pickImage };

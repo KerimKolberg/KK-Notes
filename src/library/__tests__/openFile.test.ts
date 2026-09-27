@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OPENABLE_ACCEPT, OPENABLE_EXTENSIONS, isOpenable } from '../openFile';
+import { OPENABLE_ACCEPT, OPENABLE_EXTENSIONS, isOpenable, planDrop } from '../openFile';
 
 /**
  * The library's Open button.
@@ -42,6 +42,41 @@ describe('what the picker offers', () => {
     expect(isOpenable('pdf')).toBe(false);
     expect(isOpenable('notexfile')).toBe(false);
     expect(isOpenable('')).toBe(false);
+  });
+});
+
+describe('planning a drop', () => {
+  const file = (name: string): File => new File([], name);
+
+  it('opens the one openable file', () => {
+    const plan = planDrop([file('Week 1.notex')]);
+    expect(plan.open?.name).toBe('Week 1.notex');
+    expect(plan.deferred).toEqual([]);
+    expect(plan.rejected).toEqual([]);
+  });
+
+  it('opens the first of several and defers the rest rather than racing them', () => {
+    // Each would replace the one before it, so opening them all leaves the last
+    // one standing and looks like the others vanished.
+    const plan = planDrop([file('a.notex'), file('b.pdf'), file('c.goodnotes')]);
+    expect(plan.open?.name).toBe('a.notex');
+    expect(plan.deferred.map((f) => f.name)).toEqual(['b.pdf', 'c.goodnotes']);
+  });
+
+  it('separates what it cannot open from what it can', () => {
+    const plan = planDrop([file('photo.png'), file('Lecture.pdf'), file('notes.txt')]);
+    expect(plan.open?.name).toBe('Lecture.pdf');
+    expect(plan.rejected.map((f) => f.name)).toEqual(['photo.png', 'notes.txt']);
+  });
+
+  it('has nothing to open when nothing is openable', () => {
+    const plan = planDrop([file('photo.png')]);
+    expect(plan.open).toBeNull();
+    expect(plan.rejected.map((f) => f.name)).toEqual(['photo.png']);
+  });
+
+  it('handles an empty drop', () => {
+    expect(planDrop([])).toEqual({ open: null, deferred: [], rejected: [] });
   });
 });
 

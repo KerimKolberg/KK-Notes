@@ -6,6 +6,7 @@ import { useUndoRedoShortcuts } from '../../inking/hooks/useUndoRedoShortcuts';
 import { ToolPalette } from '../../inking/palette/ToolPalette';
 import { ToolConfigRow } from '../../inking/palette/parts';
 import { useDesktopIntegration } from '../../desktop/useDesktopIntegration';
+import { useDesktopStore } from '../../desktop/desktopStore';
 import { DebugOverlay } from '../../debug/DebugOverlay';
 import { useMediaInput } from '../hooks/useMediaInput';
 import { createStickyNote, createTable, createTextBox, nextZIndex, type NoteInit, type TableInit } from '../media';
@@ -84,16 +85,52 @@ export function DocumentApp() {
   const importDialogOpen = useDocumentStore((s) => s.importDialogOpen);
 
   // Dropped PDFs import all their pages at the end of the document.
-  const importDroppedPdf = useCallback((file: File) => {
-    if (useDocumentStore.getState().readOnly) return;
+  /**
+   * A non-image file dropped on the page stage.
+   *
+   * A PDF is *appended* to the document that is already open, which is the
+   * difference between dropping one here and opening one from the library: the
+   * gesture says "add these pages to what I am working on", and replacing the
+   * document with a fresh import would throw that work away.
+   *
+   * A note or a notebook cannot mean that — they are whole documents — so they
+   * replace what is open, after the same unsaved-work prompt every other way of
+   * leaving a document uses.
+   */
+  const openDroppedFile = useCallback((file: File) => {
+    const name = file.name.toLowerCase();
+    const setNotice = useDesktopStore.getState().setNotice;
+    const fail = (error: unknown): void => {
+      setNotice({ text: `Could not open ${file.name}: ${error instanceof Error ? error.message : String(error)}` });
+    };
+
+    if (file.type === 'application/pdf' || name.endsWith('.pdf')) {
+      if (useDocumentStore.getState().readOnly) {
+        setNotice({ text: 'This document is locked for presenting, so pages cannot be added to it.' });
+        return;
+      }
+      void (async () => {
+        const { loadPdfFile, buildPdfPages } = await import('../../pdf/import');
+        const loaded = await loadPdfFile(file);
+        const pages = await buildPdfPages(loaded, loaded.pages.map((p) => p.index), { sizeMode: 'preserve' });
+        useDocumentStore.getState().appendPages(pages);
+        setNotice({ text: `Added ${pages.length} page${pages.length === 1 ? '' : 's'} from ${file.name}.` });
+      })().catch(fail);
+      return;
+    }
+
     void (async () => {
-      const { loadPdfFile, buildPdfPages } = await import('../../pdf/import');
-      const loaded = await loadPdfFile(file);
-      const pages = await buildPdfPages(loaded, loaded.pages.map((p) => p.index), { sizeMode: 'preserve' });
-      useDocumentStore.getState().appendPages(pages);
-    })().catch(() => undefined);
+      const { isOpenable, openBrowserFile } = await import('../../library/openFile');
+      if (!isOpenable(file.name)) {
+        setNotice({ text: `${file.name} is not something this app can open.` });
+        return;
+      }
+      const { confirmDiscardIfDirty } = await import('../../desktop/fileActions');
+      if (!(await confirmDiscardIfDirty())) return;
+      await openBrowserFile(file);
+    })().catch(fail);
   }, []);
-  const { onDragOver, onDrop, pickImage } = useMediaInput(importDroppedPdf);
+  const { onDragOver, onDrop, pickImage } = useMediaInput(openDroppedFile);
   /** The palette floats inside this area and is clamped to it. */
   const stageRef = useRef<HTMLDivElement>(null);
 

@@ -810,6 +810,53 @@ reviewed and diffed. Three kinds of files live there:
 overrides; Tauri merges it on top of `tauri.conf.json` automatically for
 mobile builds.
 
+### Four doors into the app
+
+A file can arrive four ways, and they all reach one decision so that a PDF
+opened any of them becomes the same document:
+
+| Door | Mechanism | Lands in |
+| --- | --- | --- |
+| File association / Android intent | `get_startup_file`, or `MainActivity`'s bridge | `classifyOpenWith` → `openRequested` |
+| The library's **Open** button | `tauriDialog` on the desktop, `<input type=file>` in a browser | `openRequested`, or `openBrowserFile` |
+| Dropped on the library | HTML5 drop → `planDrop` | `openBrowserFile` |
+| Dropped on a page | HTML5 drop → `useMediaInput` | images placed here; the rest to `DocumentApp` |
+
+**Dropping is two features, and the second is the one that matters.** A webview's
+default action for a file drop nothing handled is to *navigate to the file* — so
+dropping a PDF on the top bar replaced the whole app with the browser's PDF
+viewer and took any unsaved work with it. Every pixel outside the page stage was
+such a target. `useFileDropGuard`, mounted above the router, prevents the default
+for file drags across the window so only explicit handlers act. It tests
+`dataTransfer.types` for `Files` and nothing else: the library moves notes
+between folders with its own HTML5 drag carrying `text/notes-entry`, and a guard
+that swallowed that would break moving notes. Both directions are checked, in
+`fileDrop.test.ts` and again in a real browser by `npm run check:ui`.
+
+**Where a drop lands decides what it means.** A PDF dropped on a *page* is
+appended to the document already open — the gesture says "add these pages to what
+I am working on", and replacing the document with a fresh import would throw that
+work away. A PDF dropped on the *library* opens as a new document, the same as
+picking it. A note or a notebook can only mean the second thing wherever it
+lands, so it replaces what is open behind the same unsaved-work prompt every
+other way of leaving a document uses. Images are the page's business alone;
+dropping one on the library says so rather than appearing to ignore it.
+
+Opening is one-at-a-time by nature — each document would replace the last — so a
+multi-file drop opens the first and names the rest (`planDrop`, pure and tested)
+instead of flickering through them and leaving only the final one, which looks
+like the others were lost.
+
+**File associations** are declared in `tauri.conf.json`: `.notex` as an Editor,
+`.goodnotes` and `.pdf` as Viewers. Viewer rather than Editor is the honest
+label for the latter two — annotating a PDF here imports its pages into a *note*
+rather than writing the PDF back, so Save produces a `.notex` and claiming to
+edit the PDF would be a promise the button does not keep. On Windows the
+installer registers a ProgId and lists it under each extension's
+`OpenWithProgids`, which puts KK-Notes in **Open with** and in Settings' default
+apps *without* taking the existing default — so making it the default PDF
+handler stays the user's decision, which is the point.
+
 ### Open with, and writing files
 
 Android's Storage Access Framework does not hand back a filesystem path. The

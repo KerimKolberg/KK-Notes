@@ -424,6 +424,100 @@ async function checkGoodNotesImport(browser) {
   await ctx.close();
 }
 
+/**
+ * Dropped files.
+ *
+ * Synthesised `DataTransfer`s rather than a real OS drag, which Playwright
+ * cannot perform — so this checks the handlers and, more importantly, that the
+ * *default action is prevented* everywhere. An unhandled file drop makes the
+ * webview navigate to the file and replaces the whole app, and every pixel
+ * outside the page stage used to be such a target.
+ */
+async function checkFileDrop(browser) {
+  console.log('file drop, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-library-view]', { timeout: 20_000 });
+
+  /** A DataTransfer carrying one named file, built in the page. */
+  const fileTransfer = (name, bytes) =>
+    page.evaluateHandle(
+      ({ name, bytes }) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([new Uint8Array(bytes)], name, { type: 'application/octet-stream' }));
+        return transfer;
+      },
+      { name, bytes },
+    );
+
+  /** A DataTransfer carrying the library's own move payload. */
+  const entryTransfer = () =>
+    page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.setData('text/notes-entry', '/Week 1.notex');
+      return transfer;
+    });
+
+  // The guard: a file dragged over any part of the window must have its default
+  // prevented, or the drop navigates away instead of arriving.
+  const prevented = await page.evaluate(async () => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array([1, 2, 3])], 'x.pdf', { type: 'application/pdf' }));
+    const event = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer });
+    document.querySelector('header')?.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  check('a file dragged over the header is not left to the webview', prevented);
+
+  const entryLeftAlone = await page.evaluate(() => {
+    const transfer = new DataTransfer();
+    transfer.setData('text/notes-entry', '/Week 1.notex');
+    const event = new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer });
+    document.querySelector('header')?.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  check("the library's own drag is left alone, so moving notes still works", entryLeftAlone === false);
+
+  // A file the library cannot open says so rather than doing nothing. Checked
+  // *before* the import below, because a successful one leaves for the document
+  // view and there is no library left to drop on.
+  const photo = await fileTransfer('holiday.png', [0x89, 0x50, 0x4e, 0x47]);
+  await page.dispatchEvent('[data-library-view]', 'dragover', { dataTransfer: photo });
+  await page.dispatchEvent('[data-library-view]', 'drop', { dataTransfer: photo });
+  const notice = await page
+    .waitForSelector('[data-library-notice]', { state: 'visible', timeout: 3_000 })
+    .then((el) => el.textContent(), () => null);
+  check('a file it cannot open is named, not ignored', (notice ?? '').includes('holiday.png'), notice ?? 'no notice');
+
+  // Drop feedback, then a real notebook, dropped.
+  const dragging = await fileTransfer('Week 3.goodnotes', [...goodnotesFixture()]);
+  await page.dispatchEvent('[data-library-view]', 'dragenter', { dataTransfer: dragging });
+  await page.dispatchEvent('[data-library-view]', 'dragover', { dataTransfer: dragging });
+  check(
+    'dragging a file over the library marks it as a drop target',
+    await page.waitForSelector('[data-library-drop-target]', { state: 'visible', timeout: 2_000 }).then(() => true, () => false),
+  );
+  await page.dispatchEvent('[data-library-view]', 'drop', { dataTransfer: dragging });
+  const imported = await page.waitForSelector('[data-report-counts]', { state: 'visible', timeout: 8_000 }).then(() => true, () => false);
+  check('dropping a notebook on the library opens it', imported);
+  if (imported) {
+    const counts = await page.textContent('[data-report-counts]');
+    check('it is the same import the Open button performs', /1 page and 2 strokes/.test(counts ?? ''), counts ?? '');
+    await page.click('[data-report-dismiss]');
+    // A dropped document opens it, which means leaving the library behind.
+    check(
+      'opening it leaves the library for the document',
+      await page.waitForSelector('[data-library-view]', { state: 'detached', timeout: 3_000 }).then(() => true, () => false),
+    );
+  }
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
 // --------------------------------------------------------------------- main
 
 const executablePath = findChromium();
@@ -457,6 +551,7 @@ try {
   await checkDesktop(browser);
   await checkCloudPanel(browser);
   await checkGoodNotesImport(browser);
+  await checkFileDrop(browser);
 } finally {
   await browser.close();
   if (server) {

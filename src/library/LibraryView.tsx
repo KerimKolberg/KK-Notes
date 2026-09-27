@@ -17,7 +17,8 @@ import {
   watchSyncStatus,
 } from './libraryService';
 import { useDesktopStore } from '../desktop/desktopStore';
-import { openFileFromLibrary } from './openFile';
+import { openBrowserFile, openFileFromLibrary, planDrop } from './openFile';
+import { isFileDrag } from '../desktop/useFileDrop';
 import { useRouteStore } from './routeStore';
 import {
   DEFAULT_SORT,
@@ -87,6 +88,15 @@ export function LibraryView() {
   const notice = useDesktopStore((s) => s.notice);
   const setNotice = useDesktopStore((s) => s.setNotice);
   const generation = useRef(0);
+  /**
+   * Whether a file is being dragged over the library.
+   *
+   * Counted rather than set, because `dragleave` fires every time the pointer
+   * crosses into a child element: a boolean flipped on enter and off on leave
+   * flickers the highlight off as soon as the cursor reaches the first card.
+   */
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
 
   useEffect(() => store(LAYOUT_KEY, layout), [layout]);
   useEffect(() => store(SORT_KEY, sort), [sort]);
@@ -211,11 +221,89 @@ export function LibraryView() {
       .finally(() => setBusy(false));
   }, []);
 
+  /**
+   * A file dropped onto the library.
+   *
+   * Routed through `openBrowserFile`, which is the decision the Open button
+   * already makes, so a dropped PDF becomes the same document a picked one does.
+   * Only files the app can open are attempted: dropping a photo on the library
+   * has no meaning here (it does on a *page*, where the document view places it),
+   * and saying so beats appearing to ignore it.
+   */
+  const dropFiles = useCallback((files: readonly File[]) => {
+    const plan = planDrop(files);
+    if (plan.rejected.length > 0) {
+      setNotice({
+        text:
+          `Cannot open ${plan.rejected.map((file) => file.name).join(', ')} here. ` +
+          'The library opens notes, PDFs and GoodNotes notebooks; drop an image onto a page instead.',
+      });
+    }
+    if (!plan.open) return;
+    if (plan.deferred.length > 0) {
+      setNotice({ text: `Opening ${plan.open.name}. Drop one file at a time to open the others.` });
+    }
+    setBusy(true);
+    setError(null);
+    void openBrowserFile(plan.open)
+      .then((target) => {
+        if (target) useRouteStore.getState().openDocument(target.path);
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  }, [setNotice]);
+
+  const dragHandlers = useMemo(
+    () => ({
+      onDragEnter: (e: React.DragEvent) => {
+        if (!isFileDrag(e.dataTransfer)) return;
+        dragDepth.current += 1;
+        setDragging(true);
+      },
+      onDragOver: (e: React.DragEvent) => {
+        if (!isFileDrag(e.dataTransfer)) return;
+        // Both of these are required for a drop to arrive at all: without the
+        // prevented default the webview keeps the drag for itself.
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      },
+      onDragLeave: (e: React.DragEvent) => {
+        if (!isFileDrag(e.dataTransfer)) return;
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragging(false);
+      },
+      onDrop: (e: React.DragEvent) => {
+        if (!isFileDrag(e.dataTransfer)) return;
+        e.preventDefault();
+        dragDepth.current = 0;
+        setDragging(false);
+        dropFiles([...e.dataTransfer.files]);
+      },
+    }),
+    [dropFiles],
+  );
+
   const trail = useMemo(() => crumbs(listing), [listing]);
   const entries = listing?.entries ?? [];
 
   return (
-    <div className="flex h-full w-full flex-col bg-zinc-50 dark:bg-zinc-950" data-library-view>
+    <div
+      className="relative flex h-full w-full flex-col bg-zinc-50 dark:bg-zinc-950"
+      data-library-view
+      {...dragHandlers}
+    >
+      {dragging && (
+        // Feedback, because an unmarked drop target is indistinguishable from
+        // one that does not exist — which is what this screen looked like.
+        <div
+          className="pointer-events-none absolute inset-2 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-blue-500 bg-blue-500/10"
+          data-library-drop-target
+        >
+          <span className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-lg">
+            Drop to open
+          </span>
+        </div>
+      )}
       <header
         className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900"
         style={{ paddingTop: 'calc(0.5rem + var(--safe-top))' }}

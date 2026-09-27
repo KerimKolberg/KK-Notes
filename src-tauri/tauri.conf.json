@@ -64,6 +64,15 @@
         "name": "GoodNotes Notebook",
         "description": "GoodNotes notebook, imported as pen strokes",
         "role": "Viewer"
+      },
+      {
+        "ext": [
+          "pdf"
+        ],
+        "name": "PDF Document",
+        "description": "PDF, opened as annotatable pages",
+        "mimeType": "application/pdf",
+        "role": "Viewer"
       }
     ],
     "windows": {
