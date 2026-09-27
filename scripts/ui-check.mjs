@@ -582,10 +582,29 @@ async function checkTabs(browser) {
       .then((t) => t.includes('First'), () => false),
   );
 
-  // Closing leaves the other one open, and the strip goes away with it.
+  // An imported notebook has never been saved, so closing it asks — with three
+  // answers, not two: losing the work and keeping the tab forever are both wrong.
   await page.click('[data-tab]:not([data-tab-active]) [data-tab-close]');
+  const asked = await page
+    .waitForSelector('[data-close-tab-dialog]', { state: 'visible', timeout: 3_000 })
+    .then(() => true, () => false);
+  check('closing a tab with unsaved changes asks first', asked);
+  if (asked) {
+    const labels = await page.$$eval('[data-close-tab-dialog] button', (els) => els.map((el) => el.textContent?.trim()));
+    check('it offers cancel, discard and save', labels.join('|') === 'Cancel|Discard|Save and close', labels.join('|'));
+
+    await page.click('[data-close-cancel]');
+    check(
+      'cancelling keeps both tabs',
+      await page.$$eval('[data-tab]', (els) => els.length === 2),
+    );
+
+    await page.click('[data-tab]:not([data-tab-active]) [data-tab-close]');
+    await page.waitForSelector('[data-close-tab-dialog]', { state: 'visible', timeout: 3_000 });
+    await page.click('[data-close-discard]');
+  }
   check(
-    'closing the other tab leaves one document and hides the strip',
+    'discarding leaves one document and hides the strip',
     await page.waitForSelector('[data-tab-strip]', { state: 'detached', timeout: 3_000 }).then(() => true, () => false),
   );
 

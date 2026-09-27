@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useTabStore, captureSession, openDocumentInTab, restoreSession, watchActiveTab } from '../tabStore';
+import { useTabStore, captureSession, openDocumentInTab, restoreSession } from '../tabStore';
 import { useDocumentStore } from '../store';
 import { createDocument, createPage } from '../operations';
 import type { Document, PdfPageRef } from '../types';
@@ -196,8 +196,8 @@ describe('bounding memory', () => {
     const first = useTabStore.getState().tabs[0]!.id;
     await useTabStore.getState().activate(first);
     useDocumentStore.getState().setTitle('unsaved work');
-    useTabStore.getState().syncActive();
-    // Then move away and open more, so it becomes the least recently used.
+    // Then move away and open more, so it becomes the least recently used. The
+    // move is what records the edit on the tab — nothing watches it in between.
     useTabStore.getState().openTab(sessionFor('d', '/d.notex'));
     useTabStore.getState().openTab(sessionFor('e', '/e.notex'));
     await useTabStore.getState().park();
@@ -298,15 +298,13 @@ describe('opening through a loader that writes straight into the store', () => {
 
   it('labels the tab it left with its own document, not the incoming one', async () => {
     // The regression. A loader overwrites the store *before* the tab is created,
-    // so the subscription that keeps the active tab's title current had already
-    // relabelled the outgoing tab — two tabs both called "Second", one of them
-    // holding "First".
+    // so the label has to come from the captured session — reading it from the
+    // store at that point gives the *incoming* document's name, which is how two
+    // tabs both ended up called "Second" with one of them holding "First".
     useDocumentStore.getState().loadDocument(createDocument(1, 'First'), '/First.notex');
     useTabStore.getState().adoptCurrent();
-    const unsubscribe = watchActiveTab();
 
     await openDocumentInTab(loadInto('Second', '/Second.notex'));
-    unsubscribe();
 
     const { tabs } = useTabStore.getState();
     expect(tabs.map((t) => t.title)).toEqual(['First', 'Second']);
@@ -329,6 +327,26 @@ describe('opening through a loader that writes straight into the store', () => {
     expect(useTabStore.getState().tabs).toHaveLength(1);
     expect(useDocumentStore.getState().document.title).toBe('First');
     expect(useDocumentStore.getState().filePath).toBe('/First.notex');
+  });
+
+  it('gives the open document a tab of its own when it had none', async () => {
+    // Reachable only before a document view has mounted, but the alternative is
+    // discarding real work to make room for the thing being opened.
+    useDocumentStore.getState().loadDocument(createDocument(1, 'Unadopted'), '/Unadopted.notex');
+    expect(useTabStore.getState().tabs).toHaveLength(0);
+
+    await openDocumentInTab(loadInto('Opened', '/Opened.notex'));
+
+    const { tabs, activeId } = useTabStore.getState();
+    expect(tabs.map((t) => t.title)).toEqual(['Unadopted', 'Opened']);
+    expect(tabs[0]!.session!.document.title).toBe('Unadopted');
+    expect(activeId).toBe(tabs[1]!.id);
+  });
+
+  it('does not invent a tab for a blank document that had none', async () => {
+    expect(useTabStore.getState().tabs).toHaveLength(0);
+    await openDocumentInTab(loadInto('Opened', '/Opened.notex'));
+    expect(useTabStore.getState().tabs.map((t) => t.title)).toEqual(['Opened']);
   });
 
   it('reuses a blank untouched tab rather than leaving it empty', async () => {
@@ -363,26 +381,48 @@ describe('capture and restore', () => {
   });
 });
 
-describe('the active tab’s label', () => {
-  it('follows the document’s title', () => {
-    useTabStore.getState().adoptCurrent();
+describe('a tab’s recorded label', () => {
+  /**
+   * Nothing watches the document store on behalf of tabs — see the note at the
+   * bottom of `tabStore.ts`. A tab's label is written from the session captured
+   * when it stops being active, so these assertions go through a transition
+   * rather than through a sync, which is also how the app reaches them.
+   */
+  it('records the document’s title when the tab is left', () => {
+    useDocumentStore.getState().loadDocument(createDocument(1, 'First'), '/First.notex');
+    const first = useTabStore.getState().adoptCurrent();
     useDocumentStore.getState().setTitle('Renamed');
-    useTabStore.getState().syncActive();
-    expect(useTabStore.getState().tabs[0]!.title).toBe('Renamed');
+
+    useTabStore.getState().openTab(sessionFor('second', '/second.notex'));
+    expect(useTabStore.getState().tabs.find((t) => t.id === first)!.title).toBe('Renamed');
   });
 
-  it('shows something for an untitled document', () => {
-    useTabStore.getState().adoptCurrent();
+  it('records something for an untitled document', () => {
+    useDocumentStore.getState().loadDocument(createDocument(1, 'First'), '/First.notex');
+    const first = useTabStore.getState().adoptCurrent();
     useDocumentStore.getState().setTitle('   ');
-    useTabStore.getState().syncActive();
-    expect(useTabStore.getState().tabs[0]!.title).toBe('Untitled note');
+
+    useTabStore.getState().openTab(sessionFor('second', '/second.notex'));
+    expect(useTabStore.getState().tabs.find((t) => t.id === first)!.title).toBe('Untitled note');
   });
 
-  it('marks the tab dirty as soon as the document diverges', () => {
-    useTabStore.getState().adoptCurrent();
+  it('records the tab as dirty when it is left with unsaved changes', () => {
+    useDocumentStore.getState().loadDocument(createDocument(1, 'First'), '/First.notex');
+    const first = useTabStore.getState().adoptCurrent();
     expect(useTabStore.getState().tabs[0]!.dirty).toBe(false);
     useDocumentStore.getState().setTitle('changed');
-    useTabStore.getState().syncActive();
-    expect(useTabStore.getState().tabs[0]!.dirty).toBe(true);
+
+    useTabStore.getState().openTab(sessionFor('second', '/second.notex'));
+    expect(useTabStore.getState().tabs.find((t) => t.id === first)!.dirty).toBe(true);
+  });
+
+  it('keeps an edited document out of the reuse rule', () => {
+    // The live store, not the tab record, decides whether a tab is untouched —
+    // so a renamed blank document is added to rather than replaced, even though
+    // nothing has synced its record.
+    useTabStore.getState().adoptCurrent();
+    useDocumentStore.getState().setTitle('mine');
+    useTabStore.getState().openTab(sessionFor('second', '/second.notex'));
+    expect(useTabStore.getState().tabs.map((t) => t.title)).toEqual(['mine', 'second']);
   });
 });

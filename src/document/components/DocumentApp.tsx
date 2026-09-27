@@ -16,13 +16,20 @@ import { InsertMenu } from './InsertMenu';
 
 /** PDF.js only loads when the import dialog is actually opened. */
 const ImportPdfDialog = lazy(() => import('../../pdf/ImportPdfDialog').then((m) => ({ default: m.ImportPdfDialog })));
+/**
+ * The tab strip is not loaded at all while one document is open.
+ *
+ * Which is most of the time, and it is the case the drawing experience is judged
+ * on: no strip code parsed, no document-store selectors, nothing. The count comes
+ * from the tab store, which only changes when a tab does.
+ */
+const TabStrip = lazy(() => import('./TabStrip').then((m) => ({ default: m.TabStrip })));
 import { useDocumentStore } from '../store';
 import { useToolStore } from '../toolStore';
 import { DocumentViewer } from './DocumentViewer';
 import { PageArranger } from './PageArranger';
-import { TabStrip } from './TabStrip';
 import { TopBar } from './TopBar';
-import { useTabStore, watchActiveTab } from '../tabStore';
+import { useTabStore } from '../tabStore';
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -177,12 +184,13 @@ export function DocumentApp() {
   /** The palette floats inside this area and is clamped to it. */
   const stageRef = useRef<HTMLDivElement>(null);
 
-  // Whatever is open becomes the first tab, and the strip follows the document's
-  // title and dirty state from here on. Both are idempotent, so remounting the
-  // document view does not multiply tabs.
+  const tabCount = useTabStore((s) => s.tabs.length);
+
+  // Whatever is open becomes the first tab. Idempotent, so remounting the
+  // document view does not multiply tabs — and there is deliberately no
+  // subscription here: see the note at the bottom of `tabStore.ts`.
   useEffect(() => {
     useTabStore.getState().adoptCurrent();
-    return watchActiveTab();
   }, []);
 
   // A lasso selection only lives while the lasso / select tools are active.
@@ -221,7 +229,11 @@ export function DocumentApp() {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       <TopBar />
-      <TabStrip />
+      {tabCount >= 2 && (
+        <Suspense fallback={null}>
+          <TabStrip />
+        </Suspense>
+      )}
       <div
         ref={stageRef}
         className="relative min-h-0 flex-1"

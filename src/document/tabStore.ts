@@ -14,7 +14,6 @@
 import { create } from 'zustand';
 import { createStrokeId } from '../inking/engine/ids';
 import { useDocumentStore } from './store';
-import { selectIsDirty } from './store';
 import {
   MAX_TABS,
   isPristine,
@@ -83,8 +82,6 @@ export interface TabStore {
   adoptCurrent: () => string;
   activate: (id: string) => Promise<void>;
   close: (id: string) => Promise<void>;
-  /** Re-read the active tab's title and dirty flag from the document store. */
-  syncActive: () => void;
   /**
    * Drop the documents of tabs past the live budget, freeing their PDFs.
    *
@@ -116,15 +113,18 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   clock: 1,
 
   openTab: (session) => {
-    // The active tab's `dirty` and `title` are only as fresh as the last sync,
-    // and the decision below turns on them: a document renamed but not yet
-    // synced would look untouched and be *replaced*, losing the rename.
-    get().syncActive();
     const { tabs, activeId, clock } = get();
     const active = tabs.find((tab) => tab.id === activeId) ?? null;
+    // Read out of the store rather than off the tab record. The record's `dirty`
+    // and `title` are only as fresh as the last transition, and the decision
+    // below turns on them: a renamed document would look untouched and be
+    // *replaced*, losing the rename. This is also why no subscription is needed
+    // to keep those fields live — nothing reads them until they are rewritten
+    // from a captured session, and that capture is the truth.
+    const live = active?.session ? captureSession() : null;
 
     // A blank untouched tab is replaced rather than added to.
-    if (active && !active.dirty && isPristine(active.session)) {
+    if (active && live && !sessionIsDirty(live) && isPristine(live)) {
       const replaced: Tab = {
         ...active,
         title: tabTitle(session),
@@ -138,7 +138,6 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         clock: clock + 1,
       });
       restoreSession(session);
-      get().syncActive();
       return active.id;
     }
 
@@ -146,8 +145,12 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       throw new Error(`Only ${MAX_TABS} tabs can be open at once. Close one first.`);
     }
 
-    // The outgoing tab keeps its work: capture before the store is overwritten.
-    const captured = active && active.session ? { ...active, session: captureSession() } : active;
+    // The outgoing tab keeps its work, and its label: both come from the session
+    // captured here, so the record is correct without anything having watched it.
+    const captured =
+      active && live
+        ? { ...active, session: live, title: tabTitle(live), path: live.filePath, dirty: sessionIsDirty(live) }
+        : active;
     const id = nextId();
     const opened: Tab = {
       id,
@@ -160,7 +163,6 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     const withCapture = captured ? tabs.map((tab) => (tab.id === captured.id ? captured : tab)) : tabs;
     set({ tabs: [...withCapture, opened], activeId: id, clock: clock + 1 });
     restoreSession(session);
-    get().syncActive();
     void get().park();
     return id;
   },
@@ -178,7 +180,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
           title: tabTitle(session),
           path: session.filePath,
           session,
-          dirty: selectIsDirty(useDocumentStore.getState()),
+          dirty: sessionIsDirty(session),
           usedAt: clock + 1,
         },
       ],
@@ -194,8 +196,13 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     const target = tabs.find((tab) => tab.id === id);
     if (!target) return;
 
+    // Captured with its label, so the record is right without anything watching.
     const outgoing = tabs.find((tab) => tab.id === activeId) ?? null;
-    const captured = outgoing && outgoing.session ? { ...outgoing, session: captureSession() } : outgoing;
+    let captured = outgoing;
+    if (outgoing?.session) {
+      const live = captureSession();
+      captured = { ...outgoing, session: live, title: tabTitle(live), path: live.filePath, dirty: sessionIsDirty(live) };
+    }
 
     // A parked tab has to come back off disk before it can be shown.
     let session = target.session;
@@ -219,7 +226,16 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     set({
       tabs: tabs.map((tab) => {
         if (tab.id === captured?.id) return captured;
-        if (tab.id === id) return { ...tab, session, usedAt: now, title: tabTitle(session), dirty: false };
+        if (tab.id === id) {
+          return {
+            ...tab,
+            session,
+            usedAt: now,
+            title: tabTitle(session),
+            path: session.filePath,
+            dirty: sessionIsDirty(session),
+          };
+        }
         return tab;
       }),
       activeId: id,
@@ -306,11 +322,37 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     }
 
     const id = nextId();
+
+    // No tab for what was open. Reachable only before any document view has
+    // mounted — the mount adopts one — but if that document was real work it
+    // needs a tab of its own, or opening this one discards it silently.
+    if (!previousTab && !isPristine(previous)) {
+      const ownTab = nextId();
+      set({
+        tabs: [
+          ...tabs,
+          {
+            id: ownTab,
+            title: tabTitle(previous),
+            path: previous.filePath,
+            session: previous,
+            dirty: sessionIsDirty(previous),
+            usedAt: clock + 1,
+          },
+          { id, title: tabTitle(loaded), path: loaded.filePath, session: loaded, dirty: false, usedAt: clock + 2 },
+        ],
+        activeId: id,
+        clock: clock + 2,
+      });
+      void get().park();
+      return id;
+    }
+
     // The outgoing tab's label has to be restored along with its session. The
-    // loader overwrote the document store before getting here, so the subscription
-    // that keeps the active tab's title current had already relabelled this tab
-    // with the *incoming* document's name — which showed up as two tabs both
-    // called "Second", one of them holding "First".
+    // loader overwrote the document store before getting here, so reading the
+    // label from the store at this point would give the *incoming* document's
+    // name — which showed up as two tabs both called "Second", one holding
+    // "First".
     const restored = previousTab
       ? {
           ...previousTab,
@@ -331,19 +373,6 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     });
     void get().park();
     return id;
-  },
-
-  syncActive: () => {
-    const { tabs, activeId } = get();
-    if (!activeId) return;
-    const doc = useDocumentStore.getState();
-    const title = doc.document.title.trim() === '' ? 'Untitled note' : doc.document.title;
-    const dirty = selectIsDirty(doc);
-    const current = tabs.find((tab) => tab.id === activeId);
-    if (!current || (current.title === title && current.dirty === dirty && current.path === doc.filePath)) return;
-    set({
-      tabs: tabs.map((tab) => (tab.id === activeId ? { ...tab, title, dirty, path: doc.filePath } : tab)),
-    });
   },
 
   /**
@@ -391,7 +420,16 @@ export async function openDocumentInTab(load: () => Promise<boolean>): Promise<b
   return opened;
 }
 
-/** Keep the active tab's label and dirty marker in step with the document. */
-export function watchActiveTab(): () => void {
-  return useDocumentStore.subscribe(() => useTabStore.getState().syncActive());
-}
+/**
+ * Nothing subscribes to the document store on behalf of tabs, on purpose.
+ *
+ * An earlier version did: one selector-less `useDocumentStore.subscribe` that
+ * re-derived the active tab's label on *every* mutation — every stroke committed,
+ * every frame of a pinch-zoom. Measured at 349 ns a call, which is 0.006% of a
+ * 180 Hz frame and genuinely negligible. Removed anyway, because it did not need
+ * to exist: a tab's label is written from the session captured when it stops
+ * being active, and the strip reads the live document directly for the tab that
+ * *is* active. There is nothing in between for a watcher to keep in step, so
+ * tabs now cost nothing at all while one document is open.
+ */
+

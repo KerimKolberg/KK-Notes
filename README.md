@@ -864,9 +864,27 @@ the bracket must restore the outgoing tab's *label* along with its session, or
 the subscription that keeps the active tab's title current will already have
 relabelled it with the incoming document's name.
 
-The strip appears only with two or more tabs open, shows a dot for unsaved
-changes, and asks before closing a tab with unsaved work — the one place work can
-vanish without the document being on screen to show for it.
+**Nothing subscribes to the document store on behalf of tabs.** An earlier
+version did — one selector-less `subscribe` re-deriving the active tab's label on
+every mutation, so every stroke committed and every frame of a pinch-zoom paid
+for it. Measured at **349 ns a call**, which is 0.006% of a 180 Hz frame and
+genuinely negligible, and removed anyway because it did not need to exist: a
+tab's label is written from the session captured when it stops being active, and
+the strip reads the live document directly for the tab that *is* active. There is
+nothing in between for a watcher to keep in step. Re-measured afterwards, the
+difference with a tab adopted is **within noise**.
+
+The strip itself is lazily loaded and mounted only once a second tab exists, so
+with one document open no strip code is parsed and no document-store selector is
+subscribed. What tabs cost while a single document is open is the ~9 kB of store
+and rules on the critical path, and nothing at runtime.
+
+Closing a tab with unsaved changes asks with **three** answers — cancel, discard,
+or save and close — because two is the wrong number: a plain confirm can only
+offer "lose the changes" or "keep the tab open", and neither is what someone
+closing a tab they have written in wants. Saving activates the tab first, since
+Save acts on the live document and showing what is about to be written is the
+honest thing; a cancelled or failed save leaves the tab open.
 
 ### Four doors into the app
 

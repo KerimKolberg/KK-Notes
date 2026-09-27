@@ -10,28 +10,43 @@
  * drawing path: both are reference comparisons in a selector, so a stroke
  * re-renders this only on the transition from saved to unsaved, once.
  */
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { X } from 'lucide-react';
 import { selectIsDirty, useDocumentStore } from '../store';
 import { useTabStore } from '../tabStore';
 import { useDesktopStore } from '../../desktop/desktopStore';
-import { confirmDiscard } from '../../desktop/fileService';
 
+/**
+ * The strip, or nothing.
+ *
+ * Split in two so that with one document open — the common case, and the one the
+ * drawing experience is judged on — *nothing* in the tab feature subscribes to the
+ * document store at all. The selectors that follow the live title and dirty state
+ * live in {@link Bar}, which is only mounted once there is a second tab to label.
+ */
 export function TabStrip(): React.JSX.Element | null {
+  const count = useTabStore((s) => s.tabs.length);
+  if (count < 2) return null;
+  return <Bar />;
+}
+
+function Bar(): React.JSX.Element {
   const tabs = useTabStore((s) => s.tabs);
   const activeId = useTabStore((s) => s.activeId);
   const activate = useTabStore((s) => s.activate);
   const close = useTabStore((s) => s.close);
   // The live document's own title and dirty state, for whichever tab is active.
+  // Both are reference comparisons, so a stroke re-renders this only on the one
+  // transition from saved to unsaved.
   const liveTitle = useDocumentStore((s) => s.document.title);
   const liveDirty = useDocumentStore(selectIsDirty);
 
-  const onClose = useCallback(
-    (id: string, dirty: boolean, title: string) => {
+  /** The tab whose close is waiting on an answer about its unsaved changes. */
+  const [pending, setPending] = useState<{ id: string; title: string } | null>(null);
+
+  const closeNow = useCallback(
+    (id: string, title: string) => {
       void (async () => {
-        // Closing a tab is the one place unsaved work can vanish without the
-        // document being on screen to show for it, so it asks.
-        if (dirty && !(await confirmDiscard(`“${title}” has unsaved changes. Close it anyway?`))) return;
         try {
           await close(id);
         } catch (error) {
@@ -44,7 +59,19 @@ export function TabStrip(): React.JSX.Element | null {
     [close],
   );
 
-  if (tabs.length < 2) return null;
+  const onClose = useCallback(
+    (id: string, dirty: boolean, title: string) => {
+      // Closing is the one place unsaved work can vanish with the document not on
+      // screen to show for it — so it asks, and offers to save rather than making
+      // the choice "lose it or keep the tab forever".
+      if (dirty) {
+        setPending({ id, title });
+        return;
+      }
+      closeNow(id, title);
+    },
+    [closeNow],
+  );
 
   return (
     <div
@@ -100,6 +127,99 @@ export function TabStrip(): React.JSX.Element | null {
           </div>
         );
       })}
+      {pending && (
+        <CloseDialog
+          title={pending.title}
+          onCancel={() => setPending(null)}
+          onDiscard={() => {
+            const { id, title } = pending;
+            setPending(null);
+            closeNow(id, title);
+          }}
+          onSave={() => {
+            const { id, title } = pending;
+            setPending(null);
+            void (async () => {
+              // Save acts on the *live* document, so a tab being saved has to be
+              // the live one first. Activating it is also the honest thing: it
+              // shows what is about to be written.
+              if (id !== useTabStore.getState().activeId) await activate(id);
+              const { actionSave } = await import('../../desktop/fileActions');
+              // A failed or cancelled save leaves the tab open — closing anyway
+              // would be the data loss the prompt exists to prevent.
+              if (!(await actionSave())) return;
+              closeNow(id, title);
+            })().catch((error: unknown) => {
+              useDesktopStore.getState().setNotice({
+                text: `Could not save ${title}: ${error instanceof Error ? error.message : String(error)}`,
+              });
+            });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+const dialogButton =
+  'inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm font-medium transition-colors ' +
+  'bg-zinc-100 text-zinc-800 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700';
+
+/**
+ * Cancel, discard, or save — three answers, because two is the wrong number.
+ *
+ * A plain confirm can only offer "lose the changes" or "keep the tab open", and
+ * neither is what someone closing a tab they have written in actually wants.
+ */
+function CloseDialog({
+  title,
+  onCancel,
+  onDiscard,
+  onSave,
+}: {
+  title: string;
+  onCancel: () => void;
+  onDiscard: () => void;
+  onSave: () => void;
+}): React.JSX.Element {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onPointerDown={(e) => e.target === e.currentTarget && onCancel()}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Unsaved changes"
+        data-close-tab-dialog
+        className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl dark:bg-zinc-900"
+      >
+        <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Unsaved changes</h2>
+        <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+          “{title}” has changes that are not saved anywhere.
+        </p>
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button type="button" className={dialogButton} onClick={onCancel} data-close-cancel>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className={`${dialogButton} text-rose-700 hover:bg-rose-100 dark:text-rose-300 dark:hover:bg-rose-950`}
+            onClick={onDiscard}
+            data-close-discard
+          >
+            Discard
+          </button>
+          <button
+            type="button"
+            className={`${dialogButton} bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400`}
+            onClick={onSave}
+            data-close-save
+          >
+            Save and close
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
