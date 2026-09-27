@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   SLOW_COMMIT_MS,
+  displayHz,
+  frameBudgetMs,
   noteCommit,
   noteFramePainted,
   noteInput,
@@ -153,6 +155,107 @@ describe('React commits', () => {
     const [stat] = snapshot().commits;
     expect(stat?.worstMs).toBeCloseTo(50);
     expect(stat?.averageMs).toBeCloseTo(1);
+  });
+});
+
+describe('the frame budget, on a display that is not 60 Hz', () => {
+  /**
+   * Drive the profiler's own `requestAnimationFrame` loop with chosen
+   * timestamps.
+   *
+   * The loop is what establishes the display's refresh rate, and nothing else in
+   * this suite needs it — so it is stubbed here rather than globally, and the
+   * profiler is switched off and on around the stub so the loop it starts is the
+   * fake one.
+   */
+  function driver(): (intervals: number[]) => void {
+    // A holder rather than a bare `let`: TypeScript does not track the
+    // assignment made inside the stub, so a local would narrow to `null` and
+    // then to `never` at the call. A property's narrowing is discarded at the
+    // next function call, which is what this needs.
+    const frame: { pending: FrameRequestCallback | null } = { pending: null };
+    setProfilingEnabled(false);
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      frame.pending = cb;
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (): void => {
+      frame.pending = null;
+    });
+    setProfilingEnabled(true);
+
+    // Taken before calling, because the loop re-arms itself as its first act.
+    const run = (at: number): void => {
+      const callback = frame.pending;
+      frame.pending = null;
+      callback?.(at);
+    };
+
+    let at = 1000;
+    return (intervals: number[]) => {
+      // The first frame only establishes a starting point; an interval needs two.
+      run(at);
+      for (const interval of intervals) {
+        at += interval;
+        run(at);
+      }
+    };
+  }
+
+  it('assumes 60 Hz only until it has seen a frame', () => {
+    expect(displayHz()).toBe(0);
+    expect(frameBudgetMs()).toBe(SLOW_COMMIT_MS);
+    expect(snapshot().frameBudgetMs).toBe(SLOW_COMMIT_MS);
+  });
+
+  it('measures the refresh rate from the frame loop', () => {
+    const drive = driver();
+    drive([5.55, 5.56, 5.57, 5.56]); // 180 Hz
+    expect(snapshot().displayHz).toBeCloseTo(180, 0);
+    expect(snapshot().frameBudgetMs).toBeCloseTo(5.55, 2);
+  });
+
+  it('counts a commit that fits in 60 Hz but blocks a frame at 180 Hz', () => {
+    // The whole reason this exists. 8 ms of layout is comfortable on a 60 Hz
+    // screen and drops every other frame on this one.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const drive = driver();
+    drive([5.56, 5.56]);
+    noteCommit('InkSurface', 8);
+    expect(snapshot().commits[0]?.slow).toBe(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('5.6ms');
+  });
+
+  it('does not let dropped frames raise the budget', () => {
+    // The circular reading this is shaped to avoid: a 180 Hz panel steadily
+    // dropping to 90 reports 11 ms for *every* interval, so a budget taken from
+    // the window — even its fastest sample — would conclude the panel is 90 Hz
+    // and stop reporting the very frames it exists to report.
+    const drive = driver();
+    drive([5.56, 5.56]);
+    drive(Array.from({ length: 200 }, () => 11.11));
+    expect(snapshot().displayHz).toBeCloseTo(180, 0);
+    expect(snapshot().frameBudgetMs).toBeCloseTo(5.56, 2);
+    noteCommit('InkSurface', 8);
+    expect(snapshot().commits[0]?.slow).toBe(1);
+  });
+
+  it('ignores an interval too short to be a refresh', () => {
+    // A double-fired frame callback, or a clock that jumped. Believing it would
+    // set a budget nothing could ever meet.
+    const drive = driver();
+    drive([8.33, 0.4, 8.33]); // 120 Hz, with one impossible 2500 Hz interval
+    expect(snapshot().displayHz).toBeCloseTo(120, 0);
+  });
+
+  it('measures the rate again after the switch is turned off and on', () => {
+    const drive = driver();
+    drive([5.56, 5.56]);
+    expect(snapshot().displayHz).toBeCloseTo(180, 0);
+    setProfilingEnabled(false);
+    setProfilingEnabled(true);
+    expect(displayHz()).toBe(0);
+    expect(frameBudgetMs()).toBe(SLOW_COMMIT_MS);
   });
 });
 

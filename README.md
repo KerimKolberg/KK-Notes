@@ -1537,6 +1537,26 @@ even when nothing had moved. Both are fixed;
 the app shell down to the ink, and the overlay's per-boundary commit counts
 are how it is confirmed against a running app.
 
+**The frame budget is measured, not assumed.** A React commit "blocked a frame"
+only relative to how fast the display actually refreshes: 8 ms of layout is
+comfortable at 60 Hz and drops every other frame at 180 Hz, so a fixed 16 ms
+threshold would report a smooth app while the ink visibly stuttered on a
+high-refresh tablet. The overlay therefore shows a `display` row with the rate it
+measured, and counts slow commits against that period.
+
+The rate is taken as the **shortest frame interval seen since the switch was
+turned on** — a minimum, kept for the session, rather than a mean or even the
+fastest sample in the rolling window. Every windowed reading is circular: a
+180 Hz panel steadily dropping to 90 reports 11 ms for *every* interval, so a
+budget derived from the window would conclude the panel is 90 Hz and stop
+reporting the very frames it exists to report. `requestAnimationFrame` cannot
+fire faster than the display, so the floor is the period, and the loop keeps
+running while the pen is lifted — which is when the app is idle enough to reach
+it. Intervals under 2.5 ms (400 Hz) are discarded as double-fired callbacks.
+
+That row doubles as a hardware check: Windows will happily drive a 180 Hz panel
+at 60, and this is where it shows up first.
+
 ## How it works
 
 **Two stacked canvases.** `committed` holds finished strokes and is only

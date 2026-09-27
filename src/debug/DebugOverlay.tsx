@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   EMPTY_SNAPSHOT,
-  SLOW_COMMIT_MS,
   resetProfiler,
   setProfilingEnabled,
   subscribeProfiler,
@@ -87,6 +86,16 @@ export function DebugOverlay({ enabled }: DebugOverlayProps) {
       </div>
 
       <Line label="frame" value={`${ms(stats.frameMs)} / ${ms(stats.worstFrameMs)}`} />
+      {/* Measured from the fastest frame interval seen, not from the OS. Worth a
+          glance on a high-refresh screen: Windows will happily run a 180 Hz
+          panel at 60, and this is where that shows up first. */}
+      <Line
+        label="display"
+        value={stats.displayHz > 0 ? `${stats.displayHz.toFixed(0)} Hz` : '—'}
+        {...(stats.displayHz > 0 && stats.fps > 0 && stats.fps < stats.displayHz * 0.8
+          ? { tone: 'text-amber-300' }
+          : {})}
+      />
 
       <div className="mt-1 border-t border-white/10 pt-1">
         <Line label="ink lag" value={ms(stats.latencyMs)} tone={latencyTone(stats.latencyMs)} />
@@ -100,7 +109,7 @@ export function DebugOverlay({ enabled }: DebugOverlayProps) {
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-white/50">react</span>
           <span className={`tabular-nums ${slowCommits > 0 ? 'text-amber-300' : 'text-white/90'}`} data-debug-slow-commits>
-            {slowCommits} over {SLOW_COMMIT_MS}ms
+            {slowCommits} over {ms(stats.frameBudgetMs)}
           </span>
         </div>
         {stats.commits.length === 0 ? (

@@ -24,8 +24,24 @@
  */
 import { RollingWindow } from './rollingWindow';
 
-/** A React commit slower than this dropped the app below 60 fps. */
+/**
+ * The commit budget assumed until the display's own frame period is known.
+ *
+ * 60 Hz, because that is the slowest thing anyone draws on and assuming it
+ * cannot under-report: a commit over 16 ms blocks a frame on *any* display. The
+ * real budget is {@link frameBudgetMs}, which is this only until the frame loop
+ * has seen what the panel can actually do.
+ */
 export const SLOW_COMMIT_MS = 16;
+
+/**
+ * A frame interval shorter than this is not a display refresh.
+ *
+ * 2.5 ms is 400 Hz. Nothing this app runs on refreshes faster, so an interval
+ * below it is a double-fired `requestAnimationFrame` or a clock that jumped, and
+ * taking it for the panel's period would set a budget nothing could ever meet.
+ */
+const MIN_PLAUSIBLE_FRAME_MS = 2.5;
 
 /** Samples kept per statistic: about two seconds of frames, and a long tail of input. */
 const FRAME_WINDOW = 120;
@@ -60,6 +76,14 @@ export interface ProfilerSnapshot {
   /** Mean and worst interval between animation frames, ms. */
   readonly frameMs: number;
   readonly worstFrameMs: number;
+  /**
+   * The display's refresh rate, measured rather than assumed, and 0 until the
+   * loop has established it. Worth reading on its own: Windows quietly running
+   * a 180 Hz panel at 60 shows up here before it shows up anywhere else.
+   */
+  readonly displayHz: number;
+  /** What a commit is compared against, ms — the frame period once it is known. */
+  readonly frameBudgetMs: number;
   /** Pointer sample → live-canvas draw returned, ms. */
   readonly latencyMs: number;
   readonly latencyP95Ms: number;
@@ -77,6 +101,8 @@ export const EMPTY_SNAPSHOT: ProfilerSnapshot = {
   fps: 0,
   frameMs: 0,
   worstFrameMs: 0,
+  displayHz: 0,
+  frameBudgetMs: SLOW_COMMIT_MS,
   latencyMs: 0,
   latencyP95Ms: 0,
   worstLatencyMs: 0,
@@ -131,6 +157,23 @@ let framesThisSecond = 0;
 let secondStartedAt = 0;
 let fps = 0;
 
+/**
+ * The shortest frame interval seen since profiling was turned on, which is this
+ * display's refresh period.
+ *
+ * A *minimum* rather than a mean or a low percentile, and kept for the whole
+ * session rather than over a rolling window, because every other reading is
+ * circular: on a 180 Hz panel that is steadily dropping to 90, every interval in
+ * the window — fastest included — is 11 ms, so a budget derived from the window
+ * would conclude the panel is 90 Hz and stop reporting the very frames it exists
+ * to report. `requestAnimationFrame` cannot fire faster than the display, so the
+ * floor is the period; and the loop keeps running while the pen is lifted, which
+ * is when the app is idle enough to hit it.
+ *
+ * 0 means nothing plausible has been seen yet.
+ */
+let fastestFrameMs = 0;
+
 type Listener = (snapshot: ProfilerSnapshot) => void;
 const listeners = new Set<Listener>();
 
@@ -176,6 +219,22 @@ export function noteFramePainted(startedAt: number, finishedAt: number): void {
   if (delta >= 0 && delta <= MAX_PLAUSIBLE_LATENCY_MS) latency.push(delta);
 }
 
+/**
+ * How long a React commit may take before it costs a frame, on *this* display.
+ *
+ * The distinction matters on a high-refresh screen and only there: 8 ms of
+ * layout is comfortable at 60 Hz and drops every other frame at 180 Hz, so a
+ * fixed 16 ms budget would report a smooth app while the ink visibly stuttered.
+ */
+export function frameBudgetMs(): number {
+  return fastestFrameMs > 0 ? fastestFrameMs : SLOW_COMMIT_MS;
+}
+
+/** The display's refresh rate in Hz, or 0 before the loop has established it. */
+export function displayHz(): number {
+  return fastestFrameMs > 0 ? 1000 / fastestFrameMs : 0;
+}
+
 /** Record a React commit. Called from a `<Profiler>`'s `onRender`. */
 export function noteCommit(id: string, durationMs: number): void {
   if (!enabled || !Number.isFinite(durationMs)) return;
@@ -188,11 +247,12 @@ export function noteCommit(id: string, durationMs: number): void {
   record.last = durationMs;
   record.worst = Math.max(record.worst, durationMs);
   record.window.push(durationMs);
-  if (durationMs > SLOW_COMMIT_MS) {
+  const budget = frameBudgetMs();
+  if (durationMs > budget) {
     record.slow++;
     // eslint-disable-next-line no-console
     console.warn(
-      `[profiler] ${id} committed in ${durationMs.toFixed(1)}ms (> ${SLOW_COMMIT_MS}ms): this blocked the frame.`,
+      `[profiler] ${id} committed in ${durationMs.toFixed(1)}ms (> ${budget.toFixed(1)}ms): this blocked the frame.`,
     );
   }
 }
@@ -207,6 +267,8 @@ export function snapshot(): ProfilerSnapshot {
     fps,
     frameMs: frames.average,
     worstFrameMs: frames.max,
+    displayHz: displayHz(),
+    frameBudgetMs: frameBudgetMs(),
     latencyMs: latency.average,
     latencyP95Ms: latency.percentile(0.95),
     worstLatencyMs: latency.max,
@@ -236,7 +298,13 @@ function publish(): void {
  */
 function tick(now: number): void {
   loop = requestAnimationFrame(tick);
-  if (lastFrameAt !== 0) frames.push(now - lastFrameAt);
+  if (lastFrameAt !== 0) {
+    const interval = now - lastFrameAt;
+    frames.push(interval);
+    if (interval >= MIN_PLAUSIBLE_FRAME_MS && (fastestFrameMs === 0 || interval < fastestFrameMs)) {
+      fastestFrameMs = interval;
+    }
+  }
   lastFrameAt = now;
 
   framesThisSecond++;
@@ -262,6 +330,7 @@ export function resetProfiler(): void {
   framesThisSecond = 0;
   secondStartedAt = 0;
   fps = 0;
+  fastestFrameMs = 0;
 }
 
 /** Turn collection on or off. Turning it on clears whatever was there before. */
