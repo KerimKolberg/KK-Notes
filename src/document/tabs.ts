@@ -99,18 +99,26 @@ export function liveTabs(tabs: readonly Tab[]): readonly Tab[] {
  * Returns ids rather than mutating, so the decision can be tested without a
  * store and the caller can release each tab's PDF sources as it goes.
  *
- * The active tab is never parked — parking the document being drawn on would be
- * absurd — and neither is anything unsaved, so this can legitimately return
- * fewer tabs than would be needed to reach the target. Bounding memory is a
- * best effort; not losing work is not.
+ * `pinned` are the tabs on screen — the one being drawn on, and the one in the
+ * reference pane beside it. Parking a document that is *visible* would blank it,
+ * so they are excluded however old they are. Unsaved tabs are excluded too, so
+ * this can legitimately return fewer tabs than reaching the target needs:
+ * bounding memory is best effort, not losing work is not.
  */
-export function tabsToPark(tabs: readonly Tab[], activeId: string, maxLive = MAX_LIVE_TABS): readonly string[] {
+export function tabsToPark(
+  tabs: readonly Tab[],
+  pinned: readonly (string | null)[],
+  maxLive = MAX_LIVE_TABS,
+): readonly string[] {
+  const onScreen = new Set(pinned.filter((id): id is string => id !== null));
   const live = liveTabs(tabs);
-  let excess = live.length - Math.max(1, maxLive);
+  // Never park below what is on screen: two visible documents need two live
+  // sessions even if the budget is smaller than that.
+  let excess = live.length - Math.max(onScreen.size, 1, maxLive);
   if (excess <= 0) return [];
 
   const candidates = live
-    .filter((tab) => tab.id !== activeId && isParkable(tab))
+    .filter((tab) => !onScreen.has(tab.id) && isParkable(tab))
     .sort((a, b) => a.usedAt - b.usedAt);
 
   const park: string[] = [];

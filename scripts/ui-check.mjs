@@ -612,6 +612,92 @@ async function checkTabs(browser) {
   await ctx.close();
 }
 
+/**
+ * The reference pane: a second document beside the editor, to read from.
+ *
+ * What matters here is that the editor keeps its own document while the pane
+ * shows another — and that the pane is a *rasterised* view, with no canvases or
+ * handlers of its own, which is what keeps the pen's latency out of it.
+ */
+async function checkSplit(browser) {
+  console.log('reference pane, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-library-view]', { timeout: 20_000 });
+
+  const drop = async (name) => {
+    const transfer = await page.evaluateHandle(
+      ({ name, bytes }) => {
+        const t = new DataTransfer();
+        t.items.add(new File([new Uint8Array(bytes)], name, { type: 'application/octet-stream' }));
+        return t;
+      },
+      { name, bytes: [...goodnotesFixture()] },
+    );
+    const target = (await page.$('[data-library-view]')) ? '[data-library-view]' : '[data-page-stage]';
+    await page.dispatchEvent(target, 'dragover', { dataTransfer: transfer });
+    await page.dispatchEvent(target, 'drop', { dataTransfer: transfer });
+    await page.waitForSelector('[data-report-dismiss]', { state: 'visible', timeout: 8_000 }).catch(() => undefined);
+    await page.click('[data-report-dismiss]').catch(() => undefined);
+  };
+
+  await drop('Exercises.goodnotes');
+  await drop('Answers.goodnotes');
+  await page.waitForSelector('[data-tab-strip]', { state: 'visible', timeout: 5_000 });
+
+  const splitButton = '[data-tab]:not([data-tab-active]) [data-tab-split]';
+  check('an inactive tab offers to open beside the editor', (await page.$(splitButton)) !== null);
+  await page.click(splitButton);
+  const shown = await page.waitForSelector('[data-reference-pane]', { state: 'visible', timeout: 5_000 }).then(() => true, () => false);
+  check('it opens a reference pane', shown);
+  if (!shown) {
+    check('no page errors', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+    return;
+  }
+
+  check(
+    'the pane shows the other document, not the one being edited',
+    await page.$eval('[data-reference-title]', (el) => el.textContent ?? '').then((t) => t.includes('Exercises')),
+  );
+  check(
+    'the editor still holds its own document',
+    await page
+      .$eval('[data-tab-active] [role="tab"]', (el) => el.textContent ?? '')
+      .then((t) => t.includes('Answers')),
+  );
+  check('the pane renders pages', (await page.$$('[data-reference-page-frame]')).length > 0);
+  // The point of the design: no live canvases and no handlers in the pane.
+  check(
+    'the pane draws one texture per page, not a layer stack',
+    await page.$$eval('[data-reference-page-frame]', (frames) =>
+      frames.every((frame) => frame.querySelectorAll('canvas').length === 1),
+    ),
+  );
+
+  // Both documents on screen, so both must stay in memory — and the divider moves.
+  const before = await page.$eval('[data-page-stage]', (el) => el.getBoundingClientRect().width);
+  const divider = await page.$('[data-split-divider]');
+  const box = await divider.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x - 180, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+  const after = await page.$eval('[data-page-stage]', (el) => el.getBoundingClientRect().width);
+  check('the divider resizes the editor', after < before - 60, `${Math.round(before)} → ${Math.round(after)}`);
+
+  await page.click('[data-reference-close]');
+  check(
+    'closing the pane leaves the editor alone',
+    await page.waitForSelector('[data-reference-pane]', { state: 'detached', timeout: 3_000 }).then(() => true, () => false),
+  );
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
 // --------------------------------------------------------------------- main
 
 const executablePath = findChromium();
@@ -647,6 +733,7 @@ try {
   await checkGoodNotesImport(browser);
   await checkFileDrop(browser);
   await checkTabs(browser);
+  await checkSplit(browser);
 } finally {
   await browser.close();
   if (server) {

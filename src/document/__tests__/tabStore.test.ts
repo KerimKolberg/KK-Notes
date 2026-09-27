@@ -54,7 +54,7 @@ vi.mock('../../pdf/pdfRenderer', () => ({
 
 beforeEach(() => {
   released.length = 0;
-  useTabStore.setState({ tabs: [], activeId: null, clock: 1 });
+  useTabStore.setState({ tabs: [], activeId: null, clock: 1, splitId: null, splitRatio: 0.6 });
   useDocumentStore.getState().newDocument();
   // `newDocument` deliberately keeps the presenting lock, so a test that set it
   // would otherwise leave every later test unable to edit anything.
@@ -354,6 +354,107 @@ describe('opening through a loader that writes straight into the store', () => {
     await openDocumentInTab(loadInto('Only', '/Only.notex'));
     expect(useTabStore.getState().tabs).toHaveLength(1);
     expect(useTabStore.getState().tabs[0]!.title).toBe('Only');
+  });
+});
+
+describe('the reference pane', () => {
+  function twoSaved(): { first: string; second: string } {
+    useDocumentStore.getState().loadDocument(createDocument(1, 'Exercises'), '/Exercises.notex');
+    const first = useTabStore.getState().adoptCurrent();
+    const second = useTabStore.getState().openTab(sessionFor('Answers', '/Answers.notex'));
+    return { first, second };
+  }
+
+  it('shows another tab beside the editor', async () => {
+    const { first } = twoSaved();
+    await useTabStore.getState().showInSplit(first);
+    expect(useTabStore.getState().splitId).toBe(first);
+    // The editor keeps its own document; the pane renders the other one.
+    expect(useDocumentStore.getState().document.title).toBe('Answers');
+  });
+
+  it('refuses to show the document already being edited', async () => {
+    const { second } = twoSaved();
+    await useTabStore.getState().showInSplit(second);
+    // `second` is active. Showing it would mean rendering a stale session beside
+    // the live one.
+    expect(useTabStore.getState().splitId).toBeNull();
+  });
+
+  it('closes the pane when its document becomes the one being edited', async () => {
+    const { first } = twoSaved();
+    await useTabStore.getState().showInSplit(first);
+    await useTabStore.getState().activate(first);
+    expect(useTabStore.getState().splitId).toBeNull();
+  });
+
+  it('closes the pane when its document is closed', async () => {
+    const { first } = twoSaved();
+    await useTabStore.getState().showInSplit(first);
+    await useTabStore.getState().close(first);
+    expect(useTabStore.getState().splitId).toBeNull();
+  });
+
+  it('keeps the shown document live, however old the tab', async () => {
+    // The rule that makes the pane safe: parking a visible document would blank
+    // it. `first` is the least recently used tab by a wide margin.
+    const { first } = twoSaved();
+    await useTabStore.getState().showInSplit(first);
+    for (const name of ['c', 'd', 'e']) {
+      useTabStore.getState().openTab(sessionFor(name, `/${name}.notex`));
+    }
+    await useTabStore.getState().park();
+
+    const shown = useTabStore.getState().tabs.find((t) => t.id === first)!;
+    expect(shown.session).not.toBeNull();
+    expect(useTabStore.getState().splitId).toBe(first);
+  });
+
+  it('makes the shown document parkable again once the pane is closed', async () => {
+    // Closing the pane does not force anything out — with three live tabs and a
+    // budget of three there is nothing to do. What changes is eligibility: the
+    // document is no longer pinned, so it is the first to go when the budget is
+    // next exceeded, being the oldest.
+    const { first } = twoSaved();
+    await useTabStore.getState().showInSplit(first);
+    for (const name of ['c', 'd', 'e']) {
+      useTabStore.getState().openTab(sessionFor(name, `/${name}.notex`));
+    }
+    await useTabStore.getState().park();
+    expect(useTabStore.getState().tabs.find((t) => t.id === first)!.session).not.toBeNull();
+
+    useTabStore.getState().closeSplit();
+    useTabStore.getState().openTab(sessionFor('f', '/f.notex'));
+    await useTabStore.getState().park();
+    expect(useTabStore.getState().tabs.find((t) => t.id === first)!.session).toBeNull();
+  });
+
+  it('reads a parked document back before showing it', async () => {
+    const { first } = twoSaved();
+    for (const name of ['c', 'd', 'e']) {
+      useTabStore.getState().openTab(sessionFor(name, `/${name}.notex`));
+    }
+    await useTabStore.getState().park();
+    expect(useTabStore.getState().tabs.find((t) => t.id === first)!.session).toBeNull();
+
+    const reopened = createDocument(2, 'Exercises from disk');
+    vi.doMock('../../desktop/fileService', () => ({ openDocumentFromPath: async () => ({ document: reopened }) }));
+    await useTabStore.getState().showInSplit(first);
+    vi.doUnmock('../../desktop/fileService');
+
+    expect(useTabStore.getState().splitId).toBe(first);
+    expect(useTabStore.getState().tabs.find((t) => t.id === first)!.session!.document.title).toBe('Exercises from disk');
+    // And the editor was not disturbed.
+    expect(useDocumentStore.getState().document.title).toBe('e');
+  });
+
+  it('clamps the divider to a usable range', () => {
+    useTabStore.getState().setSplitRatio(0.9);
+    expect(useTabStore.getState().splitRatio).toBe(0.75);
+    useTabStore.getState().setSplitRatio(0.05);
+    expect(useTabStore.getState().splitRatio).toBe(0.25);
+    useTabStore.getState().setSplitRatio(0.5);
+    expect(useTabStore.getState().splitRatio).toBe(0.5);
   });
 });
 

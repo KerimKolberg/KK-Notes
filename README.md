@@ -886,6 +886,42 @@ closing a tab they have written in wants. Saving activates the tab first, since
 Save acts on the live document and showing what is about to be written is the
 honest thing; a cancelled or failed save leaves the tab open.
 
+### Split view: the reference pane (`ReferencePane.tsx`)
+
+Reading one document while writing another — a lecture PDF beside your summary of
+it, the exercises beside your answers. In both, one side is reference and the
+other is where the pen goes, and that asymmetry is the design.
+
+**The reference pane is read-only, on purpose.** It renders through
+`PageSnapshot`, the same cached rasteriser the page overview uses: one texture per
+visible page, no event handlers, no live canvas layers, no pointer pipeline and no
+animation frame of its own. An idle pane costs nothing per frame, so the editor's
+latency is untouched. Only pages near the viewport are handed to the rasteriser,
+so a 200-page PDF in there is 200 `<div>`s and a handful of textures.
+
+Two *editable* panes would be a different thing entirely: 94 places read the
+document store and every one would have to become pane-scoped, plus two pointer
+pipelines and two full layer stacks — two of everything that makes drawing fast.
+That is the opposite of the trade this app makes, so it is not the trade made
+here. If writing in both halves is ever needed, that is the work, and it is
+honest to say so rather than to half-do it.
+
+**Interactions with parking.** Both documents on screen must stay in memory, so
+`tabsToPark` takes the *pinned* ids — the tab being edited and the tab in the pane
+— and never parks either, however old. Parking a visible document would blank it.
+Closing the pane does not force anything out; it makes that document eligible
+again, and it is the first to go next time the budget is exceeded. A parked
+document put into the pane is read back off disk first, without disturbing the
+editor.
+
+Three rules keep the two halves from contradicting each other: the document being
+edited cannot also be shown in the pane (that would render a stale session beside
+the live one), activating the pane's document closes the pane, and closing its tab
+closes the pane. The divider is a grab strip rather than a hairline, since it is
+dragged with a finger or the pen, and the ratio is clamped to 0.25–0.75. The
+option only appears on windows at least 900 CSS px wide; two columns on a phone
+would be two unusable columns.
+
 ### Four doors into the app
 
 A file can arrive four ways, and they all reach one decision so that a PDF

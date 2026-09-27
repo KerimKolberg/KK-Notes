@@ -11,9 +11,9 @@
  * re-renders this only on the transition from saved to unsaved, once.
  */
 import { useCallback, useState } from 'react';
-import { X } from 'lucide-react';
+import { Columns2, X } from 'lucide-react';
 import { selectIsDirty, useDocumentStore } from '../store';
-import { useTabStore } from '../tabStore';
+import { MIN_SPLIT_WIDTH, useTabStore } from '../tabStore';
 import { useDesktopStore } from '../../desktop/desktopStore';
 
 /**
@@ -35,6 +35,12 @@ function Bar(): React.JSX.Element {
   const activeId = useTabStore((s) => s.activeId);
   const activate = useTabStore((s) => s.activate);
   const close = useTabStore((s) => s.close);
+  const splitId = useTabStore((s) => s.splitId);
+  const showInSplit = useTabStore((s) => s.showInSplit);
+  const closeSplit = useTabStore((s) => s.closeSplit);
+  // Side by side is only worth offering where there is room for two documents;
+  // on a phone it would leave two unusable columns.
+  const roomToSplit = typeof window === 'undefined' ? false : window.innerWidth >= MIN_SPLIT_WIDTH;
   // The live document's own title and dirty state, for whichever tab is active.
   // Both are reference comparisons, so a stroke re-renders this only on the one
   // transition from saved to unsaved.
@@ -113,6 +119,22 @@ function Bar(): React.JSX.Element {
                 </span>
               )}
             </button>
+            {roomToSplit && !active && (
+              <button
+                type="button"
+                aria-label={tab.id === splitId ? `Stop showing ${title} beside the editor` : `Show ${title} beside the editor`}
+                data-tab-split
+                data-tab-split-on={tab.id === splitId || undefined}
+                onClick={() => (tab.id === splitId ? closeSplit() : void showInSplit(tab.id))}
+                className={`flex h-11 w-7 items-center justify-center rounded ${
+                  tab.id === splitId
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-100'
+                }`}
+              >
+                <Columns2 size={13} aria-hidden="true" />
+              </button>
+            )}
             <button
               type="button"
               aria-label={`Close ${title}`}

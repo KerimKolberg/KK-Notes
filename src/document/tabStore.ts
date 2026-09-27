@@ -65,11 +65,27 @@ async function releaseSession(leaving: TabSession, remaining: readonly Tab[]): P
   for (const id of sources) releasePdfSource(id);
 }
 
+/** The narrowest window a side-by-side split is worth offering on, in CSS px. */
+export const MIN_SPLIT_WIDTH = 900;
+
 export interface TabStore {
   tabs: readonly Tab[];
   activeId: string | null;
   /** Monotonic tick, so "least recently used" does not depend on the clock. */
   clock: number;
+  /**
+   * The tab shown in the reference pane beside the editor, if any.
+   *
+   * Read-only by design: it renders from the tab's captured session through the
+   * page rasteriser, so it costs one cached texture per visible page and has no
+   * pointer pipeline, no live canvases and no animation frame of its own. Two
+   * *editable* panes would mean pane-scoping all 94 places that read the document
+   * store, and two of everything that makes drawing fast — which is the opposite
+   * of the trade this app makes.
+   */
+  splitId: string | null;
+  /** Fraction of the stage the editor keeps, 0.25–0.75. */
+  splitRatio: number;
 
   /**
    * Open a document in a tab and make it live.
@@ -101,6 +117,10 @@ export interface TabStore {
    * calls this; {@link openDocumentInTab} does that bracketing.
    */
   adoptLoaded: (previous: TabSession, previousId: string | null) => string;
+  /** Show a tab in the reference pane. Ignored for the tab already being edited. */
+  showInSplit: (id: string) => Promise<void>;
+  closeSplit: () => void;
+  setSplitRatio: (ratio: number) => void;
 }
 
 function nextId(): string {
@@ -111,6 +131,8 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   tabs: [],
   activeId: null,
   clock: 1,
+  splitId: null,
+  splitRatio: 0.6,
 
   openTab: (session) => {
     const { tabs, activeId, clock } = get();
@@ -193,6 +215,9 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   activate: async (id) => {
     const { tabs, activeId, clock } = get();
     if (id === activeId) return;
+    // Editing what the reference pane is showing: the pane closes rather than
+    // displaying a session that is about to go stale beside the live document.
+    if (get().splitId === id) set({ splitId: null });
     const target = tabs.find((tab) => tab.id === id);
     if (!target) return;
 
@@ -249,6 +274,8 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     const { tabs, activeId } = get();
     const closing = tabs.find((tab) => tab.id === id);
     if (!closing) return;
+    // A closed document cannot stay on screen beside the editor.
+    if (get().splitId === id) set({ splitId: null });
 
     const remaining = tabs.filter((tab) => tab.id !== id);
     // The session the store holds is newer than the captured one for the active
@@ -375,6 +402,46 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     return id;
   },
 
+  showInSplit: async (id) => {
+    const { tabs, activeId, splitId } = get();
+    // The document being edited is already on screen; showing it twice would
+    // mean rendering a stale session beside the live one.
+    if (id === activeId || id === splitId) return;
+    const target = tabs.find((tab) => tab.id === id);
+    if (!target) return;
+
+    if (target.session) {
+      set({ splitId: id });
+      return;
+    }
+    // Parked, so it has to come back off disk before it can be shown — the same
+    // read `activate` does, without taking over the editor.
+    if (!target.path) return;
+    const { openDocumentFromPath } = await import('../desktop/fileService');
+    const loaded = await openDocumentFromPath(target.path);
+    const session: TabSession = {
+      document: loaded.document,
+      filePath: target.path,
+      savedPages: loaded.document.pages,
+      savedTitle: loaded.document.title,
+      savedCover: loaded.document.cover,
+      readOnly: true,
+    };
+    set({
+      tabs: get().tabs.map((tab) => (tab.id === id ? { ...tab, session, title: tabTitle(session) } : tab)),
+      splitId: id,
+    });
+  },
+
+  closeSplit: () => {
+    if (get().splitId === null) return;
+    set({ splitId: null });
+    // Whatever was only being kept live for the pane can go now.
+    void get().park();
+  },
+
+  setSplitRatio: (ratio) => set({ splitRatio: Math.min(0.75, Math.max(0.25, ratio)) }),
+
   /**
    * Park what the budget says to, releasing each one's PDFs.
    *
@@ -384,7 +451,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   park: async () => {
     const { tabs, activeId } = get();
     if (!activeId) return;
-    const ids = tabsToPark(tabs, activeId);
+    const ids = tabsToPark(tabs, [activeId, get().splitId]);
     if (ids.length === 0) return;
     const parked = tabs.map((tab) => (ids.includes(tab.id) ? parkTab(tab) : tab));
     set({ tabs: parked });

@@ -113,20 +113,20 @@ describe('choosing what to park', () => {
 
   it('leaves everything alone while the live count is within the budget', () => {
     const tabs = [saved('a', 1), saved('b', 2), saved('c', 3)];
-    expect(tabsToPark(tabs, 'c')).toEqual([]);
+    expect(tabsToPark(tabs, ['c'])).toEqual([]);
     expect(liveTabs(tabs)).toHaveLength(3);
   });
 
   it('parks the least recently used first', () => {
     const tabs = [saved('a', 1), saved('b', 2), saved('c', 3), saved('d', 4), saved('e', 5)];
-    expect(tabsToPark(tabs, 'e')).toEqual(['a', 'b']);
+    expect(tabsToPark(tabs, ['e'])).toEqual(['a', 'b']);
   });
 
   it('never parks the tab being drawn on, even if it is the oldest', () => {
     // `a` is the least recently used *and* the active one, which happens when
     // you come back to an old tab and keep working in it.
     const tabs = [saved('a', 1), saved('b', 5), saved('c', 6), saved('d', 7)];
-    const park = tabsToPark(tabs, 'a');
+    const park = tabsToPark(tabs, ['a']);
     expect(park).not.toContain('a');
     expect(park).toEqual(['b']);
   });
@@ -137,7 +137,7 @@ describe('choosing what to park', () => {
     const unsaved = (id: string, usedAt: number): Tab =>
       tab({ id, usedAt, path: null, dirty: true, session: session({ filePath: null }) });
     const tabs = [unsaved('a', 1), unsaved('b', 2), unsaved('c', 3), unsaved('d', 4)];
-    expect(tabsToPark(tabs, 'd')).toEqual([]);
+    expect(tabsToPark(tabs, ['d'])).toEqual([]);
     expect(liveTabs(tabs)).toHaveLength(4);
   });
 
@@ -151,7 +151,7 @@ describe('choosing what to park', () => {
     ];
     // Five live, budget three: two must go, and `dirty` is not eligible even
     // though it is the oldest.
-    expect(tabsToPark(tabs, 'e')).toEqual(['b', 'c']);
+    expect(tabsToPark(tabs, ['e'])).toEqual(['b', 'c']);
   });
 
   it('counts only live tabs against the budget', () => {
@@ -161,18 +161,18 @@ describe('choosing what to park', () => {
       saved('c', 3),
       saved('d', 4),
     ];
-    expect(tabsToPark(tabs, 'd')).toEqual([]);
+    expect(tabsToPark(tabs, ['d'])).toEqual([]);
   });
 
   it('keeps at least the active tab however small the budget', () => {
     const tabs = [saved('a', 1), saved('b', 2)];
-    expect(tabsToPark(tabs, 'b', 0)).toEqual(['a']);
-    expect(tabsToPark([saved('a', 1)], 'a', 0)).toEqual([]);
+    expect(tabsToPark(tabs, ['b'], 0)).toEqual(['a']);
+    expect(tabsToPark([saved('a', 1)], ['a'], 0)).toEqual([]);
   });
 
   it('defaults to a budget of three', () => {
     const tabs = [saved('a', 1), saved('b', 2), saved('c', 3), saved('d', 4)];
-    expect(tabsToPark(tabs, 'd')).toEqual(tabsToPark(tabs, 'd', MAX_LIVE_TABS));
+    expect(tabsToPark(tabs, ['d'])).toEqual(tabsToPark(tabs, ['d'], MAX_LIVE_TABS));
     expect(MAX_LIVE_TABS).toBe(3);
   });
 });

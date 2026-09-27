@@ -24,6 +24,8 @@ const ImportPdfDialog = lazy(() => import('../../pdf/ImportPdfDialog').then((m) 
  * from the tab store, which only changes when a tab does.
  */
 const TabStrip = lazy(() => import('./TabStrip').then((m) => ({ default: m.TabStrip })));
+/** The reference pane is not loaded until a document is actually put in it. */
+const ReferencePane = lazy(() => import('./ReferencePane').then((m) => ({ default: m.ReferencePane })));
 import { useDocumentStore } from '../store';
 import { useToolStore } from '../toolStore';
 import { DocumentViewer } from './DocumentViewer';
@@ -185,6 +187,24 @@ export function DocumentApp() {
   const stageRef = useRef<HTMLDivElement>(null);
 
   const tabCount = useTabStore((s) => s.tabs.length);
+  const splitId = useTabStore((s) => s.splitId);
+  const splitRatio = useTabStore((s) => s.splitRatio);
+  /** Dragging the divider, as a fraction of the stage the editor keeps. */
+  const dragDivider = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    event.preventDefault();
+    const rect = stage.getBoundingClientRect();
+    const move = (e: PointerEvent): void => {
+      useTabStore.getState().setSplitRatio((e.clientX - rect.left) / Math.max(1, rect.width));
+    };
+    const up = (): void => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }, []);
 
   // Whatever is open becomes the first tab. Idempotent, so remounting the
   // document view does not multiply tabs — and there is deliberately no
@@ -234,70 +254,91 @@ export function DocumentApp() {
           <TabStrip />
         </Suspense>
       )}
-      <div
-        ref={stageRef}
-        className="relative min-h-0 flex-1"
-        data-page-stage
-        onDragOver={onDragOver}
-        onDrop={onDrop}
-      >
-        <DocumentViewer settingsRef={settingsRef} currentTool={settings.tool} />
-        {/* Above everything and inert, so it can never intercept a stroke. */}
-        <DebugOverlay enabled={settings.debugMode} />
-        {/* Locked: the palette fades away entirely and a slim status pill takes
-            its place, keeping the laser (which marks nothing) within reach. */}
-        <ToolPalette
-          settings={settings}
-          onSettingsChange={updateSettings}
-          onClear={clearActive}
-          containerRef={stageRef}
-          insertMenu={(onInsertDone) => (
-            <InsertMenu
-              onInsertImage={pickImage}
-              onInsertNote={insertNote}
-              onInsertText={insertText}
-              onInsertTable={insertTable}
-              onDone={onInsertDone}
-            />
-          )}
-          onClearPageInk={clearPageInkActive}
-          onClearDocumentInk={clearDocumentInkActive}
-          hidden={readOnly}
-        />
-        {/* …and the laser still needs its colour and width, so the config row
-            survives the lock even though the rest of the palette does not. */}
-        {readOnly && settings.tool === 'laser-pointer' && (
-          <div
-            className="absolute left-1/2 z-30 w-[min(30rem,calc(100vw-1.5rem-var(--safe-left)-var(--safe-right)))] -translate-x-1/2 rounded-2xl border border-zinc-200/80 bg-white/90 p-1.5 shadow-2xl backdrop-blur-md dark:border-zinc-700/80 dark:bg-zinc-900/90"
-            style={{ bottom: 'calc(4.25rem + var(--safe-bottom))' }}
-            data-locked-tool-config
-          >
-            <ToolConfigRow settings={settings} onSettingsChange={updateSettings} />
-          </div>
-        )}
-        {readOnly && (
-          <div
-            className="absolute left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900/85 py-1.5 pl-4 pr-1.5 text-sm font-medium text-white shadow-lg backdrop-blur dark:bg-zinc-100/90 dark:text-zinc-900"
-            style={{ bottom: 'calc(1rem + var(--safe-bottom))' }}
-            data-read-only-banner
-          >
-            <span role="status">Read-only</span>
-            <button
-              type="button"
-              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-blue-400 ${
-                settings.tool === 'laser-pointer'
-                  ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white'
-                  : 'bg-white/15 hover:bg-white/25 dark:bg-zinc-900/10 dark:hover:bg-zinc-900/20'
-              }`}
-              aria-label="Laser pointer"
-              aria-pressed={settings.tool === 'laser-pointer'}
-              onClick={() => updateSettings({ tool: settings.tool === 'laser-pointer' ? 'pen' : 'laser-pointer' })}
-              data-laser-toggle
+      <div ref={stageRef} className="flex min-h-0 flex-1">
+        <div
+          className="relative min-h-0 min-w-0 flex-1"
+          data-page-stage
+          style={splitId ? { flex: `0 0 ${(splitRatio * 100).toFixed(2)}%` } : undefined}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+        >
+            <DocumentViewer settingsRef={settingsRef} currentTool={settings.tool} />
+          {/* Above everything and inert, so it can never intercept a stroke. */}
+          <DebugOverlay enabled={settings.debugMode} />
+          {/* Locked: the palette fades away entirely and a slim status pill takes
+              its place, keeping the laser (which marks nothing) within reach. */}
+          <ToolPalette
+            settings={settings}
+            onSettingsChange={updateSettings}
+            onClear={clearActive}
+            containerRef={stageRef}
+            insertMenu={(onInsertDone) => (
+              <InsertMenu
+                onInsertImage={pickImage}
+                onInsertNote={insertNote}
+                onInsertText={insertText}
+                onInsertTable={insertTable}
+                onDone={onInsertDone}
+              />
+            )}
+            onClearPageInk={clearPageInkActive}
+            onClearDocumentInk={clearDocumentInkActive}
+            hidden={readOnly}
+          />
+          {/* …and the laser still needs its colour and width, so the config row
+              survives the lock even though the rest of the palette does not. */}
+          {readOnly && settings.tool === 'laser-pointer' && (
+            <div
+              className="absolute left-1/2 z-30 w-[min(30rem,calc(100vw-1.5rem-var(--safe-left)-var(--safe-right)))] -translate-x-1/2 rounded-2xl border border-zinc-200/80 bg-white/90 p-1.5 shadow-2xl backdrop-blur-md dark:border-zinc-700/80 dark:bg-zinc-900/90"
+              style={{ bottom: 'calc(4.25rem + var(--safe-bottom))' }}
+              data-locked-tool-config
             >
-              <Zap size={15} aria-hidden="true" />
-              Laser
-            </button>
-          </div>
+              <ToolConfigRow settings={settings} onSettingsChange={updateSettings} />
+            </div>
+          )}
+          {readOnly && (
+            <div
+              className="absolute left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900/85 py-1.5 pl-4 pr-1.5 text-sm font-medium text-white shadow-lg backdrop-blur dark:bg-zinc-100/90 dark:text-zinc-900"
+              style={{ bottom: 'calc(1rem + var(--safe-bottom))' }}
+              data-read-only-banner
+            >
+              <span role="status">Read-only</span>
+              <button
+                type="button"
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-blue-400 ${
+                  settings.tool === 'laser-pointer'
+                    ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white'
+                    : 'bg-white/15 hover:bg-white/25 dark:bg-zinc-900/10 dark:hover:bg-zinc-900/20'
+                }`}
+                aria-label="Laser pointer"
+                aria-pressed={settings.tool === 'laser-pointer'}
+                onClick={() => updateSettings({ tool: settings.tool === 'laser-pointer' ? 'pen' : 'laser-pointer' })}
+                data-laser-toggle
+              >
+                <Zap size={15} aria-hidden="true" />
+                Laser
+              </button>
+            </div>
+          )}
+        </div>
+        {splitId && (
+          <>
+            {/* A grab strip rather than a hairline: on a tablet this is dragged
+                with a finger or the pen, so it is 8px wide with a wider hit box. */}
+            <div
+              className="relative w-2 shrink-0 cursor-col-resize bg-zinc-300 hover:bg-blue-400 dark:bg-zinc-700 dark:hover:bg-blue-500"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the reference pane"
+              data-split-divider
+              onPointerDown={dragDivider}
+            >
+              <span className="absolute inset-y-0 -left-3 -right-3" />
+            </div>
+            <Suspense fallback={null}>
+              <ReferencePane />
+            </Suspense>
+          </>
         )}
       </div>
       <PageArranger />
