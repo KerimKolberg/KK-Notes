@@ -1400,6 +1400,54 @@ async function checkQuickSettings(browser) {
 }
 
 /**
+ * A long stroke is drawn a chunk at a time while the pen is down: what is behind stays
+ * on the live canvas and the last stretch is redrawn on a canvas of its own above it,
+ * which goes away with the stroke. Nothing may be left behind, and the ink has to land.
+ */
+async function checkLongStroke(browser) {
+  console.log('a long stroke, 1280x800:');
+  const { ctx, page, errors, cx, cy } = await openPenDocument(browser);
+  const inkBox = (selector) =>
+    page.$eval(selector, (canvas) => {
+      const { data, width, height } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+      let minX = width, minY = height, maxX = -1, maxY = -1, count = 0;
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (data[(y * width + x) * 4 + 3] > 100) { count++; if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+      return { count, minX, minY, maxX, maxY };
+    });
+  // Down, then a few hundred samples round a loop, and hold there.
+  await page.evaluate(([x, y]) => {
+    const live = document.querySelector('[data-layer="live"]');
+    const fire = (type, px, py, buttons) => live.dispatchEvent(new PointerEvent(type, { pointerType: 'pen', pointerId: 7, isPrimary: true, bubbles: true, cancelable: true, clientX: px, clientY: py, buttons, button: type === 'pointermove' ? -1 : 0, pressure: buttons & 1 ? 0.5 : 0 }));
+    window.__hold = async () => {
+      fire('pointerdown', x, y, 1);
+      for (let i = 1; i < 500; i++) {
+        const a = i * 0.05;
+        fire('pointermove', x + 90 * Math.cos(a) * 1.3, y + 90 * Math.sin(a), 1);
+        if (i % 4 === 0) await new Promise((r) => setTimeout(r, 6));
+      }
+      await new Promise((r) => setTimeout(r, 120));
+    };
+    window.__release = () => fire('pointerup', x, y, 0);
+  }, [cx, cy]);
+  await page.evaluate(() => window.__hold());
+  check('while the pen is down a long stroke has a tail layer', (await page.$('[data-layer="tail"]')) !== null);
+  check('which cannot take the pen\'s events', await page.$eval('[data-layer="tail"]', (el) => getComputedStyle(el).pointerEvents === 'none'));
+  const tail = await inkBox('[data-layer="tail"]');
+  const live = await inkBox('[data-layer="live"]');
+  check('the stretch behind it is on the live canvas', live.count > 0 && tail.count > 0, `live ${live.count}px, tail ${tail.count}px`);
+  check('and the tail is only the last stretch, not the whole loop', tail.count < live.count, `tail ${tail.count}px, live ${live.count}px`);
+
+  await page.evaluate(() => window.__release());
+  await page.waitForTimeout(200);
+  check('when the pen lifts the tail layer goes', (await page.$('[data-layer="tail"]')) === null);
+  check('the live canvas is left empty', (await inkBox('[data-layer="live"]')).count === 0);
+  const committed = await inkBox('[data-layer="committed"]');
+  check('and the whole stroke is on the page', committed.count > 0 && committed.maxX - committed.minX > 150, `${committed.count}px, ${committed.maxX - committed.minX} wide`);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Turning a selection: the round handle above the box, and the quarter-turn buttons.
  * A flat line is the easiest thing to see turn: it ends up standing.
  */
@@ -1581,6 +1629,7 @@ try {
   await checkQuickSettings(browser);
   await checkPenButtons(browser);
   await checkLasso(browser);
+  await checkLongStroke(browser);
   await checkRotate(browser);
   await checkTextToolbar(browser);
   await checkZoomAnchor(browser);

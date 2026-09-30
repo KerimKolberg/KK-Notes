@@ -44,6 +44,7 @@ import {
 import { recognizeShape } from '../engine/shapeRecognition';
 import { coordinatePlaneFromDrag, createGeometricStroke, curveFromDrag, lineFromDrag } from '../engine/shapes';
 import { polylineLength } from '../engine/simplify';
+import { LiveBaker, canBakeLive } from '../engine/liveBake';
 import { StrokeBuilder } from '../engine/strokeBuilder';
 import { beginDwell, lockDwell, noteDwellMovement, type DwellState } from '../engine/dwell';
 import { filterIsActive, inEraseFilter, type EraseFilter } from '../engine/eraseFilter';
@@ -264,7 +265,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
   const sessionRef = useRef<Session | null>(null);
   const frameRef = useRef(0);
 
-  const controller = useMemo<PointerInkHandlers & { cancelTouchSession: () => void; dropLaserTrail: () => void }>(() => {
+  const controller = useMemo<PointerInkHandlers & { cancelTouchSession: () => void; dropLaserTrail: () => void; dropLiveBake: () => void }>(() => {
     /** The laser trail; outlives the session that drew it. */
     let laserTrail: LaserTrail = EMPTY_LASER_TRAIL;
 
@@ -322,11 +323,28 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       return buildLineHud(shape, geometricSegments(strokesRef.current, hiddenIdsRef.current));
     };
 
+    /** Draws a long plain stroke a chunk at a time instead of all of it on every frame. */
+    const liveBaker = new LiveBaker();
+
     const paintFrame = (): void => {
       const session = sessionRef.current;
       const live = liveContext();
       if (!live) return;
-      const { cssWidth, cssHeight } = optionsRef.current.sizeRef.current;
+      const size = optionsRef.current.sizeRef.current;
+      const { cssWidth, cssHeight } = size;
+
+      if (
+        session?.kind === 'ink' &&
+        laserTrail.points.length === 0 &&
+        !session.snap?.shape &&
+        session.builder.tool !== 'eraser-pixel' &&
+        canBakeLive(session.builder.style)
+      ) {
+        liveBaker.paint(live, session, session.builder.points, session.builder.style, size);
+        return;
+      }
+      // Anything else uses the layer the old way, and whatever the baker left on it goes.
+      liveBaker.reset();
       clearSurface(live, cssWidth, cssHeight);
 
       // The laser trail is independent of the session: it holds for as long
@@ -525,6 +543,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         opts.hiddenIdsRef.current.clear();
         if (session.hits.size > 0) opts.onEraseStrokes(session.hits);
       }
+      liveBaker.reset();
       endLiveFrame();
       setLiveBlend('normal');
     };
@@ -546,6 +565,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         opts.hiddenIdsRef.current.clear();
       }
       if (needsRedraw) opts.redrawCommitted();
+      liveBaker.reset();
       endLiveFrame();
       setLiveBlend('normal');
     };
@@ -824,6 +844,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       dropLaserTrail: () => {
         laserTrail = EMPTY_LASER_TRAIL;
       },
+      dropLiveBake: () => liveBaker.reset(),
     };
   }, [optionsRef]);
 
@@ -841,10 +862,11 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       if (session?.kind === 'ink' && session.snap?.timer) clearTimeout(session.snap.timer);
       sessionRef.current = null;
       controller.dropLaserTrail();
+      controller.dropLiveBake();
     },
     [controller],
   );
 
-  const { cancelTouchSession: _cancel, dropLaserTrail: _drop, ...handlers } = controller;
+  const { cancelTouchSession: _cancel, dropLaserTrail: _drop, dropLiveBake: _bake, ...handlers } = controller;
   return handlers;
 }

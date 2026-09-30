@@ -2081,6 +2081,33 @@ the newest held one is put on the end when the stroke is built, so the stroke fi
 exactly where the pointer did. Fast strokes are untouched — their samples are already
 further apart than that — and so are dots.
 
+**A long stroke is drawn a chunk at a time while the pen is down**
+(`engine/liveBake.ts`). Thinning bounds how many samples a stroke has; it does not
+change that the live layer used to be cleared and the *whole* stroke outlined and filled
+again on every frame, so a frame at the end of a long scribble cost many times one at the
+start, at a refresh rate (180 Hz on the Z13) that leaves five milliseconds. Measured in a
+headless Chromium on the build machine, the work in a frame grew from 0.3 to 0.9 ms over a
+3,000-sample stroke and from 0.7 to 2.3 ms over 8,000; a laptop on battery is several times
+slower than that. Now the run of samples behind the pen is *baked*: every 96 samples the
+last chunk is drawn once onto the live canvas and never cleared, reaching 8 samples back
+into the one before (so the joins are covered, not butted) and looking 12 past its end (so
+its outline has settled). Each frame draws only the tail since, on a canvas of its own
+above the live one that *is* cleared every frame — the tail cannot go on the baked canvas,
+because its outline shifts a little as samples arrive and painted over and over those shifts
+accumulate: the first attempt did exactly that and made a 1 px pen 46 % fatter. The frame
+now costs about 0.1 ms whatever the length (same scribbles: 0.11 ms at 3,000 and 8,000
+samples). The tail canvas is made the first time a stroke needs one and removed when the
+stroke ends or is cancelled, so a page of short strokes pays for no third layer, and the
+committed stroke is still drawn as one outline when the pen lifts: this is only what is
+shown on the way (the baked preview differs from the single outline by about 6 % of the
+ink's edge pixels, none of them by more than an antialiased fringe — the tail's smoothing
+starts afresh where it joins the bake). It applies only where drawing the same ink twice
+cannot show: opaque, source-over, even width, no pattern, arrowhead, gradient or tape, and
+a brush with no texture, bleed, softness, taper or tilt (`canBakeLive`) — today the
+ballpoint, from a pen or a mouse. Everything else (highlighter, pencil, fountain pen, the
+pixel eraser, a held-to-snap shape) redraws in full as before. `scripts/ui-check.mjs` covers
+the layer coming and going, its pointer-transparency, and the ink landing whole.
+
 **Strokes.** `Stroke` is a union of `FreehandStroke` (raw samples) and
 `GeometricStroke` (a `Shape`: line, polyline, polygon, rectangle, ellipse,
 heart or coordinate plane). Both carry the same frozen `StrokeStyle`, so the
@@ -2207,6 +2234,9 @@ hit-testing can answer:
 - **stretching a lasso selection**: a line offers only its two stretching handles, a
   pull far out keeps following the pen (the handle stays in the page), a grab off the
   handle's centre does not lurch the selection.
+- **a long stroke**: while the pen is down a long stroke has a tail layer that cannot take
+  the pen's events, the stretch behind it is on the live canvas and the tail is only the last
+  stretch, both go when the pen lifts, and the whole stroke lands on the page.
 - **turning a lasso selection**: the rotate handle stands above the box and clear of
   the edge handle, an angle reads out while it turns, a quarter turn stands a flat line
   up about its own middle, undo is one step, the quarter-turn buttons turn both ways,
