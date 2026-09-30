@@ -45,6 +45,7 @@ pub fn run() {
             library_commands::move_library_entry,
             library_commands::delete_library_entry,
             library_commands::read_document_thumbnail,
+            library_commands::read_document_text,
             library_commands::sync_status,
             library_commands::sync_now,
             library_commands::resolve_conflict,

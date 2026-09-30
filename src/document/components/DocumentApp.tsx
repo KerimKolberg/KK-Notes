@@ -28,8 +28,11 @@ const TabStrip = lazy(() => import('./TabStrip').then((m) => ({ default: m.TabSt
 const ReferencePane = lazy(() => import('./ReferencePane').then((m) => ({ default: m.ReferencePane })));
 /** The zoom window is a second drawing surface, so it is not loaded until one is opened. */
 const ZoomWindow = lazy(() => import('./ZoomWindow').then((m) => ({ default: m.ZoomWindow })));
+/** The search panel, likewise, and for the same reason. */
+const SearchPanel = lazy(() => import('./SearchPanel').then((m) => ({ default: m.SearchPanel })));
 import { useDocumentStore } from '../store';
 import { useZoomWindowStore } from '../zoomWindow';
+import { useSearchStore } from '../../search/searchStore';
 import { useToolStore } from '../toolStore';
 import { DocumentViewer } from './DocumentViewer';
 import { PageArranger } from './PageArranger';
@@ -47,6 +50,7 @@ export function DocumentApp() {
   const updateSettings = useToolStore((s) => s.update);
   const settingsRef = useLatestRef(settings);
   const zoomWindowOpen = useZoomWindowStore((s) => s.open);
+  const searchOpen = useSearchStore((s) => s.open);
 
   // Undo / redo live in the top bar now; the app only needs the page id for
   // the keyboard shortcuts and for clearing.
@@ -239,6 +243,13 @@ export function DocumentApp() {
         ungroupSelection,
         readOnly: locked,
       } = useDocumentStore.getState();
+      // Ctrl+F is search, from anywhere — a text box included, where the browser's own find would
+      // otherwise open over the page.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        useSearchStore.getState().show();
+        return;
+      }
       if (isEditableTarget(e.target)) return;
       // Copy, cut, paste and group, for a selection. Copying is allowed on a locked note
       // (it changes nothing), and the rest are not.
@@ -313,6 +324,11 @@ export function DocumentApp() {
           onDrop={onDrop}
         >
             <DocumentViewer settingsRef={settingsRef} currentTool={settings.tool} />
+          {searchOpen && (
+            <Suspense fallback={null}>
+              <SearchPanel />
+            </Suspense>
+          )}
           {/* Above everything and inert, so it can never intercept a stroke. */}
           <DebugOverlay enabled={settings.debugMode} />
           {/* Locked: the palette fades away entirely and a slim status pill takes

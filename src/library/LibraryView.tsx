@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, ChevronRight, Cloud, FolderOpen, FolderPlus, Grid2x2, House, List, Plus } from 'lucide-react';
+import { ArrowUp, ChevronRight, Cloud, FolderOpen, FolderPlus, Grid2x2, House, List, Plus, Search, X } from 'lucide-react';
 import { openDocumentFromLibrary } from './openDocument';
 import { CloudSyncPanel } from './CloudSyncPanel';
 import { ConflictDialog } from './ConflictDialog';
 import { DocumentCard } from './DocumentCard';
+import { LibrarySearchResults } from './LibrarySearchResults';
+import { useLibrarySearch } from './useLibrarySearch';
+import { revealText } from '../search/reveal';
+import type { SearchHit } from '../search/text';
 import { SyncIndicator } from './SyncIndicator';
 import {
   createDocumentInLibrary,
@@ -88,6 +92,7 @@ export function LibraryView() {
   const notice = useDesktopStore((s) => s.notice);
   const setNotice = useDesktopStore((s) => s.setNotice);
   const generation = useRef(0);
+  const [query, setQuery] = useState('');
   /**
    * Whether a file is being dragged over the library.
    *
@@ -300,6 +305,20 @@ export function LibraryView() {
 
   const trail = useMemo(() => crumbs(listing), [listing]);
   const entries = listing?.entries ?? [];
+  const searching = query.trim().length > 0;
+  const search = useLibrarySearch(query, listing);
+
+  /** A note picked from the search results, opened at the place the words were found. */
+  const openFound = useCallback(
+    (path: string, hit: SearchHit | null) => {
+      void guard(async () => {
+        await openDocumentFromLibrary(path);
+        if (hit) revealText(hit.source);
+        openDocument(path);
+      });
+    },
+    [guard, openDocument],
+  );
 
   return (
     <div
@@ -404,6 +423,33 @@ export function LibraryView() {
           </button>
         )}
 
+        <div className="relative min-w-[8rem] max-w-xs flex-1 basis-40">
+          <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setQuery('');
+            }}
+            placeholder="Search all notes"
+            aria-label="Search all notes"
+            data-library-search
+            className="h-8 w-full rounded-lg border border-zinc-300 bg-white pl-8 pr-7 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-blue-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 [&::-webkit-search-cancel-button]:hidden"
+          />
+          {query && (
+            <button
+              type="button"
+              aria-label="Clear the search"
+              data-library-search-clear
+              onClick={() => setQuery('')}
+              className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700"
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+
         <div className="ml-auto flex items-center gap-2">
           <label className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
             <span className="sr-only sm:not-sr-only">Sort by</span>
@@ -488,7 +534,9 @@ export function LibraryView() {
       )}
 
       <div className="min-h-0 flex-1 overflow-auto p-3" style={{ paddingBottom: 'calc(0.75rem + var(--safe-bottom))' }}>
-        {entries.length === 0 ? (
+        {searching ? (
+          <LibrarySearchResults search={search} query={query} onOpen={openFound} />
+        ) : entries.length === 0 ? (
           <p className="py-16 text-center text-sm text-zinc-500 dark:text-zinc-400" data-library-empty>
             {listing === null ? 'Opening your library…' : 'Nothing here yet. Start a new note.'}
           </p>
@@ -518,7 +566,7 @@ export function LibraryView() {
             ))}
           </ul>
         )}
-        {entries.length > 0 && (
+        {!searching && entries.length > 0 && (
           <p className="pt-4 text-center text-xs text-zinc-400 dark:text-zinc-500">
             Drag a note onto a folder to file it. Right-click to delete.
           </p>

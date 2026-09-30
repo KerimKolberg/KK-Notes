@@ -18,6 +18,7 @@ pub mod loopback;
 pub mod manager;
 pub mod oauth;
 pub mod provider;
+pub mod text;
 pub mod thumb;
 
 pub use account::DriveAccount;
@@ -30,4 +31,5 @@ pub use loopback::RedirectListener;
 pub use manager::{SyncManager, SyncPhase, SyncStatus};
 pub use oauth::{AuthSession, Pkce, RedirectTarget, TokenSet};
 pub use provider::{CloudProvider, OfflineProvider, RemoteFile};
+pub use text::{DocumentText, TextPiece, read_document_text};
 pub use thumb::{ThumbnailSource, read_thumbnail_source};

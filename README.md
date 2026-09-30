@@ -277,6 +277,19 @@ what was already called that. Every path from the frontend is checked against
 the library root before it is used, since one `..` in a folder name is all it
 takes to write somewhere else by accident.
 
+**Searching every note.** The box in the library's toolbar (`Search all notes`) looks inside every
+note, folders included, and lists each one once with the first three places the words are in it; choosing
+a note, or one of its lines, opens it at that page with the object selected (`search/reveal.ts`, the same
+call the in-note search makes). The words come from the files without opening the notes: `notes-sync`'s
+`read_document_text` deserialises a `.notex` into a struct that declares only each media object's `kind`,
+`text` and table `cells`, so ink, images and embedded PDFs are walked and dropped, like the thumbnail.
+What was read is kept by the `NoteIndex` keyed by each file's modified time, so the next search is
+instant and only a note that changed is read again (four at a time, the results filling in as they come);
+the notes are read when the box goes from empty to something, not on every letter. Matching is the
+in-note search's own `searchSources`, so the two agree. A note is also found by its title and file name.
+Handwriting is ink and cannot be searched, and the words of a PDF a note was made from are only searched
+inside that note.
+
 ### The sync engine
 
 `src-tauri/notes-sync/` is a workspace crate with **no Tauri dependency**. The
@@ -604,6 +617,25 @@ re-anchors the page point that was at the centre of the view (`anchorForContentP
 `scrollForAnchor`, the same helpers a pinch uses), in either axis. The scroll it
 re-anchors from is tracked on every scroll event, before the browser clamps it to the
 new, shorter content and reports that a frame late.
+
+### Searching a note (`src/search/`, `components/SearchPanel.tsx`)
+
+The magnifier in the top bar (or **Ctrl+F**) opens a panel over the page: type, and every place the
+words are is listed with a little of what is around it, the match marked, and the page and kind
+(title, text box, sticky note, table cell, PDF text). Choosing a result goes to its page and, for an
+object, selects it (and switches to the select tool, which is the only one that can pick one).
+**Enter** steps to the next match, **Shift+Enter** the one before, **Esc** closes it.
+
+- **What is searched.** Typed text: the title, text boxes, sticky notes, table cells and, for a note made
+  from a PDF, the PDF's own text layer (`pdf/pdfText.ts`, PDF.js `getTextContent`, read two pages at a time
+  and cached, with a progress line in the panel). Handwriting is ink, not text, and the panel says so.
+- **How it matches** (`search/text.ts`, pure). Case and accents are ignored ("cafe" finds "Café") by folding
+  each string with a map back to the original, since folding can change a string's length; a query of
+  several words finds the pieces of text where every word occurs; results are in document order and limited
+  so a one-letter query in a long note is not every piece of text in it.
+- **Cheap.** The panel reads the text objects' arrays only, which keep their identity until something on a
+  page is edited, so a stroke committed every few seconds does not re-run the search. It is loaded only
+  when first opened.
 
 ## Interface (`src/ui/`, `src/inking/palette/`)
 
@@ -2348,6 +2380,12 @@ hit-testing can answer:
   and a third of the way in; the strip shows it at the size it was written; writing that reaches the end moves
   it along by itself; *Next line* goes back and down; 4× shrinks the region; dragging the frame's grip moves
   the view; closing it gives the page its room back and leaves the writing.
+- **searching a note**: the panel is not there until asked for; the button opens it with the cursor in its
+  box; one word finds a text box, a sticky note and a table cell whatever its case; a word that is not
+  there finds nothing; choosing a result selects that object; Esc puts the panel away and Ctrl+F brings it
+  back with the last search in the box.
+- **searching the library**: a note is found by the words inside it, by its title, and a word that is in no
+  note finds none; a match on the second page opens the note at that page with the table selected.
 - **a long stroke**: while the pen is down a long stroke has a tail layer that cannot take
   the pen's events, the stretch behind it is on the live canvas and the tail is only the last
   stretch, both go when the pen lifts, and the whole stroke lands on the page.

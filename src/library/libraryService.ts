@@ -19,6 +19,7 @@ import {
   readBrowserDocument,
   writeBrowserDocument,
 } from './browserLibrary';
+import type { DocumentText } from './search';
 import { OFFLINE_STATUS, type ConflictResolution, type LibraryListing, type LibrarySort, type SyncStatus, type ThumbnailSource } from './types';
 
 export async function listLibrary(path: string | null, sort: LibrarySort): Promise<LibraryListing> {
@@ -80,6 +81,41 @@ export async function readThumbnailSource(path: string): Promise<ThumbnailSource
     };
   }
   return tauriInvoke<ThumbnailSource>('read_document_thumbnail', { path });
+}
+
+/**
+ * A document's title and the typed text in it, for searching the whole library.
+ *
+ * On the desktop the Rust side reads only the words out of the file (ink, images and imported PDFs
+ * are walked past, not held); the browser fallback has to parse what it stored and keeps just the text.
+ */
+export async function readDocumentText(path: string): Promise<DocumentText> {
+  if (isTauri()) return tauriInvoke<DocumentText>('read_document_text', { path });
+  const text = readBrowserDocument(path);
+  if (text === null) throw new Error('That document is no longer in the library.');
+  const parsed: unknown = JSON.parse(text);
+  const envelope = parsed as { document?: SerializedText };
+  const document = envelope.document ?? (parsed as SerializedText);
+  const pages = Array.isArray(document.pages) ? document.pages : [];
+  const pieces: Mutable<DocumentText['pieces']> = [];
+  pages.forEach((page, pageIndex) => {
+    for (const item of page.media ?? []) {
+      const base = { pageIndex, pageId: page.id ?? '', mediaId: item.id ?? null };
+      if ((item.kind === 'text' || item.kind === 'note') && typeof item.text === 'string' && item.text.trim()) {
+        pieces.push({ ...base, kind: item.kind, text: item.text });
+      } else if (item.kind === 'table' && Array.isArray(item.cells)) {
+        for (const cell of item.cells) if (typeof cell === 'string' && cell.trim()) pieces.push({ ...base, kind: 'table', text: cell });
+      }
+    }
+  });
+  return { title: document.title?.trim() || '', pageCount: pages.length, pieces };
+}
+
+type Mutable<T extends readonly unknown[]> = T[number][];
+
+interface SerializedText {
+  title?: string;
+  pages?: { id?: string; media?: { id?: string; kind?: string; text?: unknown; cells?: unknown }[] }[];
 }
 
 // ---------------------------------------------------------------------------

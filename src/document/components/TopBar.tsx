@@ -12,6 +12,7 @@ import {
   LockOpen,
   Redo2,
   Rows3,
+  Search,
   Square,
   Undo2,
   ZoomIn,
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useRouteStore } from '../../library/routeStore';
 import { useDesktopStore } from '../../desktop/desktopStore';
+import { useSearchStore } from '../../search/searchStore';
 import { actionExportPdf } from '../../desktop/fileActions';
 import { FileMenu } from '../../desktop/FileMenu';
 import { IconButton } from '../../ui/IconButton';
@@ -48,6 +50,8 @@ const VIEW_MODES: readonly ViewModeDescriptor[] = [
  */
 export function TopBar() {
   const backToLibrary = useRouteStore((s) => s.backToLibrary);
+  const searchOpen = useSearchStore((s) => s.open);
+  const toggleSearch = useSearchStore((s) => s.toggle);
   const { title, pageCount, activePageIndex, viewMode, zoom, arrangerOpen, exporting, readOnly, dirty, canUndo, canRedo, activePageId } =
     useDocumentStore(
       useShallow((s) => {
@@ -276,6 +280,15 @@ export function TopBar() {
           tooltipSide="bottom"
           data-view-mode-toggle
           data-view-mode={viewMode}
+        />
+        <IconButton
+          icon={Search}
+          label="Search this note"
+          hint="Ctrl+F"
+          active={searchOpen}
+          onClick={toggleSearch}
+          tooltipSide="bottom"
+          data-search-toggle
         />
         <IconButton
           icon={readOnly ? Lock : LockOpen}

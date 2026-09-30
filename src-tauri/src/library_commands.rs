@@ -14,6 +14,7 @@ use std::{
 use notes_sync::{
     library::{self, SortKey, SortOrder},
     manager::{SyncManager, SyncState, SyncStatus},
+    text::{self, DocumentText},
     thumb::{self, ThumbnailSource},
     ConflictResolution, LibraryListing,
 };
@@ -153,6 +154,20 @@ pub fn read_document_thumbnail(library: State<'_, Library>, path: String) -> Res
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Untitled note".to_string());
     thumb::read_thumbnail_source(&file, &fallback)
+}
+
+/// A document's title and every piece of typed text in it, for library-wide search.
+///
+/// Like the thumbnail, this reads the file into a struct that declares only the
+/// text, so ink, images and embedded PDFs are walked and dropped, not held.
+#[tauri::command]
+pub fn read_document_text(library: State<'_, Library>, path: String) -> Result<DocumentText, String> {
+    let file = resolve(&library, Some(path))?;
+    let fallback = file
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Untitled note".to_string());
+    text::read_document_text(&file, &fallback)
 }
 
 // ---------------------------------------------------------------------------

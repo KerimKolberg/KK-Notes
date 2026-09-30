@@ -25,6 +25,8 @@ const args = process.argv.slice(2);
 const urlArg = args.find((a) => a.startsWith('--url='))?.slice('--url='.length);
 const BASE = urlArg ?? 'http://localhost:4173';
 const PORT = Number(new URL(BASE).port || 80);
+// `--only=search,zoom` runs just the checks whose function name contains one of these.
+const only = args.find((a) => a.startsWith('--only='))?.slice('--only='.length).split(',').filter(Boolean) ?? [];
 
 /** A phone-sized portrait viewport with a real touchscreen and no mouse. */
 const PHONE = { width: 412, height: 915, deviceScaleFactor: 2.625 };
@@ -1829,6 +1831,142 @@ async function checkZoomWindow(browser) {
 }
 
 /**
+ * Search inside a note: a text box, a sticky note and a table cell each holding the word,
+ * found from one box, each result going to its object, Esc putting it away.
+ */
+async function checkSearch(browser) {
+  console.log('searching a note, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-insert-trigger]', { timeout: 10_000 });
+
+  check('there is no search panel until one is asked for', (await page.$('[data-search-panel]')) === null);
+
+  await page.click('[data-insert-trigger]');
+  await page.click('[data-insert-text]');
+  await page.waitForSelector('[data-text-content]');
+  await page.type('[data-text-content]', 'Buy a Lemon today');
+  await page.click('[data-insert-trigger]');
+  await page.click('[data-insert-note]');
+  await page.waitForSelector('[data-note-text]');
+  await page.fill('[data-note-text]', 'Lemon tree notes');
+  await page.click('[data-insert-trigger]');
+  await page.click('[data-insert-table]');
+  await page.waitForSelector('[data-cell="0-0"]');
+  await page.fill('[data-cell="0-0"]', 'lemon');
+
+  await page.click('[data-search-toggle]');
+  await page.waitForSelector('[data-search-panel]', { timeout: 5_000 });
+  check('the search button opens the panel', true);
+  check('with the cursor already in its box', await page.$eval('[data-search-input]', (el) => document.activeElement === el));
+
+  await page.type('[data-search-input]', 'LEMON');
+  await page.waitForSelector('[data-search-hit]', { timeout: 5_000 });
+  const kinds = await page.$$eval('[data-search-hit]', (els) => els.map((el) => el.getAttribute('data-search-hit-kind')).sort());
+  check('the word is found in the text box, the note and the table, whatever its case', kinds.join() === 'note,table,text', kinds.join());
+  check('and the panel counts them', (await page.$eval('[data-search-count]', (el) => el.textContent)).includes('of 3'));
+
+  await page.fill('[data-search-input]', 'limón zzz');
+  await page.waitForTimeout(100);
+  check('a word that is not there finds nothing', (await page.$$('[data-search-hit]')).length === 0 && (await page.$eval('[data-search-count]', (el) => el.textContent)) === 'No matches');
+
+  await page.fill('[data-search-input]', 'lemon');
+  await page.waitForSelector('[data-search-hit]');
+  // Each result brings its own object under the selection: the note has a shape picker in its toolbar, the text box has not.
+  const noteTools = "[data-media-toolbar] [data-note-shape-option]";
+  await page.click('[data-search-hit][data-search-hit-kind="text"]');
+  await page.waitForSelector('[data-media-toolbar]', { timeout: 3_000 });
+  check('choosing the text box result selects the text box', (await page.$(noteTools)) === null);
+  await page.click('[data-search-hit][data-search-hit-kind="note"]');
+  await page.waitForSelector(noteTools, { timeout: 3_000 });
+  check('and choosing the note result selects the note', true);
+
+  await page.focus('[data-search-input]');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(100);
+  check('Escape puts the panel away', (await page.$('[data-search-panel]')) === null);
+
+  await page.mouse.click(40, 400);
+  await page.keyboard.press('Control+f');
+  await page.waitForSelector('[data-search-panel]', { timeout: 3_000 });
+  check('Ctrl+F brings it back', true);
+  check('with what was searched for still in the box', (await page.$eval('[data-search-input]', (el) => el.value)) === 'lemon');
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
+ * Searching the whole library from its home screen. The browser library has no autosave of its own,
+ * so the note is written into it by hand: two pages, a text box and a sticky note on the first and a
+ * table on the second.
+ */
+async function checkLibrarySearch(browser) {
+  console.log('searching the library, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.click('[data-back-to-library]');
+  await page.waitForSelector('[data-library-view]', { timeout: 10_000 });
+
+  const seeded = await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) => k.startsWith('notes.library.doc.'));
+    if (!key) return false;
+    const envelope = JSON.parse(localStorage.getItem(key));
+    const doc = envelope.document;
+    doc.title = 'Kitchen plans';
+    const box = { x: 100, y: 100, width: 300, height: 80, rotation: 0, zIndex: 1 };
+    const first = { ...doc.pages[0], media: [
+      { ...box, id: 'mt', kind: 'text', text: 'Zebra crossing ahead', fontFamily: 'sans', fontSize: 16, color: '#000', bold: false, italic: false, underline: false, strikethrough: false, align: 'left' },
+      { ...box, id: 'mn', kind: 'note', text: 'remember the zebra', color: '#fef08a' },
+    ] };
+    const second = { ...first, id: 'second-page', pageNumber: 2, media: [
+      { ...box, id: 'mb', kind: 'table', rows: 1, columns: 2, cells: ['quartz', 'granite'] },
+    ] };
+    doc.pages = [first, second];
+    localStorage.setItem(key, JSON.stringify(envelope));
+    return true;
+  });
+  check('a note with words in it is in the library', seeded);
+
+  check('there are no search results until something is typed', (await page.$('[data-library-search-results]')) === null);
+  await page.fill('[data-library-search]', 'ZEBRA');
+  await page.waitForSelector('[data-library-search-note]', { timeout: 5_000 });
+  const pagesOfHits = await page.$$eval('[data-library-search-hit]', (els) => els.map((e) => e.getAttribute('data-library-search-hit-page')));
+  check('the note is found by the words inside it, whatever their case', (await page.$$('[data-library-search-note]')).length === 1 && pagesOfHits.join() === '0,0', pagesOfHits.join());
+  check('the note cards give way to the results', (await page.$('[data-library-entries]')) === null);
+
+  await page.fill('[data-library-search]', 'kitchen');
+  await page.waitForTimeout(150);
+  check('it is found by its title too', (await page.$$('[data-library-search-note]')).length === 1);
+
+  await page.fill('[data-library-search]', 'nothing like this');
+  await page.waitForTimeout(150);
+  check('and a word that is in no note finds none', (await page.$$('[data-library-search-note]')).length === 0 && (await page.$eval('[data-library-search-status]', (e) => e.textContent)).startsWith('No notes'));
+
+  await page.fill('[data-library-search]', 'quartz');
+  await page.waitForSelector('[data-library-search-hit]', { timeout: 5_000 });
+  check('a match on the second page says so', (await page.$eval('[data-library-search-hit]', (e) => e.getAttribute('data-library-search-hit-page'))) === '1');
+  await page.click('[data-library-search-hit]');
+  await page.waitForSelector('[data-arranger-toggle]', { timeout: 10_000 });
+  await page.waitForSelector('[data-media-toolbar]', { timeout: 5_000 }).catch(() => {});
+  check('choosing it opens the note at that page', (await page.$eval('[data-page-badge]', (e) => e.textContent)).includes('Page 2'), await page.$eval('[data-page-badge]', (e) => e.textContent));
+  check('with the table that holds the word selected', (await page.$('[data-media-toolbar]')) !== null);
+
+  await page.click('[data-back-to-library]');
+  await page.waitForSelector('[data-library-view]', { timeout: 10_000 });
+  check('back in the library the box is empty and the notes are shown again', (await page.$eval('[data-library-search]', (e) => e.value)) === '' && (await page.$('[data-library-entries]')) !== null);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Turning a selection: the round handle above the box, and the quarter-turn buttons.
  * A flat line is the easiest thing to see turn: it ends up standing.
  */
@@ -1997,27 +2135,35 @@ if (!(await isListening(PORT))) {
 
 const browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] });
 try {
-  await checkPhone(browser);
-  await checkSmallTablet(browser);
-  await checkDesktop(browser);
-  await checkCloudPanel(browser);
-  await checkGoodNotesImport(browser);
-  await checkFileDrop(browser);
-  await checkTabs(browser);
-  await checkSplit(browser);
-  await checkToolbar(browser);
-  await checkDocks(browser);
-  await checkQuickSettings(browser);
-  await checkPenButtons(browser);
-  await checkLasso(browser);
-  await checkLongStroke(browser);
-  await checkRotate(browser);
-  await checkArrange(browser);
-  await checkGridSnap(browser);
-  await checkAids(browser);
-  await checkZoomWindow(browser);
-  await checkTextToolbar(browser);
-  await checkZoomAnchor(browser);
+  const checks = [
+    checkPhone,
+    checkSmallTablet,
+    checkDesktop,
+    checkCloudPanel,
+    checkGoodNotesImport,
+    checkFileDrop,
+    checkTabs,
+    checkSplit,
+    checkToolbar,
+    checkDocks,
+    checkQuickSettings,
+    checkPenButtons,
+    checkLasso,
+    checkLongStroke,
+    checkRotate,
+    checkArrange,
+    checkGridSnap,
+    checkAids,
+    checkZoomWindow,
+    checkSearch,
+    checkLibrarySearch,
+    checkTextToolbar,
+    checkZoomAnchor,
+  ];
+  for (const run of checks) {
+    if (only.length > 0 && !only.some((o) => run.name.toLowerCase().includes(o.toLowerCase()))) continue;
+    await run(browser);
+  }
 } finally {
   await browser.close();
   if (server) {
