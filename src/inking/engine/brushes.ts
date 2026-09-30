@@ -88,9 +88,14 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
     composite: 'source-over',
     thinning: 0.08,
     smoothing: 0.5,
-    // High streamline damps jitter but also lags the pen; 0.5 keeps a short
-    // stroke the length the user drew it.
-    streamline: 0.5,
+    // Streamline is a running lerp towards each new sample, so the ink always ends a
+    // little short of the nib: (1 - t) / t of a sample step, with t = 0.15 +
+    // (1 - streamline) * 0.85. At 0.5 that was three quarters of a step — about 4 px
+    // behind the tip at ordinary writing speed and 9 at a quick flick, on a device
+    // that reports the pen four times a frame and does not need the damping. It read
+    // as lag, and as the last of each stroke going missing until the pen lifted.
+    // 0.2 keeps it under 1.5 px at writing speed.
+    streamline: 0.2,
     easing: 'linear',
     velocityWidth: false,
     taperStart: 0,
@@ -114,7 +119,7 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
     composite: 'source-over',
     thinning: 0.78,
     smoothing: 0.62,
-    streamline: 0.45,
+    streamline: 0.3,
     easing: 'ease-in-out',
     velocityWidth: false,
     taperStart: 2,
@@ -138,7 +143,7 @@ const DEFINITIONS: Readonly<Record<BrushId, BrushDefinition>> = {
     composite: 'source-over',
     thinning: 0.5,
     smoothing: 0.35,
-    streamline: 0.4,
+    streamline: 0.25,
     easing: 'ease-out',
     velocityWidth: false,
     taperStart: 0,

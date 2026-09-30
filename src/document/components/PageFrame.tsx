@@ -7,11 +7,12 @@ import { FormOverlay } from '../../pdf/FormOverlay';
 import { PdfBackground } from '../../pdf/PdfBackground';
 import type { PageLayout } from '../layout';
 import { usePreferencesStore } from '../../preferences/store';
+import { eraserRadius } from '../../inking/engine/toolStyles';
 import { useDocumentStore } from '../store';
 import { templateSvgDataUrl } from '../templates';
 import { cancelBarrelButton, consumeBarrelButton, noteBarrelButton } from '../stylusBarrel';
 import { borrowSelectionTool } from '../toolBorrow';
-import { beginTemporaryTool } from '../toolStore';
+import { beginTemporaryTool, useToolStore } from '../toolStore';
 import type { Page } from '../types';
 import { MediaLayer } from './MediaLayer';
 import { PageSnapshot } from './PageSnapshot';
@@ -59,6 +60,14 @@ export const PageFrame = memo(function PageFrame({
   // Only used as a `key`: a canvas's attributes are fixed by its first
   // `getContext`, so the surface has to be rebuilt for the switch to take effect.
   const lowLatencyInk = usePreferencesStore((s) => s.lowLatencyInk);
+  // The eraser's footprint on screen, for the pointer to show while hovering. Read
+  // from the store here because the tool settings arrive as a ref, which cannot
+  // re-render anything when the size slider moves.
+  const eraserSize = useToolStore((s) => s.settings.eraserSize);
+  const erasing = currentTool === 'eraser-stroke' || currentTool === 'eraser-pixel';
+  const eraserDiameterPx = erasing
+    ? 2 * eraserRadius({ eraserSize } as Readonly<ToolSettings>, currentTool) * zoom
+    : null;
   const pageRef = useLatestRef(page);
   /** Strokes the selection layer is previewing; the ink layer leaves them out meanwhile. */
   const [hiddenStrokeIds, setHiddenStrokeIds] = useState<ReadonlySet<string> | null>(null);
@@ -138,6 +147,7 @@ export const PageFrame = memo(function PageFrame({
               onBarrelSelect={onBarrelSelect}
               onBorrowSelectionTool={borrowSelectionTool}
               onBarrelStroke={consumeBarrelButton}
+              eraserDiameterPx={eraserDiameterPx}
               onBarrelButton={noteBarrelButton}
               onBarrelCancel={cancelBarrelButton}
               onLassoStart={onLassoStart}

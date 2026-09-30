@@ -603,7 +603,7 @@ export const ToolPalette = memo(function ToolPalette({
       {/* Colours and thickness: beneath the tools in a row, and in a column of
           their own beside them when the toolbar is standing on end. */}
       {vertical ? (
-        <div className="shrink-0">
+        <div className="shrink-0 overflow-y-auto" {...(capacity ? { style: { maxHeight: capacity - 12 } } : {})}>
           <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} compact />
         </div>
       ) : (

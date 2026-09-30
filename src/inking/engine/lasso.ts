@@ -509,10 +509,50 @@ export function scaleAnchor(bounds: BBox, handle: ScaleHandle): Point {
 }
 
 /**
+ * The point on the selection's own bounds that `handle` stands for: the corner, or
+ * the middle of the edge. Not where the handle is *drawn* — that is a margin outside
+ * the bounds — and the difference is exactly the offset a grab starts with.
+ */
+export function boundsHandlePoint(bounds: BBox, handle: ScaleHandle): Point {
+  return {
+    x: handle.includes('w') ? bounds.minX : handle.includes('e') ? bounds.maxX : (bounds.minX + bounds.maxX) / 2,
+    y: handle.includes('n') ? bounds.minY : handle.includes('s') ? bounds.maxY : (bounds.minY + bounds.maxY) / 2,
+  };
+}
+
+/**
+ * Which handles are worth offering for a box this size on screen.
+ *
+ * A box thinner than a handle — a straight line, a rule, one row of writing — has
+ * its corner and edge handles piled on top of each other, and the one that catches
+ * the pen is whichever happens to be topmost. Worse, the thin axis is one a
+ * selection cannot usefully be scaled along: a couple of pixels of height is a
+ * factor of ten for every pixel the pen wanders. So a box thin in one direction
+ * offers only the two handles that stretch it the *other* way, and one thin in both
+ * (a dot) offers its corners.
+ */
+export function usableHandles(bounds: BBox, zoom: number, thinBelow = 18): readonly ScaleHandle[] {
+  const thinX = (bounds.maxX - bounds.minX) * zoom < thinBelow;
+  const thinY = (bounds.maxY - bounds.minY) * zoom < thinBelow;
+  if (thinX && thinY) return ['nw', 'ne', 'se', 'sw'];
+  if (thinY) return ['w', 'e'];
+  if (thinX) return ['n', 's'];
+  return SCALE_HANDLES;
+}
+
+/**
  * Scale transform for dragging `handle` to `pointer`. A corner is uniform by
- * default (the dominant axis wins) unless `free`; an edge is always a pure 1D
- * scale, which is the point of having it. Never collapses below `minSize` px
- * on either axis.
+ * default unless `free`; an edge is always a pure 1D scale, which is the point of
+ * having it. Never collapses below `minSize` px.
+ *
+ * `pointer` is where the *handle's point on the bounds* is being taken to: a caller
+ * that grabbed the handle a few pixels off that point should subtract the offset it
+ * grabbed at, or the selection jumps by that offset on the first move.
+ *
+ * The uniform factor is the pointer's projection onto the corner's diagonal, not
+ * whichever axis has changed most. The latter jumps when the two cross, and for a
+ * box that is thin one way it lets the thin axis decide: a pen drifting two pixels
+ * sideways while pulling a line out was a several-fold change in size.
  */
 export function scaleFromHandle(bounds: BBox, handle: ScaleHandle, pointer: Point, free: boolean, minSize = 8): StrokeTransform {
   const origin = scaleAnchor(bounds, handle);
@@ -524,7 +564,12 @@ export function scaleFromHandle(bounds: BBox, handle: ScaleHandle, pointer: Poin
   let sx = axes.x && width > 0 ? Math.max(minSize, signX * (pointer.x - origin.x)) / width : 1;
   let sy = axes.y && height > 0 ? Math.max(minSize, signY * (pointer.y - origin.y)) / height : 1;
   if (!free && axes.x && axes.y) {
-    const uniform = Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy;
+    const dx = signX * width;
+    const dy = signY * height;
+    const diagonal = dx * dx + dy * dy;
+    const projected = diagonal > 0 ? ((pointer.x - origin.x) * dx + (pointer.y - origin.y) * dy) / diagonal : 1;
+    // The longer side of the box keeps at least `minSize`, so a thin box can still be shrunk.
+    const uniform = Math.max(projected, minSize / Math.max(width, height, minSize));
     sx = uniform;
     sy = uniform;
   }

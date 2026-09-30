@@ -3,7 +3,7 @@
  * document's JSON serialization (metadata, page layouts, stroke arrays,
  * image layers as data URLs, form values, PDF sources as base64).
  */
-import { fromSerializable, toSerializable } from '../document/serialization';
+import { fromSerializable, serializeDocumentJson, toSerializable } from '../document/serialization';
 import type { Document, SerializedDocument } from '../document/types';
 
 export const NOTEX_FORMAT = 'notex' as const;
@@ -31,8 +31,16 @@ export function buildNotex(doc: Document, savedAt: Date = new Date()): NotexFile
   return { format: NOTEX_FORMAT, version: NOTEX_VERSION, savedAt: savedAt.toISOString(), app: APP_INFO, document: toSerializable(doc) };
 }
 
+/**
+ * The file's text. The envelope is written by hand around the document's JSON so the
+ * pages inside it can come from the per-page cache; the result parses to exactly
+ * what `buildNotex` describes.
+ */
 export function encodeNotex(doc: Document, savedAt: Date = new Date()): string {
-  return JSON.stringify(buildNotex(doc, savedAt));
+  return (
+    `{"format":${JSON.stringify(NOTEX_FORMAT)},"version":${NOTEX_VERSION},"savedAt":${JSON.stringify(savedAt.toISOString())},` +
+    `"app":${JSON.stringify(APP_INFO)},"document":${serializeDocumentJson(doc)}}`
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

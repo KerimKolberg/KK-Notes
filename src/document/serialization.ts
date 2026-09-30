@@ -26,6 +26,24 @@ export function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
+/**
+ * The base64 of a PDF's bytes, worked out once per buffer.
+ *
+ * An autosave used to re-encode every PDF in the document each time it ran, which for
+ * a textbook is megabytes of `String.fromCharCode` and `btoa` on the main thread — to
+ * write out bytes that had not changed since the last save. The buffers are never
+ * modified (they are the bytes the file was opened with), so identity is the key.
+ */
+const pdfBase64 = new WeakMap<ArrayBuffer, string>();
+function cachedBase64(buffer: ArrayBuffer): string {
+  let text = pdfBase64.get(buffer);
+  if (text === undefined) {
+    text = arrayBufferToBase64(buffer);
+    pdfBase64.set(buffer, text);
+  }
+  return text;
+}
+
 export function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -73,7 +91,7 @@ export function toSerializable(doc: Document): SerializedDocument {
   for (const page of doc.pages) {
     const ref = page.pdf;
     if (ref && !pdfSources[ref.sourceId]) {
-      pdfSources[ref.sourceId] = { name: ref.sourceName, pageCount: ref.pageCount, data: arrayBufferToBase64(ref.data) };
+      pdfSources[ref.sourceId] = { name: ref.sourceName, pageCount: ref.pageCount, data: cachedBase64(ref.data) };
     }
   }
   return {
@@ -159,8 +177,41 @@ export function fromSerializable(data: SerializedDocument): Document {
   };
 }
 
+/**
+ * A page as JSON text, worked out once per page *object*.
+ *
+ * Pages are immutable — every edit makes a new one and shares the rest — so the text
+ * of a page that has not been touched since the last save is still right, and only the
+ * page that was written on has to be serialised again. Autosave runs a second and a
+ * half after every burst of writing; with the whole document serialised each time it
+ * cost about a tenth of a second per hundred thousand points, a stall that landed in
+ * the middle of the next stroke and grew with every page of notes. Now it costs one
+ * page.
+ */
+const pageJson = new WeakMap<Page, string>();
+export function serializePageJson(page: Page): string {
+  let json = pageJson.get(page);
+  if (json === undefined) {
+    json = JSON.stringify(toSerializablePage(page));
+    pageJson.set(page, json);
+  }
+  return json;
+}
+
+/**
+ * The document as JSON text, byte-for-byte what `JSON.stringify(toSerializable(doc))`
+ * gives apart from the order of two keys, assembled from per-page text that is reused
+ * when the page has not changed.
+ */
+export function serializeDocumentJson(doc: Document): string {
+  const { pages: _pages, ...shell } = toSerializable(doc);
+  void _pages;
+  const head = JSON.stringify(shell);
+  return `${head.slice(0, -1)},"pages":[${doc.pages.map(serializePageJson).join(',')}]}`;
+}
+
 export function serializeDocument(doc: Document): string {
-  return JSON.stringify(toSerializable(doc));
+  return serializeDocumentJson(doc);
 }
 
 export function deserializeDocument(json: string): Document {

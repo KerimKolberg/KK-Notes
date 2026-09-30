@@ -8,9 +8,11 @@ import {
   removeStrokesById,
   restyleStrokes,
   SCALE_HANDLES,
+  boundsHandlePoint,
   handleAxes,
   scaleAnchor,
   scaleFromHandle,
+  usableHandles,
   selectStrokesInLasso,
   selectionBounds,
   strokeSamplePoints,
@@ -335,10 +337,57 @@ describe('selection-box geometry', () => {
     expect(scaleAnchor(bounds, 'sw')).toEqual({ x: 110, y: 20 });
   });
 
-  it('derives a uniform scale from the dominant axis by default', () => {
-    // Drag the SE corner 100px right, 0 down → x wants 2×, y wants 1×; uniform picks 2×.
+  it('derives a uniform scale from the pointer\'s projection onto the diagonal by default', () => {
+    // Drag the SE corner 100px right, 0 down. The diagonal runs (100, 50); the pointer
+    // sits at (200, 50) from the anchor, which projects to 1.8 of it.
     const t = scaleFromHandle(bounds, 'se', { x: 210, y: 70 }, false);
-    expect(t).toEqual({ kind: 'scale', origin: { x: 10, y: 20 }, sx: 2, sy: 2 });
+    expect(t.kind).toBe('scale');
+    expect(t).toMatchObject({ origin: { x: 10, y: 20 } });
+    if (t.kind === 'scale') {
+      expect(t.sx).toBeCloseTo(1.8, 10);
+      expect(t.sy).toBeCloseTo(1.8, 10);
+    }
+  });
+
+  it('is exactly 1 at the corner it starts from, whichever corner', () => {
+    for (const handle of ['nw', 'ne', 'se', 'sw'] as const) {
+      const at = boundsHandlePoint(bounds, handle);
+      const t = scaleFromHandle(bounds, handle, at, false);
+      if (t.kind === 'scale') {
+        expect(t.sx).toBeCloseTo(1, 10);
+        expect(t.sy).toBeCloseTo(1, 10);
+      }
+    }
+  });
+
+  it('does not let the thin side of a box decide a uniform scale', () => {
+    // A line 200 wide and 2 high, its far corner pulled 40px out with the pen
+    // wandering 2px sideways: about 1.2×, not the 2× the wobble alone used to give.
+    const line = { minX: 0, minY: 0, maxX: 200, maxY: 2 };
+    for (const wander of [-2, 0, 2]) {
+      const t = scaleFromHandle(line, 'se', { x: 240, y: 2 + wander }, false);
+      if (t.kind === 'scale') {
+        expect(t.sx).toBeCloseTo(1.2, 1);
+        expect(t.sx).toBe(t.sy);
+      }
+    }
+  });
+
+  it('can still shrink a thin box uniformly', () => {
+    const line = { minX: 0, minY: 0, maxX: 200, maxY: 2 };
+    const t = scaleFromHandle(line, 'se', { x: 100, y: 1 }, false);
+    if (t.kind === 'scale') expect(t.sx).toBeCloseTo(0.5, 1);
+  });
+
+  it('varies continuously across the diagonal, with no jump where two axes would cross', () => {
+    // Walk the pointer across a line at constant x; the factor must not step.
+    let last: number | null = null;
+    for (let y = 0; y <= 200; y += 5) {
+      const t = scaleFromHandle({ minX: 0, minY: 0, maxX: 100, maxY: 100 }, 'se', { x: 150, y }, false);
+      if (t.kind !== 'scale') throw new Error('expected a scale');
+      if (last !== null) expect(Math.abs(t.sx - last)).toBeLessThan(0.06);
+      last = t.sx;
+    }
   });
 
   it('allows free aspect scaling and clamps to a minimum size', () => {
@@ -349,6 +398,33 @@ describe('selection-box geometry', () => {
     // Dragging the NW corner up-left grows the box.
     const nw = scaleFromHandle(bounds, 'nw', { x: -90, y: 20 }, true);
     expect(nw).toMatchObject({ origin: { x: 110, y: 70 }, sx: 2, sy: 1 });
+  });
+
+  it('finds where a handle stands on the bounds themselves', () => {
+    expect(boundsHandlePoint(bounds, 'nw')).toEqual({ x: 10, y: 20 });
+    expect(boundsHandlePoint(bounds, 'se')).toEqual({ x: 110, y: 70 });
+    expect(boundsHandlePoint(bounds, 'e')).toEqual({ x: 110, y: 45 });
+    expect(boundsHandlePoint(bounds, 'n')).toEqual({ x: 60, y: 20 });
+  });
+
+  it('offers a box every handle when it is big enough to tell them apart', () => {
+    expect(usableHandles(bounds, 1)).toEqual(SCALE_HANDLES);
+  });
+
+  it('offers a line only the handles that stretch it', () => {
+    // 200 wide, 3 high: the corners and the top and bottom would sit on one another.
+    expect(usableHandles({ minX: 0, minY: 0, maxX: 200, maxY: 3 }, 1)).toEqual(['w', 'e']);
+    expect(usableHandles({ minX: 0, minY: 0, maxX: 3, maxY: 200 }, 1)).toEqual(['n', 's']);
+  });
+
+  it('judges thinness on the screen, so zooming in gives a line its handles back', () => {
+    const line = { minX: 0, minY: 0, maxX: 200, maxY: 10 };
+    expect(usableHandles(line, 1)).toEqual(['w', 'e']);
+    expect(usableHandles(line, 3)).toEqual(SCALE_HANDLES);
+  });
+
+  it('offers a dot its corners', () => {
+    expect(usableHandles({ minX: 0, minY: 0, maxX: 2, maxY: 2 }, 1)).toEqual(['nw', 'ne', 'se', 'sw']);
   });
 
   it('offers four corners and four edges', () => {

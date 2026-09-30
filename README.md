@@ -119,6 +119,24 @@ otherwise open it mid-stroke). Dirty tracking compares the page array and
 title against the last saved snapshot, so scrolling and zooming never count as
 edits.
 
+**Autosave costs one page, and waits for the pen.** A draft is written 1.5 s after the
+last edit, and writing one is not free: serialising the document — about a tenth of a
+second per hundred thousand points, so a fully annotated notebook is a stall of that
+order — plus handing it across to the shell, all on the thread that follows the pen.
+That stall landed in the middle of the *next* stroke (each stroke restarts the wait,
+and the wait ends in the pause before the following one) and grew with every page of
+notes; on the ROG Flow Z13 the overlay's `worst` read 500–800 ms. Two changes. Pages
+are immutable — an edit makes a new one and shares the rest — so `serializePageJson`
+keeps each page's JSON in a `WeakMap` keyed by the page object, and a save re-serialises
+only the page that was written on; PDF sources' base64 is cached the same way, by
+buffer (`encodeNotex` writes the envelope by hand around the cached pages, and parses
+to exactly what `buildNotex` describes). And a draft that comes due while the pen is on
+the page or hovering just above it is put off and looked at again every 750 ms
+(`desktop/autosave.ts`), running once the pen has gone quiet — but never for more than
+20 s, because a draft is what a crash restores from. The window title is only set
+when it changes: it used to be sent to the shell on every change to the document
+store, which includes turning a page and making a selection.
+
 **Stylus buttons.** `resolveEffectiveTool` maps hardware buttons per the
 *Stylus* settings in the palette. Two bits of `PointerEvent.buttons` are
 buttons: 2 is the **barrel** button and 32 is the **eraser** flag. A pen with a
@@ -559,6 +577,17 @@ src/pdf/
 └── download.ts
 ```
 
+**Zooming keeps the centre of the view.** A pinch always said where to stay (it
+anchors on the page point under the fingers); the toolbar's zoom buttons only changed
+the page size and left the scroll offset alone, so whatever was at that offset was
+soon somewhere else — in the two-page view, zooming out slid the strip one way and
+zooming in slid it back, and a few clicks either way lost the page altogether.
+`DocumentViewer` now remembers the last laid-out picture and, on a change of zoom,
+re-anchors the page point that was at the centre of the view (`anchorForContentPoint`,
+`scrollForAnchor`, the same helpers a pinch uses), in either axis. The scroll it
+re-anchors from is tracked on every scroll event, before the browser clamps it to the
+new, shorter content and reports that a frame late.
+
 ## Interface (`src/ui/`, `src/inking/palette/`)
 
 Tablet-first and icon-only, with [lucide-react] for the icons and a small
@@ -615,13 +644,17 @@ thickness controls sit beside it in a narrow column of their own, and flyouts an
 tooltips open *away* from the edge, beside their button, instead of above it.
 
 The colour column is the same `ToolConfigRow` in a `compact` layout rather than a
-second component: the eight swatches in a grid two wide, the pipette on its own
-line, the thickness as a dot and a reading above a full-width slider, and the
-swatch editor and the laser's Rainbow button stacked. It was first a fixed-width
-box around the *row* layout, which kept its own width regardless and pushed the
-toolbar to about 350 px on a wide screen; it is 146 px now, and
-`scripts/ui-check.mjs` asserts both that width and that nothing in the column —
-the laser button and the editor included — spills out of it.
+second component: one button wide, running down the height the tools beside it
+already take — the eight swatches in a single column, the pipette beneath them,
+then the thickness as a dot and a reading above a slider that stands on end (largest
+at the top, like a fader). What is a word elsewhere is an icon here for the width:
+Add, Remove and Done in the swatch editor, and the laser's Rainbow. It was first a
+fixed-width box around the *row* layout, which kept its own width regardless and
+pushed the toolbar to about 350 px on a wide screen; then a grid two swatches wide
+(146 px), which left the space under it empty; it is about 106 px now.
+`scripts/ui-check.mjs` asserts the width, that the colours stand in one column, and
+that nothing in the column — the laser button and the editor included — spills out
+of it.
 
 **Pin and auto-hide.** The pin beside the grip keeps the toolbar on screen
 (default). Unpinned, it slips away after 5 idle seconds and leaves a small tab in
@@ -697,6 +730,17 @@ brush decides three things at once: the perfect-freehand parameters baked
 into the stroke when it starts, the pressure→radius easing and end tapers
 applied when the outline is generated, and how that outline is painted.
 
+**How far the ink trails the pen.** Streamline is a running lerp towards each new
+sample (`t = 0.15 + (1 - streamline) · 0.85`), so the live ink always ends a little
+short of the nib — by `(1 - t) / t` of a sample step. At the ballpoint's old 0.5 that
+was three quarters of a step: about 4 px behind the tip at ordinary writing speed on a
+pen reporting 250 times a second, and 9 at a quick flick, on a device that does not need
+the damping. It read as lag, and as the end of each stroke going missing until the pen
+lifted (the commit completes the last segment). The ballpoint is at 0.2 now (under
+1.5 px at that speed), the fountain pen at 0.3 and the pencil at 0.25; the marker keeps
+0.5 and the soft brush its heavy damping, which is the look. Strokes already drawn
+carry their own style and are unchanged. `brushes.test.ts` pins the trailing distance.
+
 | Brush | Feel | How |
 | --- | --- | --- |
 | Ballpoint | Even width, hard edges | `thinning 0.08`, polygon outline drawn without curve smoothing |
@@ -748,7 +792,27 @@ box on a z-25 layer between the ink and the form widgets:
 
 - **drag the box** to translate, **drag a corner handle** to scale about the
   opposite corner (uniform by default, Shift for free aspect; line widths
-  scale with the geometric mean of the axes);
+  scale with the geometric mean of the axes), or an **edge handle** to stretch
+  along one axis only;
+- **stretching is measured from where the pen took hold.** The handle is drawn a
+  margin outside the selection's bounds and 26 px wide (14 drawn), so a grab is never
+  exactly on the point the scale is measured from; the offset it landed at is kept and
+  taken off the pen's position, or the selection lurched by that much on the first
+  move (`boundsHandlePoint`). A corner's uniform factor is the pen's *projection onto
+  the corner's diagonal* rather than whichever axis has changed most — the latter
+  jumps where the two cross, and for a box that is thin one way it let the thin side
+  decide, so a pen drifting two pixels sideways while pulling a line out was a
+  several-fold change in size. A box thinner than a handle on screen (a straight line,
+  a rule, a row of writing) offers only the two edge handles that stretch it the other
+  way, since its corner and top and bottom handles would sit on one another and the
+  thin axis cannot usefully be scaled (`usableHandles`). The handle being dragged
+  stays in the page, hidden, for the whole drag: it is the element the pen is captured
+  to, and removing it on the first move (as the layer once did, to hide the handles)
+  released the capture, so a stretch followed the pen only while it stayed inside the
+  old box and stopped dead the moment it was pulled out of it — which is the whole
+  point of stretching. The drag is applied once per animation frame from the latest
+  pen report rather than on each of the four or so a frame, and a capture lost for any
+  other reason ends the drag where it is;
 - **quick actions**: Duplicate (offset copies become the new selection),
   six colour swatches plus a colour picker, a width slider that previews
   live and commits on release, Delete, Deselect; Delete / Backspace and
@@ -1858,12 +1922,21 @@ fullscreen — its idle layout and style counts are zero at every window size an
 ratio tried, and the toggle is tao's ordinary borderless fullscreen (the window is
 resized to cover the monitor and the taskbar is told to step aside), the same thing
 Chromium's own F11 does — so the difference is in how Windows presents a window that
-covers the whole monitor. A hypothesis worth checking with these rows is that a
-maximised window is served at about 60 Hz while a fullscreen one gets the panel's
-full 180 Hz, cutting the frame budget from 16.7 ms to 5.6 ms; if `display` reads 180 Hz
-in fullscreen and the `react` and `frame` rows go amber, that is the answer and it is
-the app's per-frame cost to reduce. If `display` reads the same in both, the fault is
-below the app.
+covers the whole monitor.
+
+The first reports with these rows checked one idea and refuted it: the panel was
+suspected of running at its full 180 Hz in fullscreen and 60 in a window, tripling the
+per-frame cost, but `display` read about 75 Hz in *both*, with 60 fps, and ink lag was
+3–4 ms at the median either way. What the same reports did show: `worst` at 490–820 ms
+in several (the autosave stall above), and one fullscreen reading of 24 fps with a
+long scribble just drawn and the toolbar on screen. The first is fixed. The second is
+consistent with the cost of a very long single stroke — the live layer re-derives and
+re-fills the whole outline every frame, so a scribble of many thousands of samples
+costs more the longer it gets (in a headless run, frames at 6,000 samples occasionally
+took two or three vsyncs where the first 400 never did) — but the `draw` row stays at
+about half a millisecond, so the cost is in the GPU after the JavaScript returns, and
+whether the fullscreen blink and the pointer that lags the pen there are the same
+thing is not established. Neither could be reproduced without the tablet.
 
 ## How it works
 
@@ -1889,6 +1962,14 @@ way. The canvases are rebuilt when it is flipped, because a canvas's attributes
 are fixed by its first `getContext` (`engine/canvasMode.ts` is the one place that
 decides them). The switch stays for hardware where it helps, and the note beside
 it says what it did on this one; if pages go dark, switch it back off.
+
+**The eraser's pointer** is a ring the system draws (`inking/engine/cursor.ts`), the
+size of what the eraser will take, with a dot at its centre. It used to hide the
+pointer and draw its own ring on the ink layer, but only while erasing: hovering with
+the eraser showed nothing on a page — the pointer vanished as it crossed onto one and
+came back in the gap between two — and a ring the page draws is at least a frame
+behind a pointer the system draws. The image is rebuilt when the size or the zoom
+changes; an eraser too big for a cursor image (over 120 px) keeps the drawn ring alone.
 
 **The pointer over a page** is the system crosshair made a quarter smaller. The
 built-in `crosshair` is a fixed-size cross (32 px at 100% scaling) that cannot be
@@ -2029,6 +2110,19 @@ hit-testing can answer:
   edge, comes back to a mouse hover or the keyboard, and stays unpinned across a
   reload. The pen's pointer is the 24 px custom cursor with the system crosshair
   behind it, and the eraser's is still none.
+
+- **the pen's buttons, with synthesised pen events carrying `buttons` as Windows
+  reports them** (2 the barrel, 32 the eraser flag, 1 the tip): barrel hold to eraser
+  and back; the second button lassoing with the selection shown and kept, and the pen
+  returning when it is dismissed or a loop selects nothing; a quick barrel erase
+  swipe not toggling the tool; the barrel hold mapped to the lasso.
+- **stretching a lasso selection**: a line offers only its two stretching handles, a
+  pull far out keeps following the pen (the handle stays in the page), a grab off the
+  handle's centre does not lurch the selection.
+- **zoom steps in both view directions**: the page point at the centre of the view
+  stays there through steps out and in, and a step out and back returns to where it
+  began.
+- **the pointer**: the pen's is the 24 px cross, the eraser's a ring, neither `none`.
 
 A blocked tap is reported as a failed check naming the element in the way
 (Playwright's own actionability error says which), not as a timeout that hides

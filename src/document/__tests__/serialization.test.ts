@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Stroke } from '../../inking/types';
 import { appendStroke, createDocument } from '../operations';
-import { deserializeDocument, fromSerializable, serializeDocument, toSerializable } from '../serialization';
+import { deserializeDocument, fromSerializable, serializeDocument, serializeDocumentJson, serializePageJson, toSerializable } from '../serialization';
 
 const freehand: Stroke = {
   kind: 'freehand',
@@ -158,5 +158,66 @@ describe('document serialization', () => {
     expect(clamped.zoom).toBe(3);
     expect(clamped.activePageIndex).toBe(1);
     expect(() => deserializeDocument('null')).toThrow();
+  });
+});
+
+describe('serialising for autosave', () => {
+  const twoPages = () => {
+    let doc = createDocument(3, 'Notes');
+    doc = { ...doc, pages: doc.pages.map((page, i) => appendStroke(page, { ...freehand, id: `s${i}` })) };
+    return doc;
+  };
+
+  it('writes the same document the plain stringify does', () => {
+    const doc = twoPages();
+    expect(JSON.parse(serializeDocumentJson(doc))).toEqual(JSON.parse(JSON.stringify(toSerializable(doc))));
+  });
+
+  it('writes the same document with PDF sources in it', () => {
+    const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]).buffer;
+    const doc = twoPages();
+    const first = doc.pages[0];
+    if (!first) throw new Error('page');
+    const withPdf = {
+      ...doc,
+      pages: [
+        { ...first, template: 'pdf' as const, pdf: { sourceId: 's', sourceName: 'a.pdf', data: bytes, pageCount: 1, pageIndex: 0, viewBox: [0, 0, 612, 792] as const, rotation: 0, scale: 1 } },
+        ...doc.pages.slice(1),
+      ],
+    };
+    expect(JSON.parse(serializeDocumentJson(withPdf))).toEqual(JSON.parse(JSON.stringify(toSerializable(withPdf))));
+  });
+
+  it('gives a page the same text every time it is asked, and a new page its own', () => {
+    const [page] = twoPages().pages;
+    if (!page) throw new Error('page');
+    const first = serializePageJson(page);
+    expect(serializePageJson(page)).toBe(first);
+    const edited = appendStroke(page, { ...freehand, id: 'another' });
+    expect(serializePageJson(edited)).not.toBe(first);
+    expect(JSON.parse(serializePageJson(edited)).strokes).toHaveLength(2);
+    // The old page is untouched by the new one.
+    expect(serializePageJson(page)).toBe(first);
+  });
+
+  it('shows an edit to one page and leaves the others as they were', () => {
+    const doc = twoPages();
+    const before = serializeDocumentJson(doc);
+    const [a, b, c] = doc.pages;
+    if (!a || !b || !c) throw new Error('pages');
+    const edited = { ...doc, pages: [a, appendStroke(b, { ...freehand, id: 'later' }), c] };
+    const after = JSON.parse(serializeDocumentJson(edited));
+    expect(after.pages[0]).toEqual(JSON.parse(before).pages[0]);
+    expect(after.pages[1].strokes.map((s: { id: string }) => s.id)).toEqual(['s1', 'later']);
+    expect(after.pages[2]).toEqual(JSON.parse(before).pages[2]);
+    // And what it writes is what a fresh serialiser would.
+    expect(after).toEqual(JSON.parse(JSON.stringify(toSerializable(edited))));
+  });
+
+  it('round-trips through a load', () => {
+    const doc = twoPages();
+    const back = deserializeDocument(serializeDocumentJson(doc));
+    expect(back.pages.map((p) => p.strokes.length)).toEqual([1, 1, 1]);
+    expect(serializeDocumentJson(back)).toBe(serializeDocumentJson(back));
   });
 });

@@ -1,5 +1,6 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from 'react';
 import { RenderProfiler } from '../debug/RenderProfiler';
+import { eraserCursor } from './engine/cursor';
 import { drawStroke, get2dContext, replayStrokes } from './engine/renderer';
 import { useLatestRef } from './hooks/useLatestRef';
 import { usePageCanvas } from './hooks/usePageCanvas';
@@ -30,6 +31,8 @@ export interface InkSurfaceProps {
   onBorrowSelectionTool?: (tool: ToolType) => void;
   /** The pen touched down with its barrel button held: that press is a stroke, not a click. */
   onBarrelStroke?: () => void;
+  /** While an eraser is active: how wide it is on screen, in CSS px, so the pointer can show it. */
+  eraserDiameterPx?: number | null;
   /** The pen's barrel button went down or came up, contact or not. */
   onBarrelButton?: (pressed: boolean) => void;
   /** The barrel gesture must be abandoned (pen out of range, gesture taken over). */
@@ -76,6 +79,7 @@ export const InkSurface = memo(function InkSurface({
   onBarrelSelect,
   onBorrowSelectionTool,
   onBarrelStroke,
+  eraserDiameterPx = null,
   onBarrelButton,
   onBarrelCancel,
   onLassoStart,
@@ -155,6 +159,11 @@ export const InkSurface = memo(function InkSurface({
     redrawCommitted,
   });
 
+  // The eraser's ring as the system's own pointer, drawn where the pen is with no
+  // frame of lag; `null` (no eraser, or one too big for a cursor) leaves the
+  // stylesheet's pointer for the tool.
+  const eraserPointer = useMemo(() => (eraserDiameterPx === null ? null : eraserCursor(eraserDiameterPx)), [eraserDiameterPx]);
+
   return (
     <RenderProfiler id="InkSurface">
       <div
@@ -170,6 +179,7 @@ export const InkSurface = memo(function InkSurface({
           data-layer="live"
           role="img"
           aria-label={ariaLabel}
+          {...(eraserPointer ? { style: { cursor: eraserPointer } } : {})}
           onContextMenu={(e) => e.preventDefault()}
           {...handlers}
         />

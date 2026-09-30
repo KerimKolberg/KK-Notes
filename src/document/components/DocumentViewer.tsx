@@ -4,7 +4,7 @@ import { RenderProfiler } from '../../debug/RenderProfiler';
 import { useLatestRef } from '../../inking/hooks/useLatestRef';
 import type { ToolSettings } from '../../inking/types';
 import { ACTIVE_OVERSCAN_PX, PAGE_GAP, RENDER_OVERSCAN_PX, VIEWER_PADDING } from '../constants';
-import { scrollForAnchor } from '../gestures';
+import { anchorForContentPoint, scrollForAnchor } from '../gestures';
 import { useTouchGestures, type TouchGestureCommit } from '../hooks/useTouchGestures';
 import {
   currentPageIndex,
@@ -66,6 +66,10 @@ export const DocumentViewer = memo(function DocumentViewer({ settingsRef, curren
   const [viewport, setViewport] = useState<Viewport>({ width: 0, height: 0, scrollTop: 0, scrollLeft: 0 });
   const frameRef = useRef(0);
   const lastJumpRef = useRef(0);
+  const lastScrollRef = useRef({ x: 0, y: 0 });
+  /** The last laid-out picture, kept so a change of zoom can be re-anchored on what was in view. */
+  const settledRef = useRef<{ zoom: number; items: readonly PageLayout[] } | null>(null);
+  const gestureZoomRef = useRef(false);
 
   // Track container size.
   useLayoutEffect(() => {
@@ -118,6 +122,11 @@ export const DocumentViewer = memo(function DocumentViewer({ settingsRef, curren
   // scroll events only: deriving it in an effect keyed on layout changes would
   // run with a stale scroll offset right after a page is added and undo the jump.
   const onScroll = useCallback(() => {
+    // Every scroll, not once a frame: this is the position a zoom step re-anchors
+    // from, and it must be what the reader was looking at *before* the content
+    // changed size — which the browser then clamps, and reports a frame late.
+    const now = scrollRef.current;
+    if (now) lastScrollRef.current = { x: now.scrollLeft, y: now.scrollTop };
     if (frameRef.current !== 0) return;
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = 0;
@@ -174,8 +183,45 @@ export const DocumentViewer = memo(function DocumentViewer({ settingsRef, curren
     const pending = pendingCommitRef.current;
     if (!pending || pending.zoom !== zoom) return;
     pendingCommitRef.current = null;
+    // A pinch has just put the scroll where it wants it; the re-anchor below must not
+    // second-guess it.
+    gestureZoomRef.current = true;
     applyGestureCommit(pending, layout.items, zoom);
   }, [layout, zoom, applyGestureCommit]);
+
+  // A zoom step from the toolbar. Only a pinch used to say where to stay: the buttons
+  // changed the page size and left the scroll offset alone, so whatever was at that
+  // offset was suddenly somewhere else — zooming out slid the strip one way, zooming
+  // in slid it back, and a few clicks either way lost the page altogether. The point
+  // at the centre of the view stays at the centre.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const before = settledRef.current;
+    settledRef.current = { zoom, items: layout.items };
+    if (!el || !before || before.zoom === zoom) return;
+    if (gestureZoomRef.current) {
+      gestureZoomRef.current = false;
+      lastScrollRef.current = { x: el.scrollLeft, y: el.scrollTop };
+      return;
+    }
+    const offset = { x: el.clientWidth / 2, y: el.clientHeight / 2 };
+    const was = lastScrollRef.current;
+    const anchor = anchorForContentPoint(
+      before.items,
+      { x: was.x + offset.x, y: was.y + offset.y },
+      before.zoom,
+      offset,
+      axisRef.current,
+    );
+    const target = anchor ? scrollForAnchor(layout.items, anchor, zoom) : null;
+    if (!target) return;
+    el.scrollLeft = target.x;
+    el.scrollTop = target.y;
+    lastScrollRef.current = { x: el.scrollLeft, y: el.scrollTop };
+    setViewport((v) =>
+      v.scrollTop === el.scrollTop && v.scrollLeft === el.scrollLeft ? v : { ...v, scrollTop: el.scrollTop, scrollLeft: el.scrollLeft },
+    );
+  }, [layout, zoom, axisRef]);
   const gestureHandlers = useTouchGestures({ scrollRef, previewRef, layoutRef, zoomRef, oneFingerInksRef, onCommit: onGestureCommit });
 
   const activeRange = visibleRange(layout.items, scrollMain, viewportMain, ACTIVE_OVERSCAN_PX, axis);

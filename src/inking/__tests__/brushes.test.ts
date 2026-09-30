@@ -271,3 +271,27 @@ describe('pencil texture', () => {
     expect(grainNoise(3, 7)).toBe(grainNoise(3, 7));
   });
 });
+
+describe('how far the ink trails the pen', () => {
+  // Writing speed on a pen that reports 250 times a second: about 1500 px/s, six pixels a sample.
+  const points = Array.from({ length: 80 }, (_, i) => ({ x: i * 6, y: 0, pressure: 0.5 }));
+  const trail = (id: 'ballpoint' | 'fountain' | 'pencil' | 'marker' | 'brush'): number => {
+    const smoothed = streamlinePoints(points, brushById(id).streamline);
+    return (points[points.length - 1]?.x ?? 0) - (smoothed[smoothed.length - 1]?.x ?? 0);
+  };
+
+  it('keeps the default ballpoint within a couple of pixels of the nib', () => {
+    // It was about 4.4 px at the old 0.5 streamline: ink that ended short of the tip
+    // and read, live, as lag and as the end of each stroke going missing.
+    expect(trail('ballpoint')).toBeLessThan(2);
+  });
+
+  it('keeps the pens that follow the hand closely nearly as tight', () => {
+    expect(trail('fountain')).toBeLessThan(3);
+    expect(trail('pencil')).toBeLessThan(2);
+  });
+
+  it('still lets the soft brush damp the line on purpose', () => {
+    expect(trail('brush')).toBeGreaterThan(trail('ballpoint'));
+  });
+});

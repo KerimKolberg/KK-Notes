@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Brush, Pen, PenLine, PenTool, Pencil, Pipette, type LucideIcon } from 'lucide-react';
+import { Brush, Check, Pen, PenLine, PenTool, Pencil, Pipette, Plus, Rainbow, Trash2, type LucideIcon } from 'lucide-react';
 import { IconButton } from '../../ui/IconButton';
 import { Tooltip } from '../../ui/Tooltip';
 import {
@@ -159,9 +159,10 @@ export function usesColor(tool: ToolType): boolean {
  * useless without its colour and width.
  *
  * `compact` is for the toolbar standing on end at a side of the screen, where
- * every pixel of width is taken from the page: the same controls, stacked in a
- * column a little over five rems wide instead of laid out in a row that runs to
- * three hundred pixels.
+ * every pixel of width is taken from the page: the same controls in a single
+ * column one button wide, filling the height the tools beside it already take,
+ * instead of laid out in a row that runs to three hundred pixels. Anything that is
+ * a word elsewhere (Add, Remove, Done, Rainbow) is an icon here, for the width.
  */
 export function ToolConfigRow({ settings, onSettingsChange, compact = false }: PanelProps & { compact?: boolean }) {
   const colorInputRef = useRef<HTMLInputElement>(null);
@@ -204,13 +205,13 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
   return (
     <div
       className={`rounded-xl bg-zinc-100/70 dark:bg-zinc-800/60 ${
-        compact ? 'flex w-[5.25rem] flex-col items-stretch gap-2 px-2 py-2' : 'flex flex-wrap items-center gap-2 px-2 py-1.5'
+        compact ? 'flex w-11 flex-col items-center gap-2 px-1 py-2' : 'flex flex-wrap items-center gap-2 px-2 py-1.5'
       }`}
       data-tool-config
       {...(compact ? { 'data-compact': 'true' } : {})}
     >
       <div
-        className={compact ? 'grid grid-cols-2 justify-items-center gap-1.5' : 'flex flex-wrap items-center gap-1'}
+        className={compact ? 'flex flex-col items-center gap-1.5' : 'flex flex-wrap items-center gap-1'}
         role="group"
         aria-label="Stroke colour"
       >
@@ -258,8 +259,6 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
           size="sm"
           disabled={colorDisabled}
           onClick={() => colorInputRef.current?.click()}
-          // On its own line beneath the colours: the button is wider than a swatch.
-          {...(compact ? { className: 'col-span-2' } : {})}
           data-custom-color
         />
         <input
@@ -285,40 +284,68 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
         />
         {editing !== null && (
           <span
-            className={`rounded-lg bg-amber-100 px-1.5 py-0.5 dark:bg-amber-950/60 ${
-              compact ? 'col-span-2 flex w-full flex-col items-start gap-0.5' : 'inline-flex items-center gap-1'
+            className={`rounded-lg bg-amber-100 dark:bg-amber-950/60 ${
+              compact ? 'flex flex-col items-center gap-0.5 p-0.5' : 'inline-flex items-center gap-1 px-1.5 py-0.5'
             }`}
             data-swatch-editor
           >
-            <button
-              type="button"
-              className="text-xs font-medium text-amber-900 hover:underline dark:text-amber-200"
-              onClick={() => addSwatch(swatches[editing] ?? '#000000')}
-              disabled={swatches.length >= MAX_SWATCHES}
-              data-swatch-add
-            >
-              Add
-            </button>
-            <button
-              type="button"
-              className="text-xs font-medium text-rose-700 hover:underline disabled:opacity-40 dark:text-rose-300"
-              onClick={() => {
-                removeSwatch(editing);
-                setEditing(null);
-              }}
-              disabled={swatches.length <= MIN_SWATCHES}
-              data-swatch-remove
-            >
-              Remove
-            </button>
-            <button
-              type="button"
-              className="text-xs font-medium text-zinc-600 hover:underline dark:text-zinc-300"
-              onClick={() => setEditing(null)}
-              data-swatch-done
-            >
-              Done
-            </button>
+            {compact ? (
+              <>
+                <IconButton
+                  icon={Plus}
+                  label="Add this colour"
+                  size="sm"
+                  disabled={swatches.length >= MAX_SWATCHES}
+                  onClick={() => addSwatch(swatches[editing] ?? '#000000')}
+                  data-swatch-add
+                />
+                <IconButton
+                  icon={Trash2}
+                  label="Remove this colour"
+                  size="sm"
+                  tone="danger"
+                  disabled={swatches.length <= MIN_SWATCHES}
+                  onClick={() => {
+                    removeSwatch(editing);
+                    setEditing(null);
+                  }}
+                  data-swatch-remove
+                />
+                <IconButton icon={Check} label="Done editing" size="sm" onClick={() => setEditing(null)} data-swatch-done />
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="text-xs font-medium text-amber-900 hover:underline dark:text-amber-200"
+                  onClick={() => addSwatch(swatches[editing] ?? '#000000')}
+                  disabled={swatches.length >= MAX_SWATCHES}
+                  data-swatch-add
+                >
+                  Add
+                </button>
+                <button
+                  type="button"
+                  className="text-xs font-medium text-rose-700 hover:underline disabled:opacity-40 dark:text-rose-300"
+                  onClick={() => {
+                    removeSwatch(editing);
+                    setEditing(null);
+                  }}
+                  disabled={swatches.length <= MIN_SWATCHES}
+                  data-swatch-remove
+                >
+                  Remove
+                </button>
+                <button
+                  type="button"
+                  className="text-xs font-medium text-zinc-600 hover:underline dark:text-zinc-300"
+                  onClick={() => setEditing(null)}
+                  data-swatch-done
+                >
+                  Done
+                </button>
+              </>
+            )}
           </span>
         )}
       </div>
@@ -328,10 +355,11 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
         aria-hidden="true"
       />
 
-      <label className={compact ? 'flex min-w-0 flex-col gap-1.5' : 'flex min-w-0 flex-1 items-center gap-2'} title="Stroke thickness">
+      <label className={compact ? 'flex min-w-0 flex-col items-center gap-1.5' : 'flex min-w-0 flex-1 items-center gap-2'} title="Stroke thickness">
         <span className="sr-only">Stroke thickness</span>
-        {/* Beside the slider in a row; above it in a column, where the slider needs the whole width. */}
-        <span className={compact ? 'flex items-center justify-between gap-1' : 'contents'}>
+        {/* Beside the slider in a row; above it in a column, where the slider stands up
+            beside the tools and runs down the height they leave free. */}
+        <span className={compact ? 'flex flex-col items-center gap-0.5' : 'contents'}>
           <span
             className="shrink-0 rounded-full bg-current"
             aria-hidden="true"
@@ -342,14 +370,17 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
             }}
           />
           {compact && (
-            <span className="text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-thickness-value>
+            <span className="text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400" data-thickness-value>
               {settings.size}px
             </span>
           )}
         </span>
         <input
           type="range"
-          className={`h-1 accent-blue-600 ${compact ? 'w-full min-w-0' : 'min-w-16 flex-1'}`}
+          className={`accent-blue-600 ${compact ? 'h-28 w-5' : 'h-1 min-w-16 flex-1'}`}
+          // Standing on end, biggest at the top like a fader. Only the compact layout:
+          // the row keeps its ordinary slider.
+          {...(compact ? { style: { writingMode: 'vertical-lr', direction: 'rtl' } as const } : {})}
           min={MIN_STROKE_SIZE}
           max={MAX_STROKE_SIZE}
           step={0.5}
@@ -365,11 +396,21 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
         )}
       </label>
 
-      {laser && (
-        <Chip active={settings.laserRainbow} onClick={() => onSettingsChange({ laserRainbow: !settings.laserRainbow })} label="Rainbow laser">
-          <span data-laser-rainbow>Rainbow</span>
-        </Chip>
-      )}
+      {laser &&
+        (compact ? (
+          <IconButton
+            icon={Rainbow}
+            label="Rainbow laser"
+            size="sm"
+            active={settings.laserRainbow}
+            onClick={() => onSettingsChange({ laserRainbow: !settings.laserRainbow })}
+            data-laser-rainbow
+          />
+        ) : (
+          <Chip active={settings.laserRainbow} onClick={() => onSettingsChange({ laserRainbow: !settings.laserRainbow })} label="Rainbow laser">
+            <span data-laser-rainbow>Rainbow</span>
+          </Chip>
+        ))}
     </div>
   );
 }

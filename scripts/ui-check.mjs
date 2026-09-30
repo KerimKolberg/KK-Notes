@@ -778,7 +778,7 @@ async function checkToolbar(browser) {
 
   // Standing on end it must not take the width of a whole row of colours with it:
   // the colours and the thickness stack in a narrow column beside the tools.
-  check('docked left it is a slim column, not a wide panel', left.w <= 180, `${Math.round(left.w)}px wide`);
+  check('docked left it is a slim column, not a wide panel', left.w <= 130, `${Math.round(left.w)}px wide`);
   // Everything in the colour column stays inside the column. Tooltips are left out:
   // they are meant to hang beside the toolbar, and the mouse is often on a button.
   const fits = () =>
@@ -798,10 +798,12 @@ async function checkToolbar(browser) {
     });
   const stacked = await fits();
   check('every colour and the slider stay inside it', stacked.outside.length === 0 && stacked.columnInsidePanel, JSON.stringify(stacked));
-  check(
-    'the colours are laid out in a grid of two',
-    await page.$eval('[data-tool-config] [role="group"]', (el) => getComputedStyle(el).display === 'grid'),
-  );
+  // The colours stand in one column, in the height the tools beside them leave free.
+  const swatches = await page.$$eval('[data-swatch]', (els) => els.map((el) => { const r = el.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y) }; }));
+  check('the colours stand in a single column', swatches.length >= 8 && swatches.every((p) => Math.abs(p.x - swatches[0].x) <= 1), JSON.stringify(swatches.map((p) => p.x)));
+  check('running down the side of the tools', swatches.every((p, i) => i === 0 || p.y > swatches[i - 1].y), JSON.stringify(swatches.map((p) => p.y)));
+  const slider = await page.$eval('[data-thickness]', (el) => { const r = el.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; });
+  check('and the thickness slider stands up beside them', slider.h > slider.w * 3, `${slider.w}x${slider.h}`);
 
   // The laser adds a Rainbow button and the swatch editor adds three, both wider
   // than a swatch; neither may push the column wider.
@@ -937,7 +939,11 @@ async function checkToolbar(browser) {
   check('it is 24 px — three quarters of the 32 px crosshair', size === 24, `${size}px`);
   check('the system crosshair is still the fallback', /crosshair\s*$/.test(cursor));
   await page.click('[data-palette-tool="eraser"]');
-  check('the eraser still hides it (it draws its own ring)', (await cursorOf()) === 'none');
+  // Hovering with an eraser used to show nothing on a page — `cursor: none`, with a ring
+  // drawn only while erasing — so the pointer vanished as it crossed onto the page.
+  const ring = await cursorOf();
+  check('the eraser shows a ring as the pointer, not nothing', ring !== 'none' && decodeURIComponent(ring).includes('<circle'), ring.slice(0, 50));
+  check('and it is not the pen\'s cross', ring !== cursor);
   await page.click('[data-palette-tool="pen"]');
   await page.keyboard.press('Escape');
 
@@ -982,6 +988,81 @@ async function checkToolbar(browser) {
 }
 
 /**
+ * A fresh document with a synthetic pen on it. `stylus` overrides the saved button
+ * mapping. Events carry `buttons` as Windows reports them, and go to the live canvas
+ * of the first page (or to `on(element, points, buttons)` for anything else).
+ */
+async function openPenDocument(browser, stylus) {
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  if (stylus) {
+    await ctx.addInitScript((value) => {
+      try { localStorage.setItem('notes.preferences.v1', JSON.stringify({ stylus: value })); } catch { /* none */ }
+    }, stylus);
+  }
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-layer="live"]', { state: 'attached', timeout: 10_000 });
+  await page.evaluate(() => {
+    const canvas = () => document.querySelector('[data-layer="live"]');
+    const fire = (type, x, y, buttons, button) => {
+      canvas().dispatchEvent(
+        new PointerEvent(type, {
+          pointerType: 'pen', pointerId: 7, isPrimary: true, bubbles: true, cancelable: true,
+          clientX: x, clientY: y, buttons, button, pressure: buttons & 1 ? 0.5 : 0,
+        }),
+      );
+    };
+    window.__pen = {
+      hover: (x, y, buttons = 0) => fire('pointermove', x, y, buttons, -1),
+      stroke: async (points, buttons) => {
+        fire('pointerdown', points[0][0], points[0][1], buttons, 0);
+        for (const [x, y] of points.slice(1)) {
+          fire('pointermove', x, y, buttons, -1);
+          await new Promise((r) => setTimeout(r, 6));
+        }
+        const last = points[points.length - 1];
+        fire('pointerup', last[0], last[1], 0, 0);
+      },
+      // A drag on some other element (a selection handle), one move per frame.
+      drag: async (selector, points) => {
+        const send = (type, x, y, buttons, button) =>
+          document.querySelector(selector).dispatchEvent(
+            new PointerEvent(type, {
+              pointerType: 'pen', pointerId: 9, isPrimary: true, bubbles: true, cancelable: true,
+              clientX: x, clientY: y, buttons, button, pressure: buttons & 1 ? 0.5 : 0,
+            }),
+          );
+        send('pointerdown', points[0][0], points[0][1], 1, 0);
+        for (const [x, y] of points.slice(1)) {
+          send('pointermove', x, y, 1, -1);
+          await new Promise((r) => requestAnimationFrame(() => r()));
+        }
+        const last = points[points.length - 1];
+        send('pointerup', last[0], last[1], 0, 0);
+      },
+      ink: () => {
+        const c = document.querySelector('[data-layer="committed"]');
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+        return n;
+      },
+    };
+  });
+  const r = await page.$eval('[data-layer="live"]', (el) => el.getBoundingClientRect().toJSON());
+  const cx = r.x + r.width / 2;
+  const cy = r.y + 200;
+  const line = Array.from({ length: 40 }, (_, i) => [cx - 150 + i * 7.5, cy]);
+  const around = (rx, ry, y = cy) =>
+    Array.from({ length: 31 }, (_, i) => [cx + rx * Math.cos((i * 12 * Math.PI) / 180), y + ry * Math.sin((i * 12 * Math.PI) / 180)]);
+  const tool = () => page.$eval('[data-palette-tool][aria-pressed="true"]', (el) => el.getAttribute('data-palette-tool')).catch(() => 'none');
+  const selected = () => page.$('[data-selection-box]').then((x) => x !== null);
+  return { ctx, page, errors, cx, cy, line, around, tool, selected };
+}
+
+/**
  * The pen's buttons, driven with real handlers.
  *
  * Reported from a tablet: "the shortcut is not working". The node tests said the
@@ -995,58 +1076,7 @@ async function checkToolbar(browser) {
 async function checkPenButtons(browser) {
   console.log('pen buttons, 1280x800:');
 
-  const open = async (stylus) => {
-    const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
-    if (stylus) {
-      await ctx.addInitScript((value) => {
-        try { localStorage.setItem('notes.preferences.v1', JSON.stringify({ stylus: value })); } catch { /* none */ }
-      }, stylus);
-    }
-    const page = await ctx.newPage();
-    const errors = [];
-    page.on('pageerror', (e) => errors.push(e.message));
-    await openDocument(page);
-    await page.waitForSelector('[data-layer="live"]', { state: 'attached', timeout: 10_000 });
-    await page.evaluate(() => {
-      const canvas = () => document.querySelector('[data-layer="live"]');
-      const fire = (type, x, y, buttons, button) => {
-        canvas().dispatchEvent(
-          new PointerEvent(type, {
-            pointerType: 'pen', pointerId: 7, isPrimary: true, bubbles: true, cancelable: true,
-            clientX: x, clientY: y, buttons, button, pressure: buttons & 1 ? 0.5 : 0,
-          }),
-        );
-      };
-      window.__pen = {
-        hover: (x, y, buttons = 0) => fire('pointermove', x, y, buttons, -1),
-        stroke: async (points, buttons) => {
-          fire('pointerdown', points[0][0], points[0][1], buttons, 0);
-          for (const [x, y] of points.slice(1)) {
-            fire('pointermove', x, y, buttons, -1);
-            await new Promise((r) => setTimeout(r, 6));
-          }
-          const last = points[points.length - 1];
-          fire('pointerup', last[0], last[1], 0, 0);
-        },
-        ink: () => {
-          const c = document.querySelector('[data-layer="committed"]');
-          const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-          let n = 0;
-          for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
-          return n;
-        },
-      };
-    });
-    const r = await page.$eval('[data-layer="live"]', (el) => el.getBoundingClientRect().toJSON());
-    const cx = r.x + r.width / 2;
-    const cy = r.y + 200;
-    const line = Array.from({ length: 40 }, (_, i) => [cx - 150 + i * 7.5, cy]);
-    const around = (rx, ry, y = cy) =>
-      Array.from({ length: 31 }, (_, i) => [cx + rx * Math.cos((i * 12 * Math.PI) / 180), y + ry * Math.sin((i * 12 * Math.PI) / 180)]);
-    const tool = () => page.$eval('[data-palette-tool][aria-pressed="true"]', (el) => el.getAttribute('data-palette-tool')).catch(() => 'none');
-    const selected = () => page.$('[data-selection-box]').then((x) => x !== null);
-    return { ctx, page, errors, cx, cy, line, around, tool, selected };
-  };
+  const open = (stylus) => openPenDocument(browser, stylus);
 
   // --- the shipped mapping: barrel hold = stroke eraser, second button = lasso
   {
@@ -1119,6 +1149,147 @@ async function checkPenButtons(browser) {
   }
 }
 
+/**
+ * Stretching a lasso selection.
+ *
+ * Reported from a tablet: pulling a selected line out across the page was "buggy and
+ * hard to pull". Reproduced with a pen on a thin line: the first move lurched (the
+ * grab was not on the point the scale is measured from), a corner on a two-pixel-high
+ * box scaled by the pen's wobble, and — the real fault — the handle being dragged was
+ * removed from the page on the first move, which released the pen's capture, so the
+ * stretch followed the pen only while it stayed inside the old box.
+ */
+async function checkLasso(browser) {
+  console.log('lasso stretch, 1280x800:');
+  const { ctx, page, errors, cx, cy, around } = await openPenDocument(browser);
+  const box = () => page.$eval('[data-selection-box]', (el) => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; });
+  const handles = () => page.$$eval('[data-selection-handle]', (els) => els.map((e) => e.getAttribute('data-selection-handle')).sort());
+
+  // A straight, nearly flat line.
+  const line = Array.from({ length: 30 }, (_, i) => [cx - 100 + i * (200 / 29), cy + (i / 29) * 3]);
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [line]);
+  await page.click('[data-palette-tool="lasso"]');
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [around(140, 40)]);
+  await page.waitForSelector('[data-selection-box]', { timeout: 3_000 });
+  check('a line is offered only the handles that stretch it', JSON.stringify(await handles()) === '["e","w"]', JSON.stringify(await handles()));
+
+  const before = await box();
+  const start = { x: before.x + before.w + 4, y: before.y + before.h / 2 + 4 };
+  // 300 px out to the right, with the pen wandering a few pixels as a hand does.
+  const pull = Array.from({ length: 16 }, (_, i) => [start.x + i * 20, start.y + (i % 2 ? 3 : -2)]);
+  const widths = [];
+  const sample = setInterval(() => {}, 1000);
+  clearInterval(sample);
+  const dragging = page.evaluate(([pts]) => window.__pen.drag('[data-selection-handle="e"]', pts), [pull]);
+  for (let i = 0; i < 14; i++) {
+    await page.waitForTimeout(25);
+    widths.push((await box().catch(() => ({ w: 0 }))).w);
+  }
+  await dragging;
+  const during = await page.$$('[data-selection-handle]');
+  const after = await box();
+  check('the selection follows the pen the whole way out', after.w > before.w + 250, `${Math.round(before.w)} -> ${Math.round(after.w)}`);
+  let biggestStep = 0;
+  for (let i = 1; i < widths.length; i++) biggestStep = Math.max(biggestStep, Math.abs(widths[i] - widths[i - 1]));
+  check('and grows steadily, without stalling or lurching', biggestStep < 90, `largest step ${Math.round(biggestStep)}px over ${widths.map((w) => Math.round(w)).join(', ')}`);
+  check('the handle stays on the page for the length of the drag', during.length === 2, `${during.length} handles`);
+  check('its height is left alone by an edge handle', Math.abs(after.h - before.h) < 4, `${Math.round(before.h)} -> ${Math.round(after.h)}`);
+
+  // A selection with some size to it: every handle, and no lurch when it is grabbed.
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(100);
+  await page.click('[data-palette-tool="pen"]');
+  const x0 = cx - 60;
+  const y0 = cy + 200;
+  const square = [[x0, y0], [x0 + 120, y0], [x0 + 120, y0 + 90], [x0, y0 + 90], [x0, y0]].flatMap(([x, y], i, all) =>
+    i === 0 ? [[x, y]] : Array.from({ length: 6 }, (_, k) => [all[i - 1][0] + ((x - all[i - 1][0]) * (k + 1)) / 6, all[i - 1][1] + ((y - all[i - 1][1]) * (k + 1)) / 6]),
+  );
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [square]);
+  await page.click('[data-palette-tool="lasso"]');
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [around(110, 80, y0 + 45)]);
+  await page.waitForSelector('[data-selection-box]', { timeout: 3_000 });
+  check('a selection with some size has all eight handles', (await handles()).length === 8, JSON.stringify(await handles()));
+
+  const b1 = await box();
+  const corner = await page.$eval('[data-selection-handle="se"]', (el) => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  // Grab it eight pixels off centre (a pen does), move one pixel: nothing should jump.
+  const grabX = corner.x + 8;
+  const grabY = corner.y + 8;
+  await page.evaluate(([pts]) => window.__pen.drag('[data-selection-handle="se"]', pts), [[[grabX, grabY], [grabX + 1, grabY + 1]]]);
+  const b2 = await box();
+  check('grabbing a handle off its centre does not make the selection jump', Math.abs(b2.w - b1.w) < 4 && Math.abs(b2.h - b1.h) < 4, `${Math.round(b1.w)}x${Math.round(b1.h)} -> ${Math.round(b2.w)}x${Math.round(b2.h)}`);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
+ * Zooming with the toolbar's buttons.
+ *
+ * Reported from a tablet: in the two-page view, zooming out kept sliding the pages to
+ * one side and zooming in kept sliding them back. The buttons changed the page size
+ * and left the scroll offset alone, so whatever was at that offset was soon
+ * somewhere else. The point at the centre of the view has to stay there.
+ */
+async function checkZoomAnchor(browser) {
+  console.log('zoom anchoring, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-viewer]', { timeout: 10_000 });
+  await page.click('[aria-label="Page arranger"]');
+  for (let i = 0; i < 3; i++) await page.click('text=Add after');
+  await page.click('[aria-label="Page arranger"]');
+  await page.waitForTimeout(300);
+
+  // Which page, and where on it, is at the centre of the viewer.
+  const centre = () =>
+    page.evaluate(() => {
+      const viewer = document.querySelector('[data-viewer]').getBoundingClientRect();
+      const cx = viewer.left + viewer.width / 2;
+      const cy = viewer.top + viewer.height / 2;
+      const zoom = parseFloat(document.querySelector('[data-zoom]').textContent) / 100;
+      const pages = [...document.querySelectorAll('[data-page-index]')].map((p) => ({ i: p.getAttribute('data-page-index'), r: p.getBoundingClientRect() }));
+      const distance = (r) => Math.hypot(Math.max(r.left - cx, 0, cx - r.right), Math.max(r.top - cy, 0, cy - r.bottom));
+      const nearest = pages.reduce((a, b) => (distance(a.r) <= distance(b.r) ? a : b));
+      return { page: nearest.i, x: Math.round((cx - nearest.r.left) / zoom), y: Math.round((cy - nearest.r.top) / zoom) };
+    });
+  const step = async (label) => {
+    await page.click(`[aria-label="${label}"]`);
+    await page.waitForTimeout(220);
+  };
+
+  for (const mode of ['vertical-continuous', 'horizontal-continuous']) {
+    for (let i = 0; i < 3 && (await page.getAttribute('[data-viewer]', 'data-view-mode')) !== mode; i++) {
+      await page.click('[data-view-mode-toggle]');
+      await page.waitForTimeout(200);
+    }
+    // Start in the middle of the second page, so there is room to slide either way.
+    await page.evaluate(() => {
+      const viewer = document.querySelector('[data-viewer]');
+      const v = viewer.getBoundingClientRect();
+      const p = document.querySelector('[data-page-index="1"]').getBoundingClientRect();
+      viewer.scrollLeft += p.left + p.width / 2 - (v.left + v.width / 2);
+      viewer.scrollTop += p.top + p.height / 2 - (v.top + v.height / 2);
+    });
+    await page.waitForTimeout(250);
+    const start = await centre();
+    const seen = [];
+    for (const label of ['Zoom out', 'Zoom out', 'Zoom out', 'Zoom in', 'Zoom in', 'Zoom in', 'Zoom in', 'Zoom out']) {
+      await step(label);
+      seen.push(await centre());
+    }
+    const worst = Math.max(...seen.map((c) => (c.page === start.page ? Math.max(Math.abs(c.x - start.x), Math.abs(c.y - start.y)) : 9999)));
+    check(`${mode}: the point at the centre stays there through zoom steps out and in`, worst <= 6, `start ${JSON.stringify(start)}, furthest drift ${worst}`);
+    const back = seen[seen.length - 1];
+    check(`${mode}: and a step out and back leaves it where it began`, back.page === start.page && Math.abs(back.x - start.x) <= 3 && Math.abs(back.y - start.y) <= 3, JSON.stringify(back));
+  }
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
 // --------------------------------------------------------------------- main
 
 const executablePath = findChromium();
@@ -1157,6 +1328,8 @@ try {
   await checkSplit(browser);
   await checkToolbar(browser);
   await checkPenButtons(browser);
+  await checkLasso(browser);
+  await checkZoomAnchor(browser);
 } finally {
   await browser.close();
   if (server) {

@@ -22,10 +22,11 @@ import {
 } from '../../inking/constants';
 import { subscribeTouchGesture } from '../../inking/engine/gestureState';
 import {
-  SCALE_HANDLES,
   reshapeStrokes,
   restyleStrokes,
+  boundsHandlePoint,
   scaleFromHandle,
+  usableHandles,
   selectionBounds,
   selectionCurveParams,
   transformStroke,
@@ -67,6 +68,13 @@ interface Drag {
   readonly pointerId: number;
   readonly start: Point;
   readonly bounds: BBox;
+  /**
+   * How far from the handle's point on the bounds the pen landed, in page units.
+   * The handle is drawn a margin outside the bounds and is fourteen pixels wide, so
+   * a grab is never exactly on it; without this the selection lurched by that
+   * much on the first move.
+   */
+  readonly grab?: Point;
 }
 
 const HANDLE_CURSORS: Record<ScaleHandle, string> = {
@@ -257,14 +265,55 @@ export const SelectionLayer = memo(function SelectionLayer({
     (e: ReactPointerEvent<HTMLElement>, mode: Drag['mode'], handle?: ScaleHandle) => {
       if (e.button !== 0 || !bounds) return;
       e.preventDefault();
-      dragRef.current = { mode, pointerId: e.pointerId, start: { x: e.clientX, y: e.clientY }, bounds, ...(handle ? { handle } : {}) };
+      const at = pagePoint(e.clientX, e.clientY);
+      const anchor = handle ? boundsHandlePoint(bounds, handle) : null;
+      latestMoveRef.current = null;
+      dragRef.current = {
+        mode,
+        pointerId: e.pointerId,
+        start: { x: e.clientX, y: e.clientY },
+        bounds,
+        ...(handle ? { handle } : {}),
+        ...(anchor ? { grab: { x: at.x - anchor.x, y: at.y - anchor.y } } : {}),
+      };
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
       } catch {
         /* synthetic pointer */
       }
     },
-    [bounds],
+    [bounds, pagePoint],
+  );
+
+  /**
+   * The drag, applied once per frame. A pen reports several times a frame, and every
+   * report used to re-render the layer, re-derive the scaled strokes and repaint the
+   * preview — three or four times over for a frame that shows only the last. The
+   * latest report is kept and the work done once, on the next animation frame.
+   */
+  const latestMoveRef = useRef<{ clientX: number; clientY: number; shiftKey: boolean } | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const applyMove = useCallback(() => {
+    frameRef.current = null;
+    const drag = dragRef.current;
+    const move = latestMoveRef.current;
+    if (!drag || !move) return;
+    if (drag.mode === 'move') {
+      const dx = (move.clientX - drag.start.x) / zoom;
+      const dy = (move.clientY - drag.start.y) / zoom;
+      setDraft({ kind: 'transform', transform: { kind: 'translate', dx, dy } });
+    } else if (drag.handle) {
+      const at = pagePoint(move.clientX, move.clientY);
+      // Where the handle's own point is being taken to, not where the pen is.
+      const target = drag.grab ? { x: at.x - drag.grab.x, y: at.y - drag.grab.y } : at;
+      setDraft({ kind: 'transform', transform: scaleFromHandle(drag.bounds, drag.handle, target, move.shiftKey) });
+    }
+  }, [zoom, pagePoint, setDraft]);
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    },
+    [],
   );
 
   const onDragMove = useCallback(
@@ -274,21 +323,21 @@ export const SelectionLayer = memo(function SelectionLayer({
       // Only a press that actually moves counts as a drag: a tap on the box
       // must not flicker the handles and the toolbar away.
       setDragging(true);
-      if (drag.mode === 'move') {
-        const dx = (e.clientX - drag.start.x) / zoom;
-        const dy = (e.clientY - drag.start.y) / zoom;
-        setDraft({ kind: 'transform', transform: { kind: 'translate', dx, dy } });
-      } else if (drag.handle) {
-        setDraft({ kind: 'transform', transform: scaleFromHandle(drag.bounds, drag.handle, pagePoint(e.clientX, e.clientY), e.shiftKey) });
-      }
+      latestMoveRef.current = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey };
+      if (frameRef.current === null) frameRef.current = requestAnimationFrame(applyMove);
     },
-    [zoom, pagePoint, setDraft],
+    [applyMove],
   );
 
   const onDragEnd = useCallback(
     (e: ReactPointerEvent<HTMLElement>, commit: boolean) => {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== e.pointerId) return;
+      // A move still waiting for its frame is the last thing the pen did: apply it now.
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        applyMove();
+      }
       dragRef.current = null;
       setDragging(false);
       const current = draftRef.current;
@@ -313,7 +362,7 @@ export const SelectionLayer = memo(function SelectionLayer({
       }
       transformSelection(page.id, strokeIds, current.transform);
     },
-    [page.id, strokeIds, zoom, transformSelection, moveSelectionToPage, setDraft],
+    [page.id, strokeIds, zoom, transformSelection, moveSelectionToPage, setDraft, applyMove],
   );
 
   // Width slider: preview while dragging, one undo step on release.
@@ -380,6 +429,9 @@ export const SelectionLayer = memo(function SelectionLayer({
   // Touch wants a bigger target than a mouse, and the handles are drawn in page
   // units, so the on-screen size has to be divided back out of the zoom.
   const handleSize = 14 / zoom;
+  // The target is bigger than what is drawn: a pen tip is easy to land a few pixels
+  // off a 14 px square, and a missed handle starts a move instead.
+  const handleHit = 26 / zoom;
   // Toolbar above the box, or below it when that would leave the page. It is
   // centred on the box and then nudged by `toolbarShift`, measured against the
   // real viewport — a page edge says nothing about where the screen ends.
@@ -394,23 +446,40 @@ export const SelectionLayer = memo(function SelectionLayer({
     onPointerMove: onDragMove,
     onPointerUp: (e: ReactPointerEvent<HTMLElement>) => onDragEnd(e, true),
     onPointerCancel: (e: ReactPointerEvent<HTMLElement>) => onDragEnd(e, false),
+    // If the capture is taken away for any reason the drag ends where it is instead
+    // of hanging: no pointerup will follow, because nothing is listening for it.
+    onLostPointerCapture: (e: ReactPointerEvent<HTMLElement>) => onDragEnd(e, true),
   };
+  // The hit area, transparent, with the drawn square inside it.
   const handleStyle = (h: ScaleHandle): CSSProperties => {
     const p = handlePoint(h);
     return {
       position: 'absolute',
-      left: p.x - handleSize / 2,
-      top: p.y - handleSize / 2,
-      width: handleSize,
-      height: handleSize,
-      background: '#fff',
-      border: `${1.5 / zoom}px solid #2563eb`,
-      borderRadius: 2 / zoom,
+      left: p.x - handleHit / 2,
+      top: p.y - handleHit / 2,
+      width: handleHit,
+      height: handleHit,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
       cursor: HANDLE_CURSORS[h],
-      boxSizing: 'border-box',
       touchAction: 'none',
       pointerEvents: 'auto',
+      // Hidden, not removed, while it is being dragged. It is the element the pen
+      // is captured to, and taking it out of the page released the capture on the
+      // first move — so the stretch only followed the pen while it stayed inside
+      // the old box, and stopped dead the moment it was pulled out of it.
+      visibility: dragging ? 'hidden' : 'visible',
     };
+  };
+  const handleMark: CSSProperties = {
+    width: handleSize,
+    height: handleSize,
+    background: '#fff',
+    border: `${1.5 / zoom}px solid #2563eb`,
+    borderRadius: 2 / zoom,
+    boxSizing: 'border-box',
+    pointerEvents: 'none',
   };
   const toolbarButton =
     'inline-flex h-7 items-center rounded-md px-2 text-xs font-medium text-white hover:bg-white/15 ' +
@@ -469,17 +538,18 @@ export const SelectionLayer = memo(function SelectionLayer({
           {...dragHandlers}
           onContextMenu={(e) => e.preventDefault()}
         />
-        {!dragging &&
-          SCALE_HANDLES.map((h) => (
-            <div
-              key={h}
-              role="presentation"
-              data-selection-handle={h}
-              style={handleStyle(h)}
-              onPointerDown={(e) => begin(e, 'scale', h)}
-              {...dragHandlers}
-            />
-          ))}
+        {usableHandles(bounds, zoom).map((h) => (
+          <div
+            key={h}
+            role="presentation"
+            data-selection-handle={h}
+            style={handleStyle(h)}
+            onPointerDown={(e) => begin(e, 'scale', h)}
+            {...dragHandlers}
+          >
+            <div style={handleMark} />
+          </div>
+        ))}
         <div
           ref={toolbarRef}
           role="toolbar"

@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
 import { selectIsDirty, useDocumentStore } from '../document/store';
 import { actionExportPdf, actionNew, actionOpen, actionSave, actionSaveAs, actionToggleFullscreen, refreshRecent } from './fileActions';
+import { isPenNearby } from '../inking/engine/gestureState';
+import { AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_RECHECK_MS, nextAutosaveStep } from './autosave';
 import { saveDraft, setWindowTitle } from './fileService';
 import { isTauri } from './tauri';
 
-export const AUTOSAVE_DEBOUNCE_MS = 1500;
+export { AUTOSAVE_DEBOUNCE_MS };
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -27,18 +29,30 @@ export function useDesktopIntegration(): void {
     void refreshRecent();
   }, []);
 
-  // Debounced autosave of dirty content.
+  // Debounced autosave of dirty content, put off while the pen is on the page.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let firstDueAt: number | null = null;
+    const attempt = (): void => {
+      timer = null;
+      const now = performance.now();
+      firstDueAt ??= now;
+      const step = nextAutosaveStep({ penNearby: isPenNearby(now), deferredMs: now - firstDueAt });
+      if (step === 'wait') {
+        timer = setTimeout(attempt, AUTOSAVE_RECHECK_MS);
+        return;
+      }
+      firstDueAt = null;
+      const current = useDocumentStore.getState();
+      if (selectIsDirty(current)) void saveDraft(current.document);
+    };
     const unsubscribe = useDocumentStore.subscribe((state, previous) => {
       if (state.document.pages === previous.document.pages && state.document.title === previous.document.title) return;
       if (!selectIsDirty(state)) return;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        const current = useDocumentStore.getState();
-        if (selectIsDirty(current)) void saveDraft(current.document);
-      }, AUTOSAVE_DEBOUNCE_MS);
+      // A new edit starts the wait, and the put-off, over.
+      firstDueAt = null;
+      timer = setTimeout(attempt, AUTOSAVE_DEBOUNCE_MS);
     });
     return () => {
       unsubscribe();
@@ -46,11 +60,17 @@ export function useDesktopIntegration(): void {
     };
   }, []);
 
-  // Window title: "Title • — Notes".
+  // Window title: "Title • — Notes". Only when it changes: this runs for every change
+  // to the document store — a page turned, a selection made — and each call is a trip
+  // to the shell and a repaint of the caption, for a title that is nearly always the
+  // one it already has.
   useEffect(() => {
+    let last: string | null = null;
     const apply = (): void => {
       const state = useDocumentStore.getState();
       const title = `${state.document.title || 'Untitled note'}${selectIsDirty(state) ? ' •' : ''} — Notes`;
+      if (title === last) return;
+      last = title;
       void setWindowTitle(title);
     };
     apply();
