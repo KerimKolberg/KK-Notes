@@ -126,6 +126,11 @@ pub struct AuthSession {
     /// it, or with the wrong one, is not the reply to *this* sign-in.
     pub state: String,
     pub scopes: Vec<String>,
+    /// Only for a Google *Desktop app* client, whose token endpoint insists on
+    /// one. Google documents it as not confidential for an installed app (PKCE is
+    /// what actually protects the exchange), so it is sent when there is one and
+    /// left out when there is not: an Android client has none.
+    pub client_secret: Option<String>,
 }
 
 impl AuthSession {
@@ -136,7 +141,14 @@ impl AuthSession {
             pkce,
             state: state.into(),
             scopes: vec![DRIVE_FILE_SCOPE.to_string(), USERINFO_EMAIL_SCOPE.to_string()],
+            client_secret: None,
         }
+    }
+
+    /// Attach the client's secret, if it has one. An empty string counts as none.
+    pub fn with_client_secret(mut self, secret: Option<String>) -> Self {
+        self.client_secret = secret.filter(|s| !s.trim().is_empty());
+        self
     }
 
     /// The URL to open in the system browser.
@@ -167,23 +179,35 @@ impl AuthSession {
 
     /// The form body that trades the authorization code for tokens.
     pub fn exchange_fields<'a>(&'a self, code: &'a str) -> Vec<(&'a str, &'a str)> {
-        vec![
+        let mut fields = vec![
             ("client_id", self.client_id.as_str()),
             ("code", code),
             ("code_verifier", self.pkce.verifier.as_str()),
             ("grant_type", "authorization_code"),
             ("redirect_uri", self.redirect_uri.as_str()),
-        ]
+        ];
+        if let Some(secret) = &self.client_secret {
+            fields.push(("client_secret", secret.as_str()));
+        }
+        fields
     }
 }
 
 /// The form body that renews an access token.
-pub fn refresh_fields<'a>(client_id: &'a str, refresh_token: &'a str) -> Vec<(&'a str, &'a str)> {
-    vec![
+pub fn refresh_fields<'a>(
+    client_id: &'a str,
+    client_secret: Option<&'a str>,
+    refresh_token: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    let mut fields = vec![
         ("client_id", client_id),
         ("refresh_token", refresh_token),
         ("grant_type", "refresh_token"),
-    ]
+    ];
+    if let Some(secret) = client_secret {
+        fields.push(("client_secret", secret));
+    }
+    fields
 }
 
 /// What came back on the redirect.
@@ -442,22 +466,26 @@ mod tests {
     }
 
     #[test]
-    fn the_exchange_sends_the_verifier_and_no_secret() {
+    fn the_exchange_sends_the_verifier_and_no_secret_unless_the_client_has_one() {
         let session = session();
         let fields = session.exchange_fields("4/0AX4");
         assert!(fields.contains(&("grant_type", "authorization_code")));
         assert!(fields.contains(&("code", "4/0AX4")));
         assert!(fields.contains(&("code_verifier", "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")));
-        // A public client has no secret worth shipping; sending one would be
-        // security theatre and Google does not want it.
+        // An Android client has no secret, so none is sent.
         assert!(!fields.iter().any(|(key, _)| *key == "client_secret"));
+        let with = session.clone().with_client_secret(Some("GOCSPX-x".to_string()));
+        assert!(with.exchange_fields("4/0AX4").contains(&("client_secret", "GOCSPX-x")));
+        // A blank value (an unset CI secret) counts as none.
+        let blank = session.clone().with_client_secret(Some("  ".to_string()));
+        assert!(!blank.exchange_fields("4/0AX4").iter().any(|(key, _)| *key == "client_secret"));
         // The redirect must match the one the code was issued against.
         assert!(fields.contains(&("redirect_uri", "http://127.0.0.1:51789/oauth2redirect")));
     }
 
     #[test]
     fn a_refresh_carries_the_refresh_token_and_nothing_else() {
-        let fields = refresh_fields("client", "1//refresh");
+        let fields = refresh_fields("client", None, "1//refresh");
         assert_eq!(
             fields,
             vec![
@@ -466,6 +494,8 @@ mod tests {
                 ("grant_type", "refresh_token"),
             ]
         );
+        let with = refresh_fields("client", Some("sec"), "1//refresh");
+        assert!(with.contains(&("client_secret", "sec")));
     }
 
     #[test]

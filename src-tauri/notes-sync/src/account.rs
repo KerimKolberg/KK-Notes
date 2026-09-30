@@ -25,6 +25,7 @@ pub type OnChange = Box<dyn Fn(Option<&TokenSet>) + Send + Sync>;
 pub struct DriveAccount<T: HttpTransport> {
     transport: T,
     client_id: String,
+    client_secret: Option<String>,
     tokens: RwLock<Option<TokenSet>>,
     /// Held across a refresh so two threads that both notice an expiry make
     /// one request between them, not two. The second one finds a fresh token
@@ -38,10 +39,18 @@ impl<T: HttpTransport> DriveAccount<T> {
         Self {
             transport,
             client_id: client_id.into(),
+            client_secret: None,
             tokens: RwLock::new(tokens),
             refreshing: Mutex::new(()),
             on_change,
         }
+    }
+
+    /// The client's secret, for a Desktop-type Google client (see
+    /// [`oauth::AuthSession::client_secret`]). Blank counts as none.
+    pub fn with_client_secret(mut self, secret: Option<String>) -> Self {
+        self.client_secret = secret.filter(|s| !s.trim().is_empty());
+        self
     }
 
     /// Replace the token set after a successful sign-in.
@@ -81,7 +90,7 @@ impl<T: HttpTransport> DriveAccount<T> {
         }
 
         let request = HttpRequest::post(oauth::GOOGLE_TOKEN_ENDPOINT)
-            .form(&oauth::refresh_fields(&self.client_id, &current.refresh_token));
+            .form(&oauth::refresh_fields(&self.client_id, self.client_secret.as_deref(), &current.refresh_token));
         let response = self.transport.send(request)?;
 
         if !response.is_success() {

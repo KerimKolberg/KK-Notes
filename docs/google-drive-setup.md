@@ -91,7 +91,16 @@ You never register it: Google accepts any loopback port for a Desktop client.
    (`client_id()` in `drive_commands.rs`), so you can also point an already-built
    `.exe` at a different project by setting the variable before launching it.
 
-4. Open the app → the library's cloud button → **Sign in with Google Drive**. Your
+4. **The client secret.** The Desktop client page also shows a *client secret*
+   (and offers a `client_secret_….json` download). Google's token endpoint refuses
+   a Desktop client's sign-in without it (`client_secret is missing`), even though
+   Google documents it as not confidential for an installed app. The build sends it
+   when `NOTEX_GOOGLE_CLIENT_SECRET` is set and leaves it out otherwise (Android
+   clients have none). For the CI installer, add it as a repository **secret**
+   named `NOTEX_GOOGLE_DESKTOP_CLIENT_SECRET` (Settings → Secrets and variables →
+   Actions → Secrets). Never commit the JSON file.
+
+5. Open the app → the library's cloud button → **Sign in with Google Drive**. Your
    browser opens, you consent, and the tab says *"You are signed in to Google
    Drive. You can close this tab and go back to KK-Notes."* The panel should then
    read **Connected as you@gmail.com.**

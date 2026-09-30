@@ -57,6 +57,22 @@ const CLIENT_ID: &str = match option_env!("NOTEX_GOOGLE_CLIENT_ID") {
     None => "",
 };
 
+/// The client *secret* of a Google Desktop-app client, if the build has one.
+///
+/// Google's token endpoint rejects a Desktop client's code exchange without it
+/// (`client_secret is missing`), although Google documents it as not confidential
+/// for an installed app: PKCE is what protects the exchange. Android clients have
+/// none, so this is optional and only sent when set.
+const CLIENT_SECRET: Option<&str> = option_env!("NOTEX_GOOGLE_CLIENT_SECRET");
+
+fn client_secret() -> Option<String> {
+    std::env::var("NOTEX_GOOGLE_CLIENT_SECRET")
+        .ok()
+        .or_else(|| CLIENT_SECRET.map(str::to_string))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// The custom scheme Android claims for the redirect. Must match the
 /// `<intent-filter>` in `AndroidManifest.xml` and the redirect URI registered
 /// with Google.
@@ -111,7 +127,8 @@ impl Drive {
                 save_tokens(&handle, tokens);
                 let _ = handle.emit(DRIVE_ACCOUNT_EVENT, describe(tokens));
             }),
-        );
+        )
+        .with_client_secret(client_secret());
         Self {
             account: Arc::new(account),
             pending: Mutex::new(None),
@@ -270,7 +287,7 @@ pub fn drive_sign_in(app: AppHandle, drive: State<'_, Drive>) -> Result<String, 
         },
     };
 
-    let session = AuthSession::new(client_id, &target, pkce, state.clone());
+    let session = AuthSession::new(client_id, &target, pkce, state.clone()).with_client_secret(client_secret());
     let url = session.authorization_url();
     *drive.pending.lock().unwrap() = Some(session.clone());
 
