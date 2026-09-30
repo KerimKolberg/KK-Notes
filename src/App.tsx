@@ -6,6 +6,9 @@ import { LibraryView } from './library/LibraryView';
 import { useRouteStore } from './library/routeStore';
 import { useBoot } from './library/useBoot';
 import { useImportReportStore } from './goodnotes/reportStore';
+import { LockScreen } from './lock/LockScreen';
+import { useLockStore } from './lock/lockStore';
+import { useAutoLock } from './lock/useAutoLock';
 
 // Lazy, so the dialog costs nothing until a notebook is actually imported.
 const ImportReportDialog = lazy(() =>
@@ -34,18 +37,25 @@ export default function App() {
   // replacing the app and losing whatever was unsaved.
   useFileDropGuard();
   const view = useRouteStore((s) => s.route.view);
+  const locked = useLockStore((s) => s.locked);
+  useAutoLock();
   // Above the router for the same reason: an import may land in either view, and
   // a failed one leaves the user in the library — the summary has to outlive the
   // switch either way.
   const hasImportReport = useImportReportStore((s) => s.outcome !== null);
   return (
     <div style={{ position: 'fixed', inset: 0, width: '100vw', height: '100dvh' }}>
-      {!ready ? null : view === 'library' ? <LibraryView /> : <DocumentApp />}
-      {ready && hasImportReport && (
-        <Suspense fallback={null}>
-          <ImportReportDialog />
-        </Suspense>
-      )}
+      {/* While locked the app stays mounted (so unlocking returns to exactly where it was) but cannot be
+          reached by keyboard, pointer or screen reader, and the lock screen is opaque above it. */}
+      <div style={{ position: 'absolute', inset: 0 }} inert={locked} aria-hidden={locked || undefined}>
+        {!ready ? null : view === 'library' ? <LibraryView /> : <DocumentApp />}
+        {ready && hasImportReport && (
+          <Suspense fallback={null}>
+            <ImportReportDialog />
+          </Suspense>
+        )}
+      </div>
+      {locked && <LockScreen />}
     </div>
   );
 }

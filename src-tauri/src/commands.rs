@@ -9,7 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use notes_sync::is_content_uri;
+use notes_sync::{history, is_content_uri};
 use serde::{Deserialize, Serialize};
 use tauri::{
     ipc::{InvokeBody, Request},
@@ -19,6 +19,7 @@ use tauri::{
 pub const NOTEX_EXTENSION: &str = "notex";
 const MAX_RECENT: usize = 5;
 const DRAFT_DIR: &str = "drafts";
+const HISTORY_DIR: &str = "history";
 const DRAFT_FILE: &str = "autosave.notex";
 const RECENT_FILE: &str = "recent.json";
 /// Refuse to read documents larger than this (bytes) to keep the UI responsive.
@@ -163,10 +164,47 @@ fn percent_decode(input: &str) -> String {
 // Documents
 // ---------------------------------------------------------------------------
 
+/// Where the earlier versions of the document at `path` are kept.
+fn history_folder(app: &AppHandle, path: &Path) -> Result<PathBuf, String> {
+    let root = app_data_path(app, &[HISTORY_DIR])?;
+    Ok(history::folder_for(&root, path))
+}
+
 /// Save a `.notex` document (UTF-8 JSON) atomically.
+///
+/// The file being replaced is kept first as an earlier version (see `notes_sync::history`). Failing
+/// to keep it never stops the save: a full disk for the copy is no reason to lose the new work.
 #[tauri::command]
-pub fn save_document(path: String, contents: String) -> Result<FileInfo, String> {
-    atomic_write(Path::new(&path), contents.as_bytes())
+pub fn save_document(app: AppHandle, path: String, contents: String) -> Result<FileInfo, String> {
+    let target = Path::new(&path);
+    if !is_content_uri(target) {
+        if let Ok(folder) = history_folder(&app, target) {
+            let _ = history::snapshot(&folder, target, now_ms());
+        }
+    }
+    atomic_write(target, contents.as_bytes())
+}
+
+/// The earlier versions kept of the document at `path`, newest first.
+#[tauri::command]
+pub fn list_versions(app: AppHandle, path: String) -> Result<Vec<history::VersionInfo>, String> {
+    let folder = history_folder(&app, Path::new(&path))?;
+    Ok(history::list(&folder))
+}
+
+/// Put an earlier version back as the document at `path`, returning it as if just opened.
+///
+/// What is there now is kept as a version first, so a restore can itself be undone by restoring
+/// the version it made.
+#[tauri::command]
+pub fn restore_version(app: AppHandle, path: String, id: u64) -> Result<OpenedDocument, String> {
+    let target = Path::new(&path);
+    let folder = history_folder(&app, target)?;
+    let version = history::version_path(&folder, id).ok_or_else(|| "That version is no longer kept.".to_string())?;
+    let bytes = fs::read(&version).map_err(|e| format!("Cannot read that version: {e}"))?;
+    history::snapshot_always(&folder, target, now_ms())?;
+    atomic_write(target, &bytes)?;
+    read_document_file(target)
 }
 
 /// Read a `.notex` document.

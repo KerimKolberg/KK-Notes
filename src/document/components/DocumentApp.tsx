@@ -29,10 +29,12 @@ const ReferencePane = lazy(() => import('./ReferencePane').then((m) => ({ defaul
 /** The zoom window is a second drawing surface, so it is not loaded until one is opened. */
 const ZoomWindow = lazy(() => import('./ZoomWindow').then((m) => ({ default: m.ZoomWindow })));
 /** The search panel, likewise, and for the same reason. */
+const VersionHistory = lazy(() => import('./VersionHistory').then((m) => ({ default: m.VersionHistory })));
 const SearchPanel = lazy(() => import('./SearchPanel').then((m) => ({ default: m.SearchPanel })));
 import { useDocumentStore } from '../store';
 import { useZoomWindowStore } from '../zoomWindow';
 import { useSearchStore } from '../../search/searchStore';
+import { useVersionsStore } from '../../desktop/versionsStore';
 import { useToolStore } from '../toolStore';
 import { DocumentViewer } from './DocumentViewer';
 import { PageArranger } from './PageArranger';
@@ -51,6 +53,7 @@ export function DocumentApp() {
   const settingsRef = useLatestRef(settings);
   const zoomWindowOpen = useZoomWindowStore((s) => s.open);
   const searchOpen = useSearchStore((s) => s.open);
+  const versionsOpen = useVersionsStore((s) => s.open);
 
   // Undo / redo live in the top bar now; the app only needs the page id for
   // the keyboard shortcuts and for clearing.
@@ -327,6 +330,11 @@ export function DocumentApp() {
           {searchOpen && (
             <Suspense fallback={null}>
               <SearchPanel />
+            </Suspense>
+          )}
+          {versionsOpen && (
+            <Suspense fallback={null}>
+              <VersionHistory />
             </Suspense>
           )}
           {/* Above everything and inert, so it can never intercept a stroke. */}

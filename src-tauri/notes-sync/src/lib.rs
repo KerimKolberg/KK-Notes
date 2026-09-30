@@ -12,6 +12,7 @@ pub mod account;
 pub mod conflict;
 pub mod digest;
 pub mod drive;
+pub mod history;
 pub mod http;
 pub mod library;
 pub mod loopback;

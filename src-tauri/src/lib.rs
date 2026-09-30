@@ -30,6 +30,8 @@ pub fn run() {
         .manage(commands::StartupFile::from_args())
         .invoke_handler(tauri::generate_handler![
             commands::save_document,
+            commands::list_versions,
+            commands::restore_version,
             commands::open_document,
             commands::write_binary_file,
             commands::save_draft,

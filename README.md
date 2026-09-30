@@ -290,6 +290,46 @@ in-note search's own `searchSources`, so the two agree. A note is also found by 
 Handwriting is ink and cannot be searched, and the words of a PDF a note was made from are only searched
 inside that note.
 
+### Version history (`notes-sync/src/history.rs`, `components/VersionHistory.tsx`)
+
+*File → Version history…* lists the earlier saves of the open note, each with when it was saved, how long
+ago, its title, pages and size, and puts one back. Saving replaces the file, so before it does, the shell's
+`save_document` keeps the file as it stands (an `fs::copy`, named for the file's own modified time, which is
+when that version was saved) in the app's data folder under `history/<hash of the path>/` — not in the
+library, so it is neither listed as a note nor synced. Failing to keep it never stops a save.
+
+- **Thinning.** Saves closer than five minutes are one version, and a file saved again without a change is
+  not a new one (same bytes as the newest). After each copy the folder is pruned: in the last hour one version
+  per five minutes, in the last day one per hour, then one per day, nothing older than 60 days, no more than 40
+  in all, and past the newest no more than 400 MB (a note with a PDF in it is large). The newest is always kept.
+- **Restoring** copies the chosen version over the note, but first keeps what is there, whatever the
+  five-minute rule says, so a restore can itself be undone by restoring the version it made. If the note on
+  screen has unsaved changes they are saved first (and so kept). The dialog asks first and says so.
+- **Limits.** The history belongs to a note's path, so moving a note to another folder starts a fresh one; a
+  note opened through Android's file picker (a `content://` URI) is saved through the filesystem plugin and
+  has none; the browser build has none (it has no saves).
+- Unit-tested in Rust (naming, the gap and duplicate rules, every step of the schedule, the caps, forced
+  copies, junk in the folder); the dialog is browser-checked against a stand-in for the shell.
+
+### App passcode (`src/lock/`, `library/SecurityPanel.tsx`)
+
+The shield in the library's header sets an optional passcode. With one set the app starts on a lock screen
+and, if chosen, locks itself after 1, 5, 15 or 30 minutes of not being used (a pointer, key, touch or wheel
+counts as using it; the time is checked every 15 s and the moment the window returns to the front, because
+a sleeping tablet's timers are slowed). *Lock now* and **Ctrl+Shift+L** lock at once.
+
+- **What is stored** is a salted PBKDF2-SHA-256 hash (300 000 rounds, stored with the record so it can be
+  raised), compared without stopping at the first difference. The key is `notes.lock.v1`, separate from the
+  preferences so that *Reset to defaults* is not a way round the lock.
+- **While locked** the app stays mounted, so unlocking returns to exactly where you were, but its container is
+  `inert` and hidden from screen readers, the lock screen is opaque and above everything, and a capture-phase
+  key handler stops every key that is not going to the lock screen before anything else sees it (Ctrl+Z,
+  Ctrl+S and Delete must not reach the note behind it).
+- **Wrong tries**: the first five are free, then the wait is 30 s and doubles each time, up to five minutes.
+- **What it is not.** It is a lock on the app, for a device left lying around. It is not encryption: the notes
+  are ordinary files in the library folder, and the window's title still names the open note. And a forgotten
+  passcode cannot be recovered from inside the app; the panel says so where the passcode is set.
+
 ### The sync engine
 
 `src-tauri/notes-sync/` is a workspace crate with **no Tauri dependency**. The
@@ -2386,6 +2426,16 @@ hit-testing can answer:
   back with the last search in the box.
 - **searching the library**: a note is found by the words inside it, by its title, and a word that is in no
   note finds none; a match on the second page opens the note at that page with the table selected.
+- **version history**: the File menu offers it once the note is a file; the dialog lists what is kept newest
+  first with when, how old, pages and size; restoring asks first and does nothing until confirmed; then the
+  shell is asked to put that version back for this note, the note on screen becomes it, a notice says so and it
+  is not left marked as changed; with nothing kept it says how versions come about; Esc closes it. (Against a
+  small stand-in for Tauri's `invoke`.)
+- **the passcode**: a short or mismatched one is refused; what is kept is a hash; the app is locked on start,
+  the library behind the lock screen is unreachable and the screen covers it; a wrong passcode says so; keys
+  typed while locked never reach the app; the right one opens it and keys work again; Ctrl+Shift+L locks at
+  once; three idle minutes do not lock a five-minute setting and six do; changing or turning it off needs the
+  current passcode; turned off, the app starts open.
 - **a long stroke**: while the pen is down a long stroke has a tail layer that cannot take
   the pen's events, the stretch behind it is on the live canvas and the tail is only the last
   stretch, both go when the pen lifts, and the whole stroke lands on the page.
@@ -2410,7 +2460,8 @@ watching it fail with *"blocked by `<aside>`"*.
 they are large and CI installs them separately — so the script explains what is
 missing and exits 0 rather than failing a build that has nothing wrong with it.
 It serves `dist/` itself via `vite preview` unless something is already
-listening, or takes `--url=` to point at a running dev server.
+listening, or takes `--url=` to point at a running dev server. `--only=search,zoom` runs just the
+checks whose function name contains one of those words.
 
 ## Layout
 

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Menu } from 'lucide-react';
+import { History, Menu } from 'lucide-react';
 import { Tooltip } from '../ui/Tooltip';
 import { selectIsDirty, useDocumentStore } from '../document/store';
 import { useDesktopStore } from './desktopStore';
 import { actionExportPdf, actionNew, actionOpen, actionOpenPath, actionSave, actionSaveAs, actionToggleFullscreen } from './fileActions';
 import { fileBaseName } from './notex';
+import { useVersionsStore } from './versionsStore';
 
 const item =
   'flex w-full items-center justify-between gap-6 rounded-md px-3 py-1.5 text-left text-sm text-zinc-800 hover:bg-zinc-100 ' +
@@ -113,6 +114,20 @@ export function FileMenu() {
           {isDesktop && (
             <>
               <div className="my-1.5 border-t border-zinc-200 dark:border-zinc-800" role="separator" />
+              <button
+                type="button"
+                role="menuitem"
+                className={item}
+                disabled={!filePath}
+                title={filePath ? 'Earlier saves of this note' : 'Save this note to a file first'}
+                data-version-history
+                onClick={() => run(async () => useVersionsStore.getState().show())}
+              >
+                <span className="flex items-center gap-2">
+                  <History size={15} aria-hidden="true" />
+                  Version history…
+                </span>
+              </button>
               <button type="button" role="menuitem" className={item} onClick={() => run(actionToggleFullscreen)}>
                 {fullscreen ? 'Exit fullscreen' : 'Fullscreen'} <span className={shortcut}>F11</span>
               </button>

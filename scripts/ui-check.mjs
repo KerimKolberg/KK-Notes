@@ -1967,6 +1967,203 @@ async function checkLibrarySearch(browser) {
 }
 
 /**
+ * The version history dialog. It needs the desktop shell, which a browser does not have, so a
+ * minimal stand-in for Tauri's `invoke` answers the few commands the library and the dialog make.
+ */
+async function checkVersionHistory(browser) {
+  console.log('version history, 1280x800 (desktop shell faked):');
+  // The contents of a real, empty note, taken from a plain page of the same app.
+  const seedCtx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const seedPage = await seedCtx.newPage();
+  await openDocument(seedPage);
+  const contents = await seedPage.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) => k.startsWith('notes.library.doc.'));
+    return localStorage.getItem(key);
+  });
+  await seedCtx.close();
+  const restored = contents.replace(/"title":"[^"]*"/, '"title":"Back from the past"');
+
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  await ctx.addInitScript(({ contents, restored }) => {
+    const PATH = '/lib/Untitled note.notex';
+    window.__calls = [];
+    window.__versions = [
+      { id: Date.now() - 2 * 3600_000, bytes: 20480, title: 'Untitled note', pageCount: 2 },
+      { id: Date.now() - 30 * 3600_000, bytes: 5_300_000, title: 'Older draft', pageCount: 1 },
+    ];
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+    window.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } },
+      transformCallback: () => 1,
+      unregisterCallback: () => {},
+      invoke: async (cmd, args) => {
+        window.__calls.push({ cmd, args });
+        switch (cmd) {
+          case 'list_library': return { path: '/lib', relativePath: '', parentPath: null, entries: [] };
+          case 'create_library_document': return PATH;
+          case 'open_document': return { path: PATH, contents, info: { path: PATH, bytes: contents.length, modifiedMs: 1 } };
+          case 'list_versions': return window.__versions;
+          case 'restore_version': return { path: PATH, contents: restored, info: { path: PATH, bytes: restored.length, modifiedMs: 2 } };
+          case 'sync_status':
+          case 'sync_now': return { phase: 'offline', provider: 'Not connected', pending: 0, conflicts: [], lastSyncedMs: 0, message: null };
+          case 'list_recent': return [];
+          default: return null;
+        }
+      },
+    };
+  }, { contents, restored });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+
+  await page.click('[data-file-menu]');
+  check('the File menu offers the history once the note is a file', await page.$eval('[data-version-history]', (el) => !el.disabled));
+  await page.click('[data-version-history]');
+  await page.waitForSelector('[data-versions-dialog]', { timeout: 5_000 });
+  await page.waitForSelector('[data-version]', { timeout: 5_000 });
+  check('the dialog lists what is kept, newest first', (await page.$$eval('[data-version]', (els) => els.map((e) => Number(e.getAttribute('data-version')))).then((ids) => ids.length === 2 && ids[0] > ids[1])));
+  const text = await page.$eval('[data-versions-dialog]', (el) => el.textContent ?? '');
+  check('each says when, how old, its pages and its size', text.includes('2 hours ago') && text.includes('2 pages') && text.includes('20 KB') && text.includes('5.1 MB') && text.includes('Older draft'), text.slice(0, 200));
+
+  await page.click('[data-version-restore]');
+  check('restoring asks first, and says nothing is lost', (await page.$('[data-version-confirm]')) !== null && (await page.$eval('[data-versions-note]', (el) => el.textContent ?? '')).includes('stays in the list'));
+  check('nothing has been restored yet', !(await page.evaluate(() => window.__calls.some((c) => c.cmd === 'restore_version'))));
+  await page.click('[data-version-confirm]');
+  await page.waitForSelector('[data-versions-dialog]', { state: 'detached', timeout: 5_000 });
+  const call = await page.evaluate(() => window.__calls.find((c) => c.cmd === 'restore_version'));
+  check('it asks the shell to put that version back, for this note', call?.args?.path === '/lib/Untitled note.notex' && typeof call?.args?.id === 'number');
+  await page.waitForFunction(() => document.querySelector('[data-title]')?.value === 'Back from the past' || document.querySelector('[data-title]')?.textContent === 'Back from the past', null, { timeout: 5_000 }).catch(() => {});
+  const title = await page.$eval('[data-title]', (el) => el.value ?? el.textContent);
+  check('and the note on screen becomes that version', title === 'Back from the past', title);
+  check('with a notice saying so', (await page.$eval('[data-notice]', (el) => el.textContent ?? '').catch(() => '')).includes('Restored the version from'));
+  check('the note is not left marked as changed', (await page.$('[data-dirty]')) === null);
+
+  // With nothing kept yet.
+  await page.evaluate(() => { window.__versions = []; });
+  await page.click('[data-file-menu]');
+  await page.click('[data-version-history]');
+  await page.waitForSelector('[data-versions-empty]', { timeout: 5_000 });
+  check('with nothing kept it says how versions come about', (await page.$eval('[data-versions-empty]', (el) => el.textContent ?? '')).includes('each time you save'));
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('[data-versions-dialog]', { state: 'detached', timeout: 3_000 });
+  check('Esc closes it', true);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
+ * The app passcode: turning it on, the lock screen at start-up, wrong and right tries, locking
+ * at once, the keyboard not reaching a locked app, locking itself after a time away, and turning it off.
+ */
+async function checkAppLock(browser) {
+  console.log('app passcode, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.clock.install();
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-security-settings]', { timeout: 20_000 });
+
+  check('with no passcode set there is no lock screen', (await page.$('[data-lock-screen]')) === null);
+  await page.click('[data-security-settings]');
+  await page.waitForSelector('[data-security-panel]');
+  await page.fill('[data-lock-new]', '12');
+  await page.fill('[data-lock-repeat]', '12');
+  await page.click('[data-lock-save]');
+  check('a passcode that is too short is refused', (await page.$eval('[data-security-message]', (e) => e.textContent ?? '')).includes('at least'));
+  await page.fill('[data-lock-new]', 'sesame');
+  await page.fill('[data-lock-repeat]', 'sesamf');
+  await page.click('[data-lock-save]');
+  check('so is one typed differently twice', (await page.$eval('[data-security-message]', (e) => e.textContent ?? '')).includes('not the same'));
+  await page.fill('[data-lock-repeat]', 'sesame');
+  await page.click('[data-lock-save]');
+  await page.waitForSelector('[data-lock-now]', { timeout: 5_000 });
+  check('a good one turns it on and leaves the app open', (await page.$('[data-lock-screen]')) === null && (await page.$eval('[data-security-note]', (e) => e.textContent ?? '')).includes('cannot be recovered'));
+  const stored = await page.evaluate(() => localStorage.getItem('notes.lock.v1') ?? '');
+  check('what is kept is a hash, not the passcode', stored.includes('"hash"') && !stored.includes('sesame'));
+  await page.click('[data-security-close]');
+
+  // Start-up.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-lock-screen]', { timeout: 10_000 });
+  check('it is locked when the app starts', true);
+  check('the library behind it cannot be reached', await page.evaluate(() => { const v = document.querySelector('[data-library-view]'); return !v || !!v.closest('[inert]'); }));
+  const covers = await page.evaluate(() => { const r = document.querySelector('[data-lock-screen]').getBoundingClientRect(); return r.width >= innerWidth && r.height >= innerHeight; });
+  check('and the lock screen covers all of it', covers);
+
+  await page.fill('[data-lock-input]', 'wrong');
+  await page.click('[data-lock-submit]');
+  await page.waitForFunction(() => (document.querySelector('[data-lock-message]')?.textContent ?? '').includes('not the right'), null, { timeout: 5_000 });
+  check('a wrong passcode says so and stays locked', (await page.$('[data-lock-screen]')) !== null);
+
+  await page.evaluate(() => { window.__keys = 0; window.addEventListener('keydown', () => { window.__keys += 1; }); });
+  await page.keyboard.press('z');
+  check('keys typed while locked go only to the lock screen', (await page.evaluate(() => window.__keys)) === 0);
+
+  await page.fill('[data-lock-input]', 'sesame');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('[data-lock-screen]', { state: 'detached', timeout: 5_000 });
+  check('the right passcode opens it', (await page.$('[data-library-view]')) !== null);
+  await page.mouse.click(600, 600);
+  await page.keyboard.press('z');
+  check('and keys reach the app again', (await page.evaluate(() => window.__keys)) >= 1);
+
+  // Locking at once.
+  await page.keyboard.press('Control+Shift+L');
+  await page.waitForSelector('[data-lock-screen]', { timeout: 3_000 });
+  check('Ctrl+Shift+L locks it at once', true);
+  await page.fill('[data-lock-input]', 'sesame');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('[data-lock-screen]', { state: 'detached', timeout: 5_000 });
+
+  // After a time away.
+  await page.click('[data-security-settings]');
+  await page.selectOption('[data-auto-lock]', '5');
+  await page.click('[data-security-close]');
+  await page.clock.fastForward('03:00');
+  check('a few minutes idle is not enough for five', (await page.$('[data-lock-screen]')) === null);
+  await page.clock.fastForward('03:00');
+  await page.waitForSelector('[data-lock-screen]', { timeout: 3_000 });
+  check('six minutes of not using it locks it', true);
+  await page.fill('[data-lock-input]', 'sesame');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('[data-lock-screen]', { state: 'detached', timeout: 5_000 });
+
+  // Changing and turning off.
+  await page.click('[data-security-settings]');
+  await page.click('[data-lock-change]');
+  await page.fill('[data-lock-current]', 'nope');
+  await page.fill('[data-lock-new]', 'newcode');
+  await page.fill('[data-lock-repeat]', 'newcode');
+  await page.click('[data-lock-save]');
+  await page.waitForFunction(() => (document.querySelector('[data-security-message]')?.textContent ?? '').includes('not the current'), null, { timeout: 5_000 }).catch(() => {});
+  check('changing it needs the current passcode', (await page.$eval('[data-security-message]', (e) => e.textContent ?? '')).includes('not the current'));
+  await page.fill('[data-lock-current]', 'sesame');
+  await page.click('[data-lock-save]');
+  await page.waitForFunction(() => (document.querySelector('[data-security-message]')?.textContent ?? '').includes('changed'), null, { timeout: 5_000 });
+  check('and then it is changed', true);
+  await page.click('[data-lock-off]');
+  await page.fill('[data-lock-current]', 'sesame');
+  await page.click('[data-lock-save]');
+  await page.waitForFunction(() => (document.querySelector('[data-security-message]')?.textContent ?? '').includes('not the current'), null, { timeout: 5_000 }).catch(() => {});
+  check('the old passcode no longer turns it off', (await page.$eval('[data-security-message]', (e) => e.textContent ?? '')).includes('not the current') && (await page.$('[data-lock-now]')) !== null);
+  await page.fill('[data-lock-current]', 'newcode');
+  await page.click('[data-lock-save]');
+  await page.waitForSelector('[data-lock-new]', { timeout: 5_000 });
+  check('the new one does', (await page.evaluate(() => localStorage.getItem('notes.lock.v1') ?? '')).includes('"record":null'));
+  await page.click('[data-security-close]');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-library-view]', { timeout: 10_000 });
+  check('and the app starts open again', (await page.$('[data-lock-screen]')) === null);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Turning a selection: the round handle above the box, and the quarter-turn buttons.
  * A flat line is the easiest thing to see turn: it ends up standing.
  */
@@ -2157,6 +2354,8 @@ try {
     checkZoomWindow,
     checkSearch,
     checkLibrarySearch,
+    checkVersionHistory,
+    checkAppLock,
     checkTextToolbar,
     checkZoomAnchor,
   ];

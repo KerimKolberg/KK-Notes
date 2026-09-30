@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, ChevronRight, Cloud, FolderOpen, FolderPlus, Grid2x2, House, List, Plus, Search, X } from 'lucide-react';
+import { ArrowUp, ChevronRight, Cloud, FolderOpen, FolderPlus, Grid2x2, House, List, Plus, Search, ShieldCheck, X } from 'lucide-react';
 import { openDocumentFromLibrary } from './openDocument';
 import { CloudSyncPanel } from './CloudSyncPanel';
 import { ConflictDialog } from './ConflictDialog';
 import { DocumentCard } from './DocumentCard';
 import { LibrarySearchResults } from './LibrarySearchResults';
+import { SecurityPanel } from './SecurityPanel';
+import { useLockStore } from '../lock/lockStore';
 import { useLibrarySearch } from './useLibrarySearch';
 import { revealText } from '../search/reveal';
 import type { SearchHit } from '../search/text';
@@ -85,6 +87,8 @@ export function LibraryView() {
   const [status, setStatus] = useState<SyncStatus>(OFFLINE_STATUS);
   const [showConflicts, setShowConflicts] = useState(false);
   const [showCloud, setShowCloud] = useState(false);
+  const [showSecurity, setShowSecurity] = useState(false);
+  const lockOn = useLockStore((s) => s.record !== null);
   // Notices raised outside the library — an "open with" that could not be
   // read, most of all. The document top bar shows these too, but only at xl,
   // so on the phone where "open with" actually happens this is the only place
@@ -377,6 +381,18 @@ export function LibraryView() {
         >
           <Cloud size={16} aria-hidden="true" />
         </button>
+        <button
+          type="button"
+          onClick={() => setShowSecurity(true)}
+          aria-label="App passcode"
+          title={lockOn ? 'App passcode (on)' : 'App passcode'}
+          data-security-settings
+          className={`inline-flex h-9 w-9 shrink-0 touch-manipulation items-center justify-center rounded-lg transition-colors hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-zinc-800 ${
+            lockOn ? 'text-blue-600 dark:text-blue-400' : 'text-zinc-500 dark:text-zinc-400'
+          }`}
+        >
+          <ShieldCheck size={16} aria-hidden="true" />
+        </button>
       </header>
 
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
@@ -576,6 +592,8 @@ export function LibraryView() {
       {showConflicts && status.conflicts.length > 0 && (
         <ConflictDialog conflicts={status.conflicts} onResolve={onResolve} onClose={() => setShowConflicts(false)} />
       )}
+
+      {showSecurity && <SecurityPanel onClose={() => setShowSecurity(false)} />}
 
       {showCloud && (
         <CloudSyncPanel
