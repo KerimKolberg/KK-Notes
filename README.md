@@ -1830,7 +1830,16 @@ works*).
 - **Quick colours.** Hold a swatch (or right-click it) to change it, with Add
   and Remove beside the picker. A hold rather than a click, so the row stays a
   row of colours for the pen; a press that became a hold does not also select
-  the colour it was editing.
+  the colour it was editing. The shipped row is black, blue, green, red, brown,
+  purple, orange and pink. The previous shipped row is remembered
+  (`LEGACY_COLOR_PALETTE`): saved preferences that still equal it — kept only
+  because something else in them changed — move to the new row, and a row the
+  person edited is left alone.
+- **Quick widths.** Two buttons beside the thickness slider, **1** to write with
+  (the finest the slider goes, and the pen's starting width) and **5** to rule lines
+  with. A tap sets the width; a hold saves the slider's width into that slot. They
+  are a preference (`widthPresets`, exactly two, each within what the slider can make
+  or the shipped pair), so they survive a restart and "Reset to defaults" clears them.
 - **Page defaults.** *Set as default* in the arranger stores the selected
   page's template, spacing and background, and new notes start that way.
   `createPage` asks for them through an injected callback rather than

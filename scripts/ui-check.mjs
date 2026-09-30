@@ -1341,6 +1341,65 @@ async function checkTextToolbar(browser) {
 }
 
 /**
+ * The colours and the two quick widths. Black, blue, green, red, brown, purple, orange
+ * and pink; a fine 1 px to write with and a broader 5 px to rule lines with, a tap
+ * away, and a hold saves the slider's width into one of them.
+ */
+async function checkQuickSettings(browser) {
+  console.log('colours and quick widths, 1280x800:');
+  const errors = [];
+  for (const dock of ['bottom', 'left']) {
+    const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+    await ctx.addInitScript((d) => localStorage.setItem('notes.preferences.v1', JSON.stringify({ paletteDock: d })), dock);
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await openDocument(page);
+    await page.waitForSelector('[data-tool-palette]', { state: 'visible', timeout: 10_000 });
+    const reading = () => page.$eval('[data-thickness-value]', (el) => el.textContent.trim());
+
+    if (dock === 'bottom') {
+      const colours = await page.$$eval('[data-swatch]', (els) => els.map((e) => e.getAttribute('data-swatch')));
+      check('the colours are black, blue, green, red, brown, purple, orange, pink', colours.length === 8 && colours.join() === ['#1f1f24', '#2563eb', '#16a34a', '#dc2626', '#8b5a2b', '#7c3aed', '#ea580c', '#ec4899'].join(), colours.join(' '));
+      check('the pen starts at the finest width, 1 px', (await reading()) === '1px', await reading());
+    }
+    const presets = await page.$$eval('[data-width-preset]', (els) => els.map((e) => e.getAttribute('data-width-value')));
+    check(`${dock}: two quick widths, 1 and 5`, presets.join() === '1,5', presets.join());
+    check(`${dock}: they sit inside the colour controls`, await page.$eval('[data-width-presets]', (el) => el.closest('[data-tool-config]') !== null));
+
+    await page.click('[data-width-preset="1"]');
+    check(`${dock}: the 5 sets the width to 5 px`, (await reading()) === '5px', await reading());
+    check(`${dock}: and shows which is in use`, (await page.$eval('[data-width-preset="1"]', (e) => e.getAttribute('aria-pressed'))) === 'true');
+    await page.click('[data-width-preset="0"]');
+    check(`${dock}: the 1 sets it back`, (await reading()) === '1px', await reading());
+
+    if (dock === 'left') {
+      const inside = await page.evaluate(() => {
+        const config = document.querySelector('[data-tool-config]').getBoundingClientRect();
+        return [...document.querySelectorAll('[data-width-preset]')].every((el) => { const r = el.getBoundingClientRect(); return r.left >= config.left - 0.5 && r.right <= config.right + 0.5; });
+      });
+      check('left: the quick widths fit the slim column', inside);
+    }
+
+    // Holding one saves the slider's width into it.
+    await page.$eval('[data-thickness]', (el) => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      set.call(el, '3');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    check(`${dock}: the slider still sets any width`, (await reading()) === '3px', await reading());
+    const b = await (await page.$('[data-width-preset="1"]')).boundingBox();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await page.mouse.down();
+    await page.waitForTimeout(800);
+    await page.mouse.up();
+    check(`${dock}: holding a quick width saves the slider's width into it`, (await page.$eval('[data-width-preset="1"]', (e) => e.getAttribute('data-width-value'))) === '3');
+    check(`${dock}: and that hold did not also pick it`, (await reading()) === '3px');
+    await ctx.close();
+  }
+  check('no page errors', errors.length === 0, errors.join(' | '));
+}
+
+/**
  * Turning a selection: the round handle above the box, and the quarter-turn buttons.
  * A flat line is the easiest thing to see turn: it ends up standing.
  */
@@ -1519,6 +1578,7 @@ try {
   await checkSplit(browser);
   await checkToolbar(browser);
   await checkDocks(browser);
+  await checkQuickSettings(browser);
   await checkPenButtons(browser);
   await checkLasso(browser);
   await checkRotate(browser);

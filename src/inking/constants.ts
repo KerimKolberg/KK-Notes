@@ -210,7 +210,8 @@ export const LASER_DEFAULT_COLOR = '#ef4444';
 export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   tool: 'pen',
   color: '#1f1f24',
-  size: 4,
+  // The finest the slider goes: what most people write with.
+  size: 1,
   touchDraw: false,
   brush: DEFAULT_BRUSH,
   highlighterOpacity: HIGHLIGHTER_OPACITY,
@@ -245,8 +246,27 @@ export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   debugMode: false,
 };
 
-/** Quick-pick swatches shown in the toolbar. */
+/**
+ * Quick-pick swatches shown in the toolbar: black, blue, green, red, brown, purple,
+ * orange, pink — the order they were asked for, so the first six are the everyday
+ * ones (the selection's own toolbar shows those).
+ */
 export const COLOR_PALETTE: readonly string[] = [
+  '#1f1f24',
+  '#2563eb',
+  '#16a34a',
+  '#dc2626',
+  '#8b5a2b',
+  '#7c3aed',
+  '#ea580c',
+  '#ec4899',
+];
+
+/**
+ * The swatches the app shipped with before that, so that a person who never changed
+ * them is moved to the new ones, and one who did is left alone.
+ */
+export const LEGACY_COLOR_PALETTE: readonly string[] = [
   '#1f1f24',
   '#e11d48',
   '#ea580c',
@@ -256,3 +276,6 @@ export const COLOR_PALETTE: readonly string[] = [
   '#7c3aed',
   '#ffffff',
 ];
+
+/** The two widths within reach of one tap: a fine one to write with and a broader one to rule lines with. */
+export const DEFAULT_WIDTH_PRESETS: readonly number[] = [1, 5];

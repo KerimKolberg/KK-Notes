@@ -118,6 +118,8 @@ export interface Preferences {
   readonly lowLatencyInk: boolean;
   /** Quick colours on the palette's second row. */
   readonly swatches: readonly string[];
+  /** The widths one tap away beside the thickness slider: two of them, a fine one and a broader one. */
+  readonly widthPresets: readonly number[];
   /** `null` until the user has pressed "Set as default" on a page. */
   readonly pageDefaults: PageDefaults | null;
 }

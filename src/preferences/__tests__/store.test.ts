@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { COLOR_PALETTE } from '../../inking/constants';
-import { DEFAULT_STYLUS_SETTINGS } from '../../inking/constants';
+import {
+  COLOR_PALETTE,
+  DEFAULT_STYLUS_SETTINGS,
+  DEFAULT_WIDTH_PRESETS,
+  LEGACY_COLOR_PALETTE,
+  MAX_STROKE_SIZE,
+} from '../../inking/constants';
 import {
   DEFAULT_PREFERENCES,
   isHexColor,
@@ -10,6 +15,7 @@ import {
   normalizeOrder,
   normalizeStylus,
   normalizeSwatches,
+  normalizeWidthPresets,
   reorder,
   usePreferencesStore,
 } from '../store';
@@ -289,5 +295,67 @@ describe('reset to defaults', () => {
     expect(after.paletteOrder).toEqual(DEFAULT_PALETTE_ORDER);
     expect(after.swatches).toEqual(COLOR_PALETTE);
     expect(after.pageDefaults).toBeNull();
+  });
+});
+
+describe('the shipped colours', () => {
+  it('are black, blue, green, red, brown, purple, orange and pink, in that order', () => {
+    expect(COLOR_PALETTE).toHaveLength(8);
+    expect(COLOR_PALETTE[0]).toBe('#1f1f24');
+    // Spot-check the hues rather than the exact hex: blue has more blue than red, and so on.
+    const rgb = (hex: string): number[] => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    const [, blue, green, red, brown, purple, orange, pink] = COLOR_PALETTE.map(rgb) as number[][];
+    expect(blue![2]).toBeGreaterThan(blue![0]! * 2);
+    expect(green![1]).toBeGreaterThan(green![0]! * 2);
+    expect(red![0]).toBeGreaterThan(red![1]! * 3);
+    expect(brown![0]).toBeGreaterThan(brown![2]! * 2);
+    expect(purple![2]).toBeGreaterThan(purple![1]! * 2);
+    expect(orange![0]).toBeGreaterThan(orange![2]! * 4);
+    expect(pink![0]).toBeGreaterThan(pink![1]!);
+    expect(pink![2]).toBeGreaterThan(pink![1]!);
+  });
+
+  it('replace the old ones for someone who never changed them', () => {
+    expect(normalizeSwatches([...LEGACY_COLOR_PALETTE])).toEqual(COLOR_PALETTE);
+    // Saved by an unrelated change, as upper-case, it is still the old row.
+    expect(normalizeSwatches(LEGACY_COLOR_PALETTE.map((c) => c.toUpperCase()))).toEqual(COLOR_PALETTE);
+  });
+
+  it('leave a row someone did change alone', () => {
+    const mine = [...LEGACY_COLOR_PALETTE.slice(0, 7), '#123456'];
+    expect(normalizeSwatches(mine)).toEqual(mine);
+  });
+});
+
+describe('the quick widths', () => {
+  it('start as 1 to write with and 5 to rule lines with', () => {
+    expect(DEFAULT_WIDTH_PRESETS).toEqual([1, 5]);
+    expect(usePreferencesStore.getState().widthPresets).toEqual([1, 5]);
+  });
+
+  it('keep two widths the slider can make, and fall back on anything else', () => {
+    expect(normalizeWidthPresets([2, 8])).toEqual([2, 8]);
+    expect(normalizeWidthPresets([2.3, 8])).toEqual([2.5, 8]);
+    for (const bad of [undefined, null, 'x', [], [1], [1, 2, 3], [0, 5], [1, MAX_STROKE_SIZE + 1], [1, Number.NaN], ['1', '5']]) {
+      expect(normalizeWidthPresets(bad)).toEqual(DEFAULT_WIDTH_PRESETS);
+    }
+  });
+
+  it('can be set from the slider, one slot at a time, and survive a reload', () => {
+    const { setWidthPreset } = usePreferencesStore.getState();
+    setWidthPreset(1, 7);
+    expect(usePreferencesStore.getState().widthPresets).toEqual([1, 7]);
+    setWidthPreset(0, 2);
+    expect(usePreferencesStore.getState().widthPresets).toEqual([2, 7]);
+    // Out of range slots and widths change nothing.
+    setWidthPreset(5, 3);
+    setWidthPreset(0, 99);
+    expect(usePreferencesStore.getState().widthPresets).toEqual([2, 7]);
+  });
+
+  it('are cleared by a reset', () => {
+    usePreferencesStore.getState().setWidthPreset(0, 3);
+    usePreferencesStore.getState().resetPreferences();
+    expect(usePreferencesStore.getState().widthPresets).toEqual([1, 5]);
   });
 });

@@ -14,7 +14,15 @@
  */
 import { create } from 'zustand';
 import { DEFAULT_TEMPLATE_CONFIG, LIGHT_PAGE_BACKGROUND } from '../document/constants';
-import { COLOR_PALETTE, DEFAULT_STYLUS_SETTINGS, STYLUS_TOOLS } from '../inking/constants';
+import {
+  COLOR_PALETTE,
+  DEFAULT_STYLUS_SETTINGS,
+  DEFAULT_WIDTH_PRESETS,
+  LEGACY_COLOR_PALETTE,
+  MAX_STROKE_SIZE,
+  MIN_STROKE_SIZE,
+  STYLUS_TOOLS,
+} from '../inking/constants';
 import { setLowLatencyCanvas } from '../inking/engine/canvasMode';
 import type { StylusSettings, ToolType } from '../inking/types';
 import {
@@ -40,6 +48,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   stylus: DEFAULT_STYLUS_SETTINGS,
   lowLatencyInk: false,
   swatches: COLOR_PALETTE,
+  widthPresets: DEFAULT_WIDTH_PRESETS,
   pageDefaults: null,
 };
 
@@ -117,7 +126,18 @@ export function normalizeSwatches(stored: unknown): readonly string[] {
   if (!Array.isArray(stored)) return DEFAULT_PREFERENCES.swatches;
   const colors = stored.filter(isHexColor).map((c) => c.trim().toLowerCase()).slice(0, MAX_SWATCHES);
   // Too few to be a palette: fall back rather than leave one colour to draw with.
-  return colors.length >= MIN_SWATCHES ? colors : DEFAULT_PREFERENCES.swatches;
+  if (colors.length < MIN_SWATCHES) return DEFAULT_PREFERENCES.swatches;
+  // Saved only because something else in the preferences changed, not because the
+  // colours did: this is the old shipped row, so it takes the new one.
+  if (colors.join() === LEGACY_COLOR_PALETTE.join()) return DEFAULT_PREFERENCES.swatches;
+  return colors;
+}
+
+/** Two widths, each within what the slider offers; anything else is the shipped pair. */
+export function normalizeWidthPresets(stored: unknown): readonly number[] {
+  if (!Array.isArray(stored) || stored.length !== 2) return DEFAULT_PREFERENCES.widthPresets;
+  const ok = stored.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= MIN_STROKE_SIZE && n <= MAX_STROKE_SIZE);
+  return ok ? stored.map((n: number) => Math.round(n * 2) / 2) : DEFAULT_PREFERENCES.widthPresets;
 }
 
 function normalizePageDefaults(stored: unknown): PageDefaults | null {
@@ -146,6 +166,7 @@ export function normalize(stored: unknown): Preferences {
     // Strictly `true`: anything else, including a stale or mangled value, is off.
     lowLatencyInk: record.lowLatencyInk === true,
     swatches: normalizeSwatches(record.swatches),
+    widthPresets: normalizeWidthPresets(record.widthPresets),
     pageDefaults: normalizePageDefaults(record.pageDefaults),
   };
 }
@@ -182,6 +203,8 @@ export interface PreferencesStore extends Preferences {
   setSwatch: (index: number, color: string) => void;
   addSwatch: (color: string) => void;
   removeSwatch: (index: number) => void;
+  /** Make slot `index` (0 or 1) of the quick widths this width. */
+  setWidthPreset: (index: number, size: number) => void;
   setPageDefaults: (defaults: PageDefaults | null) => void;
   setPaletteDock: (dock: PaletteDock) => void;
   setPalettePinned: (pinned: boolean) => void;
@@ -203,6 +226,7 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
       stylus: patch.stylus ?? current.stylus,
       lowLatencyInk: patch.lowLatencyInk ?? current.lowLatencyInk,
       swatches: patch.swatches ?? current.swatches,
+      widthPresets: patch.widthPresets ?? current.widthPresets,
       pageDefaults: patch.pageDefaults !== undefined ? patch.pageDefaults : current.pageDefaults,
     };
     write(next);
@@ -238,6 +262,15 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
       // Never below the floor: a palette of one colour is not a palette.
       if (swatches.length <= MIN_SWATCHES || index < 0 || index >= swatches.length) return;
       save({ swatches: swatches.filter((_, i) => i !== index) });
+    },
+
+    setWidthPreset: (index, size) => {
+      const presets = [...get().widthPresets];
+      if (index < 0 || index >= presets.length) return;
+      // A width the slider cannot make is ignored, not allowed to reset the other slot with it.
+      if (!Number.isFinite(size) || size < MIN_STROKE_SIZE || size > MAX_STROKE_SIZE) return;
+      presets[index] = size;
+      save({ widthPresets: normalizeWidthPresets(presets) });
     },
 
     setPageDefaults: (defaults) => save({ pageDefaults: defaults }),

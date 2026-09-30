@@ -173,12 +173,14 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
   const colorDisabled = !usesColor(settings.tool) || (laser && settings.laserRainbow);
   const setColor = (color: string): void => onSettingsChange(laser ? { laserColor: color } : { color });
 
-  const { swatches, setSwatch, addSwatch, removeSwatch } = usePreferencesStore(
+  const { swatches, setSwatch, addSwatch, removeSwatch, widthPresets, setWidthPreset } = usePreferencesStore(
     useShallow((s) => ({
       swatches: s.swatches,
       setSwatch: s.setSwatch,
       addSwatch: s.addSwatch,
       removeSwatch: s.removeSwatch,
+      widthPresets: s.widthPresets,
+      setWidthPreset: s.setWidthPreset,
     })),
   );
   // Which swatch a press is currently editing. Entered by a long press, so
@@ -356,6 +358,26 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
         aria-hidden="true"
       />
 
+      {/* Two widths one tap away: a fine one to write with and a broader one to rule
+          lines with. Holding one sets it to whatever the slider is at. */}
+      <div
+        className={compact ? 'flex flex-col items-center gap-1' : 'flex items-center gap-1'}
+        role="group"
+        aria-label="Quick widths"
+        data-width-presets
+      >
+        {widthPresets.map((size, index) => (
+          <WidthPresetButton
+            key={index}
+            index={index}
+            size={size}
+            current={settings.size}
+            onPick={() => onSettingsChange({ size })}
+            onSave={() => setWidthPreset(index, settings.size)}
+          />
+        ))}
+      </div>
+
       <label className={compact ? 'flex min-w-0 flex-col items-center gap-1.5' : 'flex min-w-0 flex-1 items-center gap-2'} title="Stroke thickness">
         <span className="sr-only">Stroke thickness</span>
         {/* Beside the slider in a row; above it in a column, where the slider stands up
@@ -413,6 +435,66 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
           </Chip>
         ))}
     </div>
+  );
+}
+
+/** One of the quick widths: a tap uses it, a hold saves the slider's width into it. */
+function WidthPresetButton({
+  index,
+  size,
+  current,
+  onPick,
+  onSave,
+}: {
+  index: number;
+  size: number;
+  current: number;
+  onPick: () => void;
+  onSave: () => void;
+}) {
+  const holdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heldRef = useRef(false);
+  const selected = current === size;
+  const stop = (): void => {
+    if (holdRef.current !== null) clearTimeout(holdRef.current);
+    holdRef.current = null;
+  };
+  useEffect(() => stop, []);
+  return (
+    <Tooltip label={`${size} px`} hint="hold to save the slider's width here">
+      <button
+        type="button"
+        aria-label={`Width ${size} pixels`}
+        aria-pressed={selected}
+        data-width-preset={index}
+        data-width-value={size}
+        className={`inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1 text-[11px] font-semibold tabular-nums transition-colors ${
+          selected
+            ? 'bg-blue-600 text-white'
+            : 'bg-white text-zinc-700 ring-1 ring-black/10 hover:bg-zinc-50 dark:bg-zinc-700 dark:text-zinc-100 dark:ring-white/15'
+        }`}
+        onPointerDown={() => {
+          heldRef.current = false;
+          stop();
+          holdRef.current = setTimeout(() => {
+            heldRef.current = true;
+            onSave();
+          }, SWATCH_HOLD_MS);
+        }}
+        onPointerUp={stop}
+        onPointerLeave={stop}
+        onPointerCancel={stop}
+        onClick={() => {
+          if (heldRef.current) {
+            heldRef.current = false;
+            return;
+          }
+          onPick();
+        }}
+      >
+        {size}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -1185,6 +1267,7 @@ export function PaletteSettings({
   const {
     paletteOrder,
     swatches,
+    widthPresets,
     pageDefaults,
     resetPreferences,
     paletteDock,
@@ -1198,6 +1281,7 @@ export function PaletteSettings({
     useShallow((s) => ({
       paletteOrder: s.paletteOrder,
       swatches: s.swatches,
+      widthPresets: s.widthPresets,
       pageDefaults: s.pageDefaults,
       resetPreferences: s.resetPreferences,
       paletteDock: s.paletteDock,
@@ -1216,6 +1300,7 @@ export function PaletteSettings({
     pageDefaults !== null ||
     paletteOrder.join() !== DEFAULT_PALETTE_ORDER.join() ||
     swatches.join() !== DEFAULT_PREFERENCES.swatches.join() ||
+    widthPresets.join() !== DEFAULT_PREFERENCES.widthPresets.join() ||
     paletteDock !== DEFAULT_PREFERENCES.paletteDock ||
     palettePinned !== DEFAULT_PREFERENCES.palettePinned ||
     fullscreenStyle !== DEFAULT_PREFERENCES.fullscreenStyle ||
