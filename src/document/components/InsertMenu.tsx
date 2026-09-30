@@ -1,8 +1,10 @@
 import { useCallback, useState } from 'react';
-import { DraftingCompass, Image as ImageIcon, Ruler as RulerIcon, StickyNote, Table, Type } from 'lucide-react';
+import { DraftingCompass, Image as ImageIcon, Ruler as RulerIcon, StickyNote, Table, Type, ZoomIn } from 'lucide-react';
 import { Chip, Row } from '../../inking/palette/parts';
 import { useAidStore } from '../aids';
 import { useDocumentStore } from '../store';
+import { ZOOM_HEADER_PX } from '../../inking/engine/zoomRegion';
+import { useZoomWindowStore, viewCentreOnPage } from '../zoomWindow';
 import { NoteShapeGlyph } from './MediaLayer';
 import {
   DEFAULT_TABLE_COLUMNS,
@@ -63,6 +65,8 @@ export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onInsert
   const protractorOut = useAidStore((s) => s.protractor !== null && s.protractor.pageId === activePage?.id);
   const toggleRuler = useAidStore((s) => s.toggleRuler);
   const toggleProtractor = useAidStore((s) => s.toggleProtractor);
+  const zoomOpen = useZoomWindowStore((s) => s.open && s.pageId === activePage?.id);
+  const toggleZoom = useZoomWindowStore((s) => s.toggle);
 
   const insertTable = useCallback(() => {
     onInsertTable({ rows, columns, lineWidth, lineOpacity });
@@ -162,6 +166,23 @@ export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onInsert
         >
           <DraftingCompass size={18} aria-hidden="true" />
           {protractorOut ? 'Put the protractor away' : 'Protractor'}
+        </button>
+        <button
+          type="button"
+          className={`${ENTRY} ${zoomOpen ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300' : ''}`}
+          aria-pressed={zoomOpen}
+          data-insert-zoom-window
+          disabled={!activePage}
+          onClick={() => {
+            if (activePage) {
+              const { height } = useZoomWindowStore.getState();
+              toggleZoom(activePage, viewCentreOnPage(activePage.id, activePage.dimensions.width, ZOOM_HEADER_PX + height));
+            }
+            onDone();
+          }}
+        >
+          <ZoomIn size={18} aria-hidden="true" />
+          {zoomOpen ? 'Close the zoom window' : 'Zoom window'}
         </button>
       </div>
 

@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { memo, useCallback, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { GripHorizontal, RotateCw, X } from 'lucide-react';
 import { snapRotation } from '../../inking/engine/lasso';
@@ -5,6 +6,8 @@ import { PROTRACTOR_MIN_RADIUS, protractorTicks } from '../../inking/engine/prot
 import { PX_PER_CM, RULER_WIDTH, angleDegrees, rulerTicks } from '../../inking/engine/ruler';
 import type { Point } from '../../inking/types';
 import { useAidStore, type ProtractorAid, type RulerAid } from '../aids';
+import { regionSize } from '../../inking/engine/zoomRegion';
+import { useZoomWindowStore } from '../zoomWindow';
 import type { Page } from '../types';
 
 export interface AidsLayerProps {
@@ -25,6 +28,7 @@ const CONTROL =
 export const AidsLayer = memo(function AidsLayer({ page, zoom }: AidsLayerProps) {
   const ruler = useAidStore((s) => (s.ruler?.pageId === page.id ? s.ruler : null));
   const protractor = useAidStore((s) => (s.protractor?.pageId === page.id ? s.protractor : null));
+  const zoomHere = useZoomWindowStore((s) => s.open && s.pageId === page.id);
   const frameRef = useRef<HTMLDivElement>(null);
 
   /** A viewport position as a page position. */
@@ -37,7 +41,7 @@ export const AidsLayer = memo(function AidsLayer({ page, zoom }: AidsLayerProps)
     [zoom],
   );
 
-  if (!ruler && !protractor) return null;
+  if (!ruler && !protractor && !zoomHere) return null;
   return (
     <div className="pointer-events-none absolute inset-0" style={{ zIndex: 27 }} data-aids-layer>
       <div
@@ -53,6 +57,7 @@ export const AidsLayer = memo(function AidsLayer({ page, zoom }: AidsLayerProps)
           pointerEvents: 'none',
         }}
       >
+        {zoomHere && <ZoomRegionView page={page} zoom={zoom} toPage={toPage} />}
         {protractor && <ProtractorView aid={protractor} page={page} zoom={zoom} toPage={toPage} />}
         {ruler && <RulerView aid={ruler} page={page} zoom={zoom} toPage={toPage} />}
       </div>
@@ -99,6 +104,55 @@ function followPointer(e: ReactPointerEvent<HTMLElement>, toPage: (x: number, y:
 /** Keeps a control the same size on screen at any zoom, centred on the point it is placed at. */
 function controlStyle(x: number, y: number, zoom: number): CSSProperties {
   return { left: x, top: y, transform: `translate(-50%, -50%) scale(${1 / zoom})`, transformOrigin: 'center' };
+}
+
+// ---------------------------------------------------------------------------
+// Zoom window's region
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the zoom window is looking: a frame round the part of the page it shows, with a grip to
+ * drag it to another part. The frame itself lets pointer input through.
+ */
+function ZoomRegionView({ page, zoom, toPage }: Omit<ViewProps<unknown>, 'aid'>) {
+  const { origin, width, height, mag } = useZoomWindowStore(
+    useShallow((s) => ({ origin: s.origin, width: s.width, height: s.height, mag: s.mag })),
+  );
+  const moveTo = useZoomWindowStore((s) => s.moveTo);
+  const region = regionSize({ width, height }, mag);
+  const beginMove = (e: ReactPointerEvent<HTMLElement>): void => {
+    const start = toPage(e.clientX, e.clientY);
+    const from = { x: origin.x, y: origin.y };
+    followPointer(e, toPage, (at) => moveTo({ x: from.x + at.x - start.x, y: from.y + at.y - start.y }, page.dimensions));
+  };
+  return (
+    <div
+      data-zoom-region
+      style={{
+        position: 'absolute',
+        left: origin.x,
+        top: origin.y,
+        width: region.w,
+        height: region.h,
+        border: `${2 / zoom}px dashed rgba(37, 99, 235, 0.9)`,
+        background: 'rgba(37, 99, 235, 0.06)',
+        boxSizing: 'border-box',
+        pointerEvents: 'none',
+      }}
+    >
+      <button
+        type="button"
+        className={`${CONTROL} h-7 w-7 cursor-move`}
+        style={{ ...controlStyle(0, 0, zoom), transformOrigin: 'center' }}
+        aria-label="Move the zoom window's view"
+        title="Drag to move where the zoom window is looking"
+        data-zoom-region-move
+        onPointerDown={beginMove}
+      >
+        <GripHorizontal size={14} aria-hidden="true" />
+      </button>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

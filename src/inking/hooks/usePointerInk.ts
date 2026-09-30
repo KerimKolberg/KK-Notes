@@ -94,6 +94,12 @@ export interface UsePointerInkOptions {
    * at one of its edges becomes a straight line along it.
    */
   ruler?: Ruler | null;
+  /**
+   * The page point at the top-left of this surface, for one that shows a window onto a page:
+   * pointer positions are measured from it, in page units, rather than from the surface's own
+   * corner.
+   */
+  viewOrigin?: Point;
   /** Fired when an accepted pointer starts any session (used to activate a page). */
   onInteractionStart?: () => void;
   /** The pen's barrel button is mapped to select mode and was pressed on the surface. */
@@ -699,8 +705,13 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       if (tool === 'lasso' && settings.tool !== 'lasso') opts.onBorrowSelectionTool?.(tool);
 
       const canvas = e.currentTarget;
-      const rect = canvas.getBoundingClientRect();
+      const domRect = canvas.getBoundingClientRect();
       const scale = opts.contentScaleRef?.current ?? 1;
+      // A window onto a page: move the corner the positions are measured from back to where the
+      // page's own corner would be, and everything downstream keeps reading page units.
+      const rect = opts.viewOrigin
+        ? new DOMRect(domRect.left - opts.viewOrigin.x * scale, domRect.top - opts.viewOrigin.y * scale, domRect.width, domRect.height)
+        : domRect;
       try {
         canvas.setPointerCapture(e.pointerId);
       } catch {

@@ -108,7 +108,8 @@ export class LiveBaker {
   }
 
   /** A canvas exactly over `live`, for the part of the stroke that is redrawn every frame. */
-  private tailContext(live: HTMLCanvasElement, size: { readonly cssWidth: number; readonly cssHeight: number }): CanvasRenderingContext2D | null {
+  private tailContext(liveCtx: CanvasRenderingContext2D): CanvasRenderingContext2D | null {
+    const live = liveCtx.canvas;
     if (!this.tail) {
       if (typeof document === 'undefined' || !live.parentNode) return null;
       const tail = document.createElement('canvas');
@@ -126,8 +127,9 @@ export class LiveBaker {
         display: 'block',
       });
       live.after(tail);
-      // The same scale the live canvas draws under: page units onto device pixels.
-      get2dContext(tail)?.setTransform(live.width / size.cssWidth, 0, 0, live.height / size.cssHeight, 0, 0);
+      // Exactly the transform the live canvas draws under — page units onto device pixels, and
+      // shifted if it shows a window onto the page rather than the whole of it.
+      get2dContext(tail)?.setTransform(liveCtx.getTransform());
       this.tail = tail;
     }
     return get2dContext(this.tail);
@@ -162,7 +164,7 @@ export class LiveBaker {
     const plan = planBakes(points.length, this.baked);
     for (const range of plan.ranges) drawLiveStroke(ctx, points.slice(range.from, range.to), style);
     this.baked = plan.baked;
-    const tailCtx = this.baked === 0 ? null : this.tailContext(ctx.canvas, size);
+    const tailCtx = this.baked === 0 ? null : this.tailContext(ctx);
     if (!tailCtx) {
       // Nothing is permanent yet, and the stroke is short: clear and draw it whole.
       // (Or there is nowhere to put a tail layer, which is the same thing done slowly.)

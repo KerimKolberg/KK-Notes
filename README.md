@@ -2150,6 +2150,36 @@ shape tool's options:
 Their controls are the only parts that take pointer input; the ruler's and protractor's bodies let
 it through to the page beneath, which is what lets a pen draw along them.
 
+**Zoom window** (`components/ZoomWindow.tsx`, `document/zoomWindow.ts`, `engine/zoomRegion.ts`).
+*Add → Zoom window* opens a strip along the bottom of the screen that shows a region of the page in
+view at 2×, 3× or 4×, to write in. What is written in it is committed to the page's strokes at the page's
+own size, and what is on the page shows in it, so the two are one thing seen at two scales. On the page
+a dashed frame shows where the window is looking, with a grip to drag it elsewhere.
+
+- **One more drawing surface, not a copy of the page.** The window is an `InkSurface` whose canvases are the
+  size of the strip (not of the page magnified, which at 4× would be a canvas of tens of megapixels) and
+  whose transform is shifted by the region's origin (`usePageCanvas`'s `origin`): strokes stay in page
+  units, the existing code draws into it unchanged, and pointer positions are measured from a corner moved
+  back to where the page's own would be, so every stroke, erase and lasso made in it is already in page
+  coordinates. `clearRect` covers `origin + size` so a shifted canvas still clears; the live-stroke baker's
+  tail layer copies the live canvas's transform rather than assuming the page's.
+- **The background** is the page's template as a CSS background at the magnified size and offset (vector, so
+  crisp), and for a PDF page the page's raster asked for at the window's magnification (capped at 4096 px
+  wide) and cropped to the region. Images, notes, text boxes and tables are not drawn in the window: they
+  are in the page above, which is what the window is for.
+- **Moving along.** When a stroke ends in the last 15 % of the region and there is page to the right, the
+  window moves on after a moment, putting the end of what was written a quarter of the way in, so it can be
+  seen joining the next. *Next line* goes back to where the line started and down most of the strip's
+  height; the arrows step by 60 % of it; the wheel moves it; a window that would leave the page is held on
+  it. Where a line started is the region's left when it was last chosen by hand (the arrows, the frame's
+  grip), not where it has since been carried to.
+- **Layout.** It sits below the page area in the layout rather than over it, so the page area, and the toolbar
+  docked in it, simply get shorter while it is open (three heights, one button). It opens at the left of the
+  page, centred on the middle of what was in view once the page has shrunk. It is loaded only when opened, is
+  view state (not saved or undone), and closes by itself if the note is locked or its page goes.
+- The tools are the ordinary ones: the pen, highlighter, erasers, lasso and the pen's buttons all work in it
+  (a lasso made in it is selected on the page), as do the ruler and the shape tool's grid.
+
 **A long stroke is drawn a chunk at a time while the pen is down**
 (`engine/liveBake.ts`). Thinning bounds how many samples a stroke has; it does not
 change that the live layer used to be cleared and the *whole* stroke outlined and filled
@@ -2313,6 +2343,11 @@ hit-testing can answer:
   that starts away from it stays a stroke; a line stops at the ruler's end; the grip moves it, the
   handle turns it (straight down is a quarter turn), and the cross and the menu put it away; the
   protractor comes out as a half disc, moves by its grip, turns by its handle and is put away.
+- **the zoom window**: it takes its room from below the page; the page shows its frame; at 3× the region is
+  a third of the strip across; a stroke written in it lands on the page where the frame is, a third as long
+  and a third of the way in; the strip shows it at the size it was written; writing that reaches the end moves
+  it along by itself; *Next line* goes back and down; 4× shrinks the region; dragging the frame's grip moves
+  the view; closing it gives the page its room back and leaves the writing.
 - **a long stroke**: while the pen is down a long stroke has a tail layer that cannot take
   the pen's events, the stretch behind it is on the live canvas and the tail is only the last
   stretch, both go when the pen lifts, and the whole stroke lands on the page.

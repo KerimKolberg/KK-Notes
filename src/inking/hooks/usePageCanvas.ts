@@ -1,7 +1,7 @@
 import { useLayoutEffect, type RefObject } from 'react';
 import { MAX_DEVICE_PIXEL_RATIO } from '../constants';
 import { get2dContext } from '../engine/renderer';
-import type { CanvasSize } from '../types';
+import type { CanvasSize, Point } from '../types';
 import { useLatestRef } from './useLatestRef';
 
 export interface UsePageCanvasOptions {
@@ -21,6 +21,12 @@ export interface UsePageCanvasOptions {
   sizeRef: RefObject<CanvasSize>;
   /** Called after the backing stores were (re)sized, which wipes them. */
   onResize: (size: CanvasSize) => void;
+  /**
+   * Which part of the page the canvases show, for a surface that shows a window onto
+   * one rather than the whole of it: the page point at its top-left corner, in page
+   * units. Drawing code keeps working in page units; the transform does the shifting.
+   */
+  origin?: Point;
 }
 
 /**
@@ -36,8 +42,11 @@ export function usePageCanvas({
   zoom,
   sizeRef,
   onResize,
+  origin,
 }: UsePageCanvasOptions): void {
   const onResizeRef = useLatestRef(onResize);
+  const originX = origin?.x ?? 0;
+  const originY = origin?.y ?? 0;
 
   useLayoutEffect(() => {
     const apply = (): void => {
@@ -58,10 +67,15 @@ export function usePageCanvas({
         canvas.style.width = `${cssWidth}px`;
         canvas.style.height = `${cssHeight}px`;
         // Setting width/height resets context state, so (re)install the scale.
-        get2dContext(canvas)?.setTransform(pxWidth / pageWidth, 0, 0, pxHeight / pageHeight, 0, 0);
+        const sx = pxWidth / pageWidth;
+        const sy = pxHeight / pageHeight;
+        get2dContext(canvas)?.setTransform(sx, 0, 0, sy, -originX * sx, -originY * sy);
       }
 
-      const next: CanvasSize = { cssWidth: pageWidth, cssHeight: pageHeight, dpr: pxWidth / pageWidth };
+      // `clearRect(0, 0, cssWidth, cssHeight)` is how everything clears a surface, in page
+      // units; shifted by the origin the visible part is further along, so the clear has to
+      // reach that far. (Clearing more than the canvas holds costs nothing.)
+      const next: CanvasSize = { cssWidth: pageWidth + originX, cssHeight: pageHeight + originY, dpr: pxWidth / pageWidth };
       sizeRef.current = next;
       onResizeRef.current(next);
     };
@@ -83,5 +97,5 @@ export function usePageCanvas({
 
     return () => mediaQuery?.removeEventListener('change', onDprChange);
     // canvasRefs and sizeRef are stable refs; onResize is read through a ref.
-  }, [pageWidth, pageHeight, zoom, canvasRefs, sizeRef, onResizeRef]);
+  }, [pageWidth, pageHeight, zoom, originX, originY, canvasRefs, sizeRef, onResizeRef]);
 }

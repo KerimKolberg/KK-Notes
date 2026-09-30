@@ -38,6 +38,12 @@ export interface InkSurfaceProps {
   gridSpacing?: number;
   /** The ruler lying on this page: a pen that starts at its edge draws along it. */
   ruler?: Ruler | null;
+  /**
+   * For a surface that shows a window onto a page rather than all of it (`width` and `height`
+   * are then the window's size in page units, `zoom` how magnified it is): the page point at
+   * its top-left corner. Strokes and pointer positions stay in page units.
+   */
+  viewOrigin?: Point;
   /** The pen's barrel button went down or came up, contact or not. */
   onBarrelButton?: (pressed: boolean) => void;
   /** The barrel gesture must be abandoned (pen out of range, gesture taken over). */
@@ -91,6 +97,7 @@ export const InkSurface = memo(function InkSurface({
   onLassoComplete,
   gridSpacing,
   ruler = null,
+  viewOrigin,
   hiddenStrokeIds = null,
   currentTool,
   interactive = true,
@@ -113,7 +120,15 @@ export const InkSurface = memo(function InkSurface({
     renderedRef.current = strokesRef.current;
   }, [strokesRef]);
 
-  usePageCanvas({ canvasRefs, pageWidth: width, pageHeight: height, zoom, sizeRef, onResize: redrawCommitted });
+  usePageCanvas({
+    canvasRefs,
+    pageWidth: width,
+    pageHeight: height,
+    zoom,
+    sizeRef,
+    onResize: redrawCommitted,
+    ...(viewOrigin ? { origin: viewOrigin } : {}),
+  });
 
   useLayoutEffect(() => {
     const prev = renderedRef.current;
@@ -155,6 +170,7 @@ export const InkSurface = memo(function InkSurface({
     contentScaleRef: zoomRef,
     ...(gridSpacing !== undefined ? { gridSpacing } : {}),
     ruler,
+    ...(viewOrigin ? { viewOrigin } : {}),
     ...(onInteractionStart ? { onInteractionStart } : {}),
     ...(onBarrelSelect ? { onBarrelSelect } : {}),
     ...(onBorrowSelectionTool ? { onBorrowSelectionTool } : {}),

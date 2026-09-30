@@ -1732,6 +1732,103 @@ async function checkAids(browser) {
 }
 
 /**
+ * The zoom window: a magnified strip to write in, whose strokes land on the page at the
+ * page's own size, that moves along by itself as the writing reaches its end.
+ */
+async function checkZoomWindow(browser) {
+  console.log('zoom window, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-insert-trigger]', { timeout: 10_000 });
+  const rect = (selector) => page.$eval(selector, (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+  const inkBox = (selector) =>
+    page.$eval(selector, (canvas) => {
+      const rect = canvas.getBoundingClientRect();
+      const s = canvas.width / rect.width;
+      const { data, width, height } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+      let minX = width, minY = height, maxX = -1, maxY = -1, count = 0;
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (data[(y * width + x) * 4 + 3] > 100) { count++; if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+      return { count, x0: rect.left + minX / s, x1: rect.left + maxX / s, y0: rect.top + minY / s, y1: rect.top + maxY / s };
+    });
+
+  check('there is no zoom window until one is asked for', (await page.$('[data-zoom-window]')) === null);
+  const before = await rect('[data-viewer]');
+  await page.click('[data-insert-trigger]');
+  await page.click('[data-insert-zoom-window]');
+  await page.waitForSelector('[data-zoom-window]', { timeout: 5_000 });
+  await page.waitForSelector('[data-zoom-area] [data-layer="live"]', { state: 'attached' });
+  await page.waitForTimeout(300);
+  const after = await rect('[data-viewer]');
+  check('it takes its room from below the page, which gets shorter', after.h < before.h - 150, `${Math.round(before.h)} -> ${Math.round(after.h)}`);
+  check('the page shows where it is looking', (await page.$('[data-zoom-region]')) !== null);
+
+  const area = await rect('[data-zoom-area]');
+  const region = await rect('[data-zoom-region]');
+  check('at 3x the region is a third of the window across', Math.abs(region.w - area.w / 3) < 4, `${Math.round(region.w)} vs ${Math.round(area.w / 3)}`);
+
+  // A line written in the window lands on the page a third as long, where the region is.
+  const x0 = area.x + 60;
+  const y0 = area.y + area.h / 2;
+  await page.mouse.move(x0, y0);
+  await page.mouse.down();
+  await page.mouse.move(x0 + 150, y0 + 30, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+  const onPage = await inkBox('[data-page-index="0"] [data-layer="committed"]');
+  const expectedX = region.x + (x0 - area.x) / 3;
+  const expectedY = region.y + (y0 - area.y) / 3;
+  check('the stroke is on the page', onPage.count > 0);
+  check('where the region is, a third of the distance in from its corner', Math.abs(onPage.x0 - expectedX) < 4 && Math.abs(onPage.y0 - expectedY) < 4, `${onPage.x0.toFixed(1)},${onPage.y0.toFixed(1)} vs ${expectedX.toFixed(1)},${expectedY.toFixed(1)}`);
+  check('and a third as long as it was written', Math.abs(onPage.x1 - onPage.x0 - 50) < 5, `${(onPage.x1 - onPage.x0).toFixed(1)} vs 50`);
+  const inWindow = await inkBox('[data-zoom-area] [data-layer="committed"]');
+  check('the window shows it at the size it was written', Math.abs(inWindow.x1 - inWindow.x0 - 150) < 6, `${(inWindow.x1 - inWindow.x0).toFixed(1)} vs 150`);
+
+  // Writing that reaches the end of the strip moves it on.
+  const regionBefore = await rect('[data-zoom-region]');
+  const ex = area.x + area.w - 70;
+  await page.mouse.move(ex - 40, y0);
+  await page.mouse.down();
+  await page.mouse.move(ex, y0, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(450);
+  const regionAfter = await rect('[data-zoom-region]');
+  check('the window moves along by itself', regionAfter.x > regionBefore.x + 40, `${Math.round(regionBefore.x)} -> ${Math.round(regionAfter.x)}`);
+
+  // Next line: back to where the line began, and down.
+  await page.click('[data-zoom-next-line]');
+  const next = await rect('[data-zoom-region]');
+  check('next line goes back to where the line began', Math.abs(next.x - region.x) < 4, `${Math.round(next.x)} vs ${Math.round(region.x)}`);
+  check('and down', next.y > regionAfter.y + 20, `${Math.round(regionAfter.y)} -> ${Math.round(next.y)}`);
+
+  // Magnification.
+  await page.click('[data-zoom-mag="4"]');
+  await page.waitForTimeout(150);
+  const four = await rect('[data-zoom-region]');
+  check('at 4x the region is smaller still', four.w < next.w - 40 && (await page.$eval('[data-zoom-window]', (el) => el.getAttribute('data-zoom-magnification'))) === '4', `${Math.round(next.w)} -> ${Math.round(four.w)}`);
+
+  // The marker on the page moves the window's view.
+  const grip = await (await page.$('[data-zoom-region-move]')).boundingBox();
+  const beforeDrag = await rect('[data-zoom-region]');
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(grip.x + grip.width / 2 + 60, grip.y + grip.height / 2 + 80, { steps: 6 });
+  await page.mouse.up();
+  const dragged = await rect('[data-zoom-region]');
+  check('dragging the marker moves where the window is looking', Math.abs(dragged.x - beforeDrag.x - 60) < 4 && Math.abs(dragged.y - beforeDrag.y - 80) < 4, `${Math.round(dragged.x - beforeDrag.x)}, ${Math.round(dragged.y - beforeDrag.y)}`);
+
+  await page.click('[data-zoom-close]');
+  await page.waitForTimeout(200);
+  check('closing it gives the page its room back', (await page.$('[data-zoom-window]')) === null && (await page.$('[data-zoom-region]')) === null);
+  check('and leaves what was written on the page', (await inkBox('[data-page-index="0"] [data-layer="committed"]')).count > 0);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Turning a selection: the round handle above the box, and the quarter-turn buttons.
  * A flat line is the easiest thing to see turn: it ends up standing.
  */
@@ -1918,6 +2015,7 @@ try {
   await checkArrange(browser);
   await checkGridSnap(browser);
   await checkAids(browser);
+  await checkZoomWindow(browser);
   await checkTextToolbar(browser);
   await checkZoomAnchor(browser);
 } finally {

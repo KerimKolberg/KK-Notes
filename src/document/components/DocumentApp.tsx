@@ -26,7 +26,10 @@ const ImportPdfDialog = lazy(() => import('../../pdf/ImportPdfDialog').then((m) 
 const TabStrip = lazy(() => import('./TabStrip').then((m) => ({ default: m.TabStrip })));
 /** The reference pane is not loaded until a document is actually put in it. */
 const ReferencePane = lazy(() => import('./ReferencePane').then((m) => ({ default: m.ReferencePane })));
+/** The zoom window is a second drawing surface, so it is not loaded until one is opened. */
+const ZoomWindow = lazy(() => import('./ZoomWindow').then((m) => ({ default: m.ZoomWindow })));
 import { useDocumentStore } from '../store';
+import { useZoomWindowStore } from '../zoomWindow';
 import { useToolStore } from '../toolStore';
 import { DocumentViewer } from './DocumentViewer';
 import { PageArranger } from './PageArranger';
@@ -43,6 +46,7 @@ export function DocumentApp() {
   const settings = useToolStore((s) => s.settings);
   const updateSettings = useToolStore((s) => s.update);
   const settingsRef = useLatestRef(settings);
+  const zoomWindowOpen = useZoomWindowStore((s) => s.open);
 
   // Undo / redo live in the top bar now; the app only needs the page id for
   // the keyboard shortcuts and for clearing.
@@ -387,6 +391,11 @@ export function DocumentApp() {
           </>
         )}
       </div>
+      {zoomWindowOpen && (
+        <Suspense fallback={null}>
+          <ZoomWindow settingsRef={settingsRef} currentTool={settings.tool} />
+        </Suspense>
+      )}
       <PageArranger />
       {importDialogOpen && (
         <Suspense fallback={null}>
