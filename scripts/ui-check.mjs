@@ -1467,6 +1467,128 @@ async function checkLongStroke(browser) {
 }
 
 /**
+ * Flipping, grouping, lining up, copying and pasting a selection, driven the way a
+ * person does it: with the lasso, the selection's toolbar and the keyboard.
+ */
+async function checkArrange(browser) {
+  console.log('flip, group, align, copy and paste, 1280x800:');
+  const { ctx, page, errors, cx, cy } = await openPenDocument(browser);
+  const box = () => page.$eval('[data-selection-box]', (el) => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; });
+  const hasBox = () => page.$('[data-selection-box]').then((x) => x !== null);
+  const ink = () =>
+    page.$eval('[data-layer="committed"]', (canvas) => {
+      const { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+      let n = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 100) n++;
+      return n;
+    });
+  const inkAt = (x, y, r = 6) =>
+    page.$eval('[data-layer="committed"]', (canvas, [px, py, rad]) => {
+      const rect = canvas.getBoundingClientRect();
+      const s = canvas.width / rect.width;
+      const { data } = canvas.getContext('2d').getImageData(Math.round((px - rect.left - rad) * s), Math.round((py - rect.top - rad) * s), Math.round(2 * rad * s), Math.round(2 * rad * s));
+      let n = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 100) n++;
+      return n;
+    }, [x, y, r]);
+  const ring = (x, y, rx, ry) =>
+    Array.from({ length: 31 }, (_, i) => [x + rx * Math.cos((i * 12 * Math.PI) / 180), y + ry * Math.sin((i * 12 * Math.PI) / 180)]);
+  const lasso = async (x, y, rx, ry) => {
+    await page.click('[data-palette-tool="lasso"]');
+    await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [ring(x, y, rx, ry)]);
+    await page.waitForSelector('[data-selection-box]', { timeout: 3_000 });
+  };
+  const bar = (x, y, w) => Array.from({ length: 12 }, (_, i) => [x + (i * w) / 11, y]);
+  const draw = async (pts) => page.evaluate(([p]) => window.__pen.stroke(p, 1), [pts]);
+
+  // Flip: a slanted line, top-left to bottom-right, stands top-right to bottom-left afterwards.
+  const top = cy - 150;
+  await draw(Array.from({ length: 30 }, (_, i) => [cx - 200 + i * 4, top + i * 4]));
+  await lasso(cx - 142, top + 58, 100, 90);
+  const slantBefore = { tl: await inkAt(cx - 198, top + 2), tr: await inkAt(cx - 200 + 29 * 4 - 2, top + 2) };
+  check('before: the line starts top-left', slantBefore.tl > 0 && slantBefore.tr === 0, JSON.stringify(slantBefore));
+  check('a selection offers both flips', (await page.$('[data-selection-flip="horizontal"]')) !== null && (await page.$('[data-selection-flip="vertical"]')) !== null);
+  await page.click('[data-selection-flip="horizontal"]');
+  await page.waitForTimeout(150);
+  const slantAfter = { tl: await inkAt(cx - 198, top + 2), tr: await inkAt(cx - 200 + 29 * 4 - 2, top + 2) };
+  check('flipped left to right, it starts top-right', slantAfter.tr > 0 && slantAfter.tl === 0, JSON.stringify(slantAfter));
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(150);
+  check('undo flips it back', (await inkAt(cx - 198, top + 2)) > 0);
+  await page.keyboard.press('Escape');
+
+  // Three bars of different lengths, left edges scattered.
+  const y0 = cy + 30;
+  await page.click('[data-palette-tool="pen"]');
+  await draw(bar(cx - 180, y0, 60));
+  await draw(bar(cx - 120, y0 + 50, 140));
+  await draw(bar(cx + 10, y0 + 100, 90));
+  await lasso(cx - 40, y0 + 50, 170, 90);
+  const spread = await box();
+  check('three bars are offered Align', (await page.$('[data-selection-align-toggle]')) !== null);
+  check('the align row starts closed', (await page.$('[data-selection-align-row]')) === null);
+  await page.click('[data-selection-align-toggle]');
+  await page.waitForSelector('[data-selection-align-row]');
+  check('with three there is spreading too', (await page.$('[data-selection-distribute="horizontal"]')) !== null);
+  await page.click('[data-selection-align="left"]');
+  await page.waitForTimeout(150);
+  const flush = await box();
+  check('aligning left edges brings the bars together', flush.w < spread.w - 60, `${Math.round(spread.w)} -> ${Math.round(flush.w)}`);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(150);
+  check('undo puts them back', (await box()).w > spread.w - 4);
+
+  // Group two of them: a lasso round one takes both.
+  await page.keyboard.press('Escape');
+  await page.click('[data-palette-tool="lasso"]');
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [ring(cx - 150, y0, 50, 14)]);
+  await page.waitForSelector('[data-selection-box]', { timeout: 3_000 });
+  const justOne = await box();
+  check('before grouping, a loop round one bar takes one', justOne.w < 130, `${Math.round(justOne.w)}px wide`);
+  check('one stroke on its own cannot be grouped', (await page.$('[data-selection-group]')) === null && (await page.$('[data-selection-ungroup]')) === null);
+  await page.keyboard.press('Escape');
+  await lasso(cx - 80, y0 + 25, 130, 55);
+  await page.click('[data-selection-group]');
+  check('a group offers Ungroup and no longer Group', (await page.$('[data-selection-ungroup]')) !== null && (await page.$('[data-selection-group]')) === null);
+  await page.keyboard.press('Escape');
+  await page.click('[data-palette-tool="lasso"]');
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [ring(cx - 150, y0, 50, 14)]);
+  await page.waitForSelector('[data-selection-box]', { timeout: 3_000 });
+  const whole = await box();
+  check('after grouping, a loop round one bar takes the whole group', whole.w > justOne.w + 60 && whole.h > justOne.h + 30, `${Math.round(justOne.w)}x${Math.round(justOne.h)} -> ${Math.round(whole.w)}x${Math.round(whole.h)}`);
+  await page.click('[data-selection-ungroup]');
+  await page.keyboard.press('Escape');
+
+  // Copy and paste, by button and by key.
+  await lasso(cx - 40, y0 + 50, 170, 90);
+  const before = await ink();
+  await page.click('[data-selection-copy]');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('[data-paste-pill]', { timeout: 3_000 });
+  check('with something copied, the page offers to paste it', true);
+  await page.click('[data-paste-pill]');
+  await page.waitForTimeout(200);
+  const afterPaste = await ink();
+  check('pasting adds the copies to the page', afterPaste > before * 1.6, `${before} -> ${afterPaste}px of ink`);
+  check('and selects them', await hasBox());
+  check('the paste offer goes away once there is a selection', (await page.$('[data-paste-pill]')) === null);
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(200);
+  check('undo takes the paste back off in one step', (await ink()) <= before + 4, `${await ink()} vs ${before}`);
+  await page.keyboard.press('Escape');
+  await page.click('[data-palette-tool="pen"]');
+  await page.keyboard.press('Control+v');
+  await page.waitForTimeout(250);
+  check('Ctrl+V pastes from the keyboard, and brings the lasso out to show the copies', (await hasBox()) && (await ink()) > before * 1.6);
+  await page.click('[data-selection-cut]');
+  await page.waitForTimeout(200);
+  check('cut takes the selection off the page', !(await hasBox()) && (await ink()) <= before + 4, `${await ink()} vs ${before}`);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Turning a selection: the round handle above the box, and the quarter-turn buttons.
  * A flat line is the easiest thing to see turn: it ends up standing.
  */
@@ -1650,6 +1772,7 @@ try {
   await checkLasso(browser);
   await checkLongStroke(browser);
   await checkRotate(browser);
+  await checkArrange(browser);
   await checkTextToolbar(browser);
   await checkZoomAnchor(browser);
 } finally {

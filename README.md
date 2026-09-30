@@ -863,6 +863,36 @@ box on a z-25 layer between the ink and the form widgets:
   selection is the box round what is drawn, so it is wider than the content at 45°;
   the next turn is about *its* middle. Images, notes and tables were already
   turnable by their own handle;
+- **flip**: two buttons mirror the selection left to right or top to bottom about the
+  middle of its box (`StrokeTransform` `flip`, one undo step like the rest). Freehand strokes,
+  lines, polygons and curves mirror point by point; a curve's bow is negated so it bows the
+  mirror-image way (the test compares every point of every curve kind, on both axes, against the
+  mirror of the original); a rectangle's and ellipse's tilt goes the other way; a heart is the
+  same heart mirrored left to right and upside down when flipped the other way, through its
+  `rotation`; a coordinate plane moves to where its mirror image would stand and keeps the way
+  up it had, since a plane that counted backwards is not the tool anyone drew;
+- **group**: strokes that share a `groupId` (optional, absent on anything not grouped, so saved
+  notes are unchanged) are one thing. A lasso that takes one member takes them all
+  (`setLassoSelection` expands the ids, the one place a selection is made), aligning moves a
+  group as a unit, and a copy or a paste gets a group of its own rather than joining its original's.
+  Group needs two or more strokes that are not already one group; Ungroup shows when any of the
+  selection is grouped; Ctrl+G and Ctrl+Shift+G do the same;
+- **align and spread**: an Align button opens a row of six alignments (left, centre, right,
+  top, middle, bottom of the selection as a whole) and, with three or more things, two ways to
+  space them evenly (`arrangeOffsets`). Things are groups or single strokes, compared by the
+  padded boxes the page culls by, so the outer edges of thick and thin lines are what meet. Spreading
+  keeps the outermost two where they are and makes every gap between neighbours equal, whatever
+  order the strokes are in the list. Nothing moves, and no undo step is made, when everything is
+  already where it would go;
+- **copy, cut, paste**: Copy and Cut are buttons in the toolbar and Ctrl+C / Ctrl+X. The
+  clipboard is its own small store (`clipboard.ts`), not part of the document: it is neither saved
+  nor undone, it outlives switching to another note in a tab, and it is gone when the app closes.
+  Ctrl+V pastes on the page in view and brings the lasso out so the copies show as selected; with
+  the lasso in hand and nothing selected, each page in view offers a *Paste* pill, because a finger
+  has no Ctrl+V. On the page the strokes came from, copies land a step beside the originals (each
+  paste a step further, so two pastes do not stack); on any other page they land in the same spot,
+  pulled back inside the page if it is smaller. A paste is one undo step. Copying works on a locked
+  note, since it changes nothing; cutting, pasting, grouping and aligning do not;
 - **quick actions**: Duplicate (offset copies become the new selection),
   six colour swatches plus a colour picker, a width slider that previews
   live and commits on release, Delete, Deselect; Delete / Backspace and
@@ -2243,6 +2273,10 @@ hit-testing can answer:
 - **stretching a lasso selection**: a line offers only its two stretching handles, a
   pull far out keeps following the pen (the handle stays in the page), a grab off the
   handle's centre does not lurch the selection.
+- **flip, group, align, copy and paste**: a slanted line starts top-right after a flip and top-left
+  after undoing it; three bars line their left edges up and undo puts them back; after grouping two, a
+  loop round one takes both; copying offers a Paste pill, pasting adds and selects the copies and undo
+  takes them off in one step; Ctrl+V pastes and brings the lasso out; cut empties the selection.
 - **a long stroke**: while the pen is down a long stroke has a tail layer that cannot take
   the pen's events, the stretch behind it is on the live canvas and the tail is only the last
   stretch, both go when the pen lifts, and the whole stroke lands on the page.

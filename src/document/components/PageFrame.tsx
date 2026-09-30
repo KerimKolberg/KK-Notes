@@ -6,7 +6,9 @@ import type { Point, Stroke, ToolSettings } from '../../inking/types';
 import { FormOverlay } from '../../pdf/FormOverlay';
 import { PdfBackground } from '../../pdf/PdfBackground';
 import type { PageLayout } from '../layout';
+import { ClipboardPaste } from 'lucide-react';
 import { usePreferencesStore } from '../../preferences/store';
+import { useClipboardStore } from '../clipboard';
 import { eraserRadius } from '../../inking/engine/toolStyles';
 import { useDocumentStore } from '../store';
 import { templateSvgDataUrl } from '../templates';
@@ -57,6 +59,8 @@ export const PageFrame = memo(function PageFrame({
   const clearLassoSelection = useDocumentStore((s) => s.clearLassoSelection);
   const lassoIds = useDocumentStore((s) => (s.lassoSelection?.pageId === page.id ? s.lassoSelection.strokeIds : null));
   const readOnly = useDocumentStore((s) => s.readOnly);
+  const pasteSelection = useDocumentStore((s) => s.pasteSelection);
+  const copiedCount = useClipboardStore((s) => s.strokes.length);
   // Only used as a `key`: a canvas's attributes are fixed by its first
   // `getContext`, so the surface has to be rebuilt for the switch to take effect.
   const lowLatencyInk = usePreferencesStore((s) => s.lowLatencyInk);
@@ -107,6 +111,9 @@ export const PageFrame = memo(function PageFrame({
   // usable for presenting, with pen and mouse only (one finger keeps panning).
   const laserOnly = readOnly && currentTool === 'laser-pointer';
   const showSelection = !readOnly && lassoIds !== null && (currentTool === 'lasso' || currentTool === 'select');
+  // Something is on the clipboard and the lasso is in hand with nothing selected: offer
+  // to put it down here, since a finger has no Ctrl+V.
+  const showPaste = mode === 'active' && isCurrent && !readOnly && currentTool === 'lasso' && lassoIds === null && copiedCount > 0;
 
   return (
     <div
@@ -172,6 +179,22 @@ export const PageFrame = memo(function PageFrame({
         </>
       ) : (
         <PageSnapshot page={page} cssWidth={layout.width} cssHeight={layout.height} />
+      )}
+      {showPaste && (
+        <button
+          type="button"
+          data-paste-pill
+          className="absolute left-3 top-3 z-[35] inline-flex h-8 items-center gap-1.5 rounded-full bg-zinc-900/95 px-3 text-xs font-medium text-white shadow-lg hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-blue-300"
+          title="Paste what was copied onto this page (Ctrl+V)"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => {
+            setActivePage(index);
+            pasteSelection(page.id);
+          }}
+        >
+          <ClipboardPaste size={14} aria-hidden="true" />
+          Paste{copiedCount > 1 ? ` ${copiedCount} strokes` : ''}
+        </button>
       )}
       <span className="pointer-events-none absolute bottom-2 right-3 select-none rounded bg-black/40 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-white/90">
         {page.pageNumber}

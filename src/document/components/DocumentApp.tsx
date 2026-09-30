@@ -221,9 +221,55 @@ export function DocumentApp() {
   // Delete / Backspace removes the lasso selection or the selected media; Escape deselects.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      const { selectedMedia, lassoSelection, removeMedia, selectMedia, deleteSelection, clearLassoSelection, readOnly: locked } =
-        useDocumentStore.getState();
-      if (locked || isEditableTarget(e.target)) return;
+      const {
+        selectedMedia,
+        lassoSelection,
+        removeMedia,
+        selectMedia,
+        deleteSelection,
+        clearLassoSelection,
+        copySelection,
+        cutSelection,
+        pasteSelection,
+        groupSelection,
+        ungroupSelection,
+        readOnly: locked,
+      } = useDocumentStore.getState();
+      if (isEditableTarget(e.target)) return;
+      // Copy, cut, paste and group, for a selection. Copying is allowed on a locked note
+      // (it changes nothing), and the rest are not.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        const key = e.key.toLowerCase();
+        if (key === 'c' && lassoSelection) {
+          e.preventDefault();
+          copySelection(lassoSelection.pageId, lassoSelection.strokeIds);
+          return;
+        }
+        if (locked) return;
+        if (key === 'x' && lassoSelection) {
+          e.preventDefault();
+          cutSelection(lassoSelection.pageId, lassoSelection.strokeIds);
+          return;
+        }
+        if (key === 'v') {
+          const { document: doc } = useDocumentStore.getState();
+          const target = doc.pages[doc.activePageIndex];
+          if (target && pasteSelection(target.id)) {
+            e.preventDefault();
+            // The copies are selected, and a selection only shows under the lasso.
+            if (useToolStore.getState().settings.tool !== 'lasso') useToolStore.getState().update({ tool: 'lasso' });
+          }
+          return;
+        }
+        if (key === 'g' && lassoSelection) {
+          e.preventDefault();
+          if (e.shiftKey) ungroupSelection(lassoSelection.pageId, lassoSelection.strokeIds);
+          else groupSelection(lassoSelection.pageId, lassoSelection.strokeIds);
+          return;
+        }
+        return;
+      }
+      if (locked) return;
       const isDelete = e.key === 'Delete' || e.key === 'Backspace';
       if (lassoSelection) {
         if (isDelete) {

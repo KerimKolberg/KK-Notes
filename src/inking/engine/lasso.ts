@@ -340,10 +340,20 @@ export type StrokeTransform =
   | { readonly kind: 'translate'; readonly dx: number; readonly dy: number }
   | { readonly kind: 'scale'; readonly origin: Point; readonly sx: number; readonly sy: number }
   /** Turn about `origin` by `angle` radians, clockwise as seen on the page (y points down). */
-  | { readonly kind: 'rotate'; readonly origin: Point; readonly angle: number };
+  | { readonly kind: 'rotate'; readonly origin: Point; readonly angle: number }
+  /**
+   * Mirror across the line through `origin`: `horizontal` swaps left and right (the
+   * mirror is vertical), `vertical` swaps top and bottom.
+   */
+  | { readonly kind: 'flip'; readonly origin: Point; readonly axis: FlipAxis };
+
+export type FlipAxis = 'horizontal' | 'vertical';
 
 export function transformPoint<P extends Point>(p: P, t: StrokeTransform): P {
   if (t.kind === 'translate') return { ...p, x: p.x + t.dx, y: p.y + t.dy };
+  if (t.kind === 'flip') {
+    return t.axis === 'horizontal' ? { ...p, x: 2 * t.origin.x - p.x } : { ...p, y: 2 * t.origin.y - p.y };
+  }
   if (t.kind === 'rotate') {
     const cos = Math.cos(t.angle);
     const sin = Math.sin(t.angle);
@@ -382,9 +392,17 @@ function scaleFactors(t: StrokeTransform): { sx: number; sy: number } {
   return t.kind === 'scale' ? { sx: Math.abs(t.sx), sy: Math.abs(t.sy) } : { sx: 1, sy: 1 };
 }
 
-/** The turn a transform adds to a shape that has an orientation of its own. */
-function turnOf(t: StrokeTransform): number {
-  return t.kind === 'rotate' ? t.angle : 0;
+/**
+ * The orientation a shape that has one (and is symmetric about its own axes) ends up
+ * with: turned by a rotation, mirrored by a flip. A mirror negates the angle; a
+ * mirror across the horizontal axis is one across the vertical axis and a half turn,
+ * which these shapes cannot tell from no turn at all for the rectangle and ellipse
+ * (a half turn looks the same) but the heart can.
+ */
+function orientedBy(rotation: number, t: StrokeTransform, halfTurnMatters: boolean): number {
+  if (t.kind === 'rotate') return rotation + t.angle;
+  if (t.kind === 'flip') return (t.axis === 'vertical' && halfTurnMatters ? Math.PI : 0) - rotation;
+  return rotation;
 }
 
 function transformShape(shape: Shape, t: StrokeTransform): Shape {
@@ -401,7 +419,7 @@ function transformShape(shape: Shape, t: StrokeTransform): Shape {
         center: transformPoint(shape.center, t),
         width: shape.width * sx,
         height: shape.height * sy,
-        rotation: shape.rotation + turnOf(t),
+        rotation: orientedBy(shape.rotation, t, false),
       };
     case 'ellipse':
       return {
@@ -409,7 +427,7 @@ function transformShape(shape: Shape, t: StrokeTransform): Shape {
         center: transformPoint(shape.center, t),
         radiusX: shape.radiusX * sx,
         radiusY: shape.radiusY * sy,
-        rotation: shape.rotation + turnOf(t),
+        rotation: orientedBy(shape.rotation, t, false),
       };
     case 'heart':
       return {
@@ -417,7 +435,7 @@ function transformShape(shape: Shape, t: StrokeTransform): Shape {
         center: transformPoint(shape.center, t),
         width: shape.width * sx,
         height: shape.height * sy,
-        ...(t.kind === 'rotate' ? { rotation: (shape.rotation ?? 0) + t.angle } : {}),
+        ...(t.kind === 'rotate' || t.kind === 'flip' ? { rotation: orientedBy(shape.rotation ?? 0, t, true) } : {}),
       };
     case 'curve':
       // The amplitude is measured across the chord, so it follows whichever
@@ -427,7 +445,9 @@ function transformShape(shape: Shape, t: StrokeTransform): Shape {
         ...shape,
         from: transformPoint(shape.from, t),
         to: transformPoint(shape.to, t),
-        amplitude: shape.amplitude * ((sx + sy) / 2),
+        // A mirror turns the bow the other way round the chord: the same signed
+        // amplitude would bow the mirror image the opposite way to the original.
+        amplitude: shape.amplitude * ((sx + sy) / 2) * (t.kind === 'flip' ? -1 : 1),
       };
     case 'coordinate-plane':
       return {
@@ -521,7 +541,9 @@ export function duplicateStrokes(
     const moved = transformStroke(s, { kind: 'translate', dx: offset.x, dy: offset.y });
     copies.push({ ...moved, id: createStrokeId(), createdAt: performance.now() } as Stroke);
   }
-  return { strokes: [...strokes, ...copies], ids: copies.map((c) => c.id) };
+  // A copy of a group is a group of its own, not another member of the original's.
+  const regrouped = regroupCopies(copies);
+  return { strokes: [...strokes, ...regrouped], ids: regrouped.map((c) => c.id) };
 }
 
 export function removeStrokesById(strokes: readonly Stroke[], ids: ReadonlySet<string>): Stroke[] {
@@ -696,4 +718,18 @@ export function rotationFromPointer(centre: Point, from: Point, to: Point, stepp
   const a0 = Math.atan2(from.y - centre.y, from.x - centre.x);
   const a1 = Math.atan2(to.y - centre.y, to.x - centre.x);
   return { kind: 'rotate', origin: centre, angle: snapRotation(normalizeAngle(a1 - a0), stepped) };
+}
+
+/** Give each group among a set of copies a group of its own. (`arrange.ts` owns the idea; this avoids a cycle.) */
+function regroupCopies(copies: readonly Stroke[]): Stroke[] {
+  const fresh = new Map<string, string>();
+  return copies.map((s) => {
+    if (s.groupId === undefined) return s;
+    let id = fresh.get(s.groupId);
+    if (id === undefined) {
+      id = `g_${createStrokeId()}`;
+      fresh.set(s.groupId, id);
+    }
+    return { ...s, groupId: id } as Stroke;
+  });
 }

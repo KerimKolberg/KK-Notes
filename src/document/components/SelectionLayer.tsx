@@ -9,7 +9,25 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { RotateCcw, RotateCw } from 'lucide-react';
+import {
+  AlignHorizontalDistributeCenter,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyEnd,
+  AlignHorizontalJustifyStart,
+  AlignVerticalDistributeCenter,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignVerticalJustifyStart,
+  Copy,
+  FlipHorizontal2,
+  FlipVertical2,
+  Group,
+  RotateCcw,
+  RotateCw,
+  Scissors,
+  Ungroup,
+  type LucideIcon,
+} from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   COLOR_PALETTE,
@@ -21,6 +39,15 @@ import {
   MIN_STROKE_SIZE,
   STROKE_PATTERNS,
 } from '../../inking/constants';
+import {
+  arrangeUnits,
+  canAlign,
+  canDistribute,
+  canGroup,
+  hasGroup,
+  type AlignMode,
+  type DistributeAxis,
+} from '../../inking/engine/arrange';
 import { subscribeTouchGesture } from '../../inking/engine/gestureState';
 import {
   reshapeStrokes,
@@ -106,6 +133,20 @@ const TOOLBAR_HEIGHT = 40;
 const ROTATE_OFFSET = 34;
 const SWATCHES = COLOR_PALETTE.slice(0, 6);
 
+/** Where the align controls put things, with the icon that says so. */
+const ALIGN_BUTTONS: readonly { readonly mode: AlignMode; readonly label: string; readonly Icon: LucideIcon }[] = [
+  { mode: 'left', label: 'Align left edges', Icon: AlignHorizontalJustifyStart },
+  { mode: 'centre', label: 'Centre across', Icon: AlignHorizontalJustifyCenter },
+  { mode: 'right', label: 'Align right edges', Icon: AlignHorizontalJustifyEnd },
+  { mode: 'top', label: 'Align tops', Icon: AlignVerticalJustifyStart },
+  { mode: 'middle', label: 'Centre down', Icon: AlignVerticalJustifyCenter },
+  { mode: 'bottom', label: 'Align bottoms', Icon: AlignVerticalJustifyEnd },
+];
+const DISTRIBUTE_BUTTONS: readonly { readonly axis: DistributeAxis; readonly label: string; readonly Icon: LucideIcon }[] = [
+  { axis: 'horizontal', label: 'Space evenly across', Icon: AlignHorizontalDistributeCenter },
+  { axis: 'vertical', label: 'Space evenly down', Icon: AlignVerticalDistributeCenter },
+];
+
 /** On-screen rects of every mounted page, for deciding where a drag was dropped. */
 function mountedPageRects(): PageRect[] {
   const rects: PageRect[] = [];
@@ -121,6 +162,7 @@ function mountedPageRects(): PageRect[] {
 function isIdentity(t: StrokeTransform): boolean {
   if (t.kind === 'translate') return t.dx === 0 && t.dy === 0;
   if (t.kind === 'rotate') return t.angle === 0;
+  if (t.kind === 'flip') return false;
   return t.sx === 1 && t.sy === 1;
 }
 
@@ -176,6 +218,11 @@ export const SelectionLayer = memo(function SelectionLayer({
     duplicateSelection,
     deleteSelection,
     moveSelectionToPage,
+    copySelection,
+    cutSelection,
+    groupSelection,
+    ungroupSelection,
+    arrangeSelection,
   } = useDocumentStore(
     useShallow((s) => ({
       clearLassoSelection: s.clearLassoSelection,
@@ -185,6 +232,11 @@ export const SelectionLayer = memo(function SelectionLayer({
       duplicateSelection: s.duplicateSelection,
       deleteSelection: s.deleteSelection,
       moveSelectionToPage: s.moveSelectionToPage,
+      copySelection: s.copySelection,
+      cutSelection: s.cutSelection,
+      groupSelection: s.groupSelection,
+      ungroupSelection: s.ungroupSelection,
+      arrangeSelection: s.arrangeSelection,
     })),
   );
 
@@ -498,6 +550,10 @@ export const SelectionLayer = memo(function SelectionLayer({
     reshapeSelection(page.id, strokeIds, current.edit);
   }, [page.id, strokeIds, reshapeSelection, setDraft]);
 
+  // Lining up works on things, and a group is one thing; the controls say what they can do.
+  const units = useMemo(() => arrangeUnits(selected), [selected]);
+  const [alignOpen, setAlignOpen] = useState(false);
+
   if (!bounds || selected.length === 0) return null;
 
   const box = {
@@ -522,6 +578,8 @@ export const SelectionLayer = memo(function SelectionLayer({
   const rotateY = toolbarBelow ? box.top + box.height + ROTATE_OFFSET / zoom : box.top - ROTATE_OFFSET / zoom;
   const quarterTurn = (angle: number): void =>
     transformSelection(page.id, strokeIds, { kind: 'rotate', origin: boundsCentre(bounds), angle });
+  const flip = (axis: 'horizontal' | 'vertical'): void =>
+    transformSelection(page.id, strokeIds, { kind: 'flip', origin: boundsCentre(bounds), axis });
   /** Corners sit on their corner; an edge handle sits at the middle of it. */
   const handlePoint = (h: ScaleHandle): Point => ({
     x: h.includes('w') ? box.left : h.includes('e') ? box.left + box.width : box.left + box.width / 2,
@@ -745,6 +803,115 @@ export const SelectionLayer = memo(function SelectionLayer({
           >
             <RotateCw size={14} aria-hidden="true" />
           </button>
+          <button
+            type="button"
+            className={`${toolbarButton} w-7 justify-center px-0`}
+            onClick={() => flip('horizontal')}
+            title="Flip left to right"
+            aria-label="Flip left to right"
+            data-selection-flip="horizontal"
+          >
+            <FlipHorizontal2 size={14} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`${toolbarButton} w-7 justify-center px-0`}
+            onClick={() => flip('vertical')}
+            title="Flip top to bottom"
+            aria-label="Flip top to bottom"
+            data-selection-flip="vertical"
+          >
+            <FlipVertical2 size={14} aria-hidden="true" />
+          </button>
+          <span className="mx-0.5 h-5 w-px bg-white/20" aria-hidden="true" />
+          <button
+            type="button"
+            className={`${toolbarButton} w-7 justify-center px-0`}
+            onClick={() => copySelection(page.id, strokeIds)}
+            title="Copy (Ctrl+C)"
+            aria-label="Copy"
+            data-selection-copy
+          >
+            <Copy size={14} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`${toolbarButton} w-7 justify-center px-0`}
+            onClick={() => cutSelection(page.id, strokeIds)}
+            title="Cut (Ctrl+X)"
+            aria-label="Cut"
+            data-selection-cut
+          >
+            <Scissors size={14} aria-hidden="true" />
+          </button>
+          {canGroup(selected) && (
+            <button
+              type="button"
+              className={`${toolbarButton} w-7 justify-center px-0`}
+              onClick={() => groupSelection(page.id, strokeIds)}
+              title="Group: select and move them together (Ctrl+G)"
+              aria-label="Group"
+              data-selection-group
+            >
+              <Group size={14} aria-hidden="true" />
+            </button>
+          )}
+          {hasGroup(selected) && (
+            <button
+              type="button"
+              className={`${toolbarButton} w-7 justify-center px-0`}
+              onClick={() => ungroupSelection(page.id, strokeIds)}
+              title="Ungroup (Ctrl+Shift+G)"
+              aria-label="Ungroup"
+              data-selection-ungroup
+            >
+              <Ungroup size={14} aria-hidden="true" />
+            </button>
+          )}
+          {canAlign(units) && (
+            <button
+              type="button"
+              className={`${toolbarButton} ${alignOpen ? 'bg-blue-500 hover:bg-blue-500' : ''}`}
+              aria-pressed={alignOpen}
+              onClick={() => setAlignOpen((open) => !open)}
+              title="Line things up or space them evenly"
+              data-selection-align-toggle
+            >
+              Align
+            </button>
+          )}
+          {alignOpen && canAlign(units) && (
+            <div className="flex basis-full flex-wrap items-center justify-center gap-0.5 border-t border-white/15 pt-1" role="group" aria-label="Align" data-selection-align-row>
+              {ALIGN_BUTTONS.map(({ mode, label, Icon }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  className={`${toolbarButton} w-7 justify-center px-0`}
+                  onClick={() => arrangeSelection(page.id, strokeIds, { kind: 'align', mode })}
+                  title={label}
+                  aria-label={label}
+                  data-selection-align={mode}
+                >
+                  <Icon size={14} aria-hidden="true" />
+                </button>
+              ))}
+              {canDistribute(units) && <span className="mx-0.5 h-5 w-px bg-white/20" aria-hidden="true" />}
+              {canDistribute(units) &&
+                DISTRIBUTE_BUTTONS.map(({ axis, label, Icon }) => (
+                  <button
+                    key={axis}
+                    type="button"
+                    className={`${toolbarButton} w-7 justify-center px-0`}
+                    onClick={() => arrangeSelection(page.id, strokeIds, { kind: 'distribute', axis })}
+                    title={label}
+                    aria-label={label}
+                    data-selection-distribute={axis}
+                  >
+                    <Icon size={14} aria-hidden="true" />
+                  </button>
+                ))}
+            </div>
+          )}
           <span className="mx-0.5 h-5 w-px bg-white/20" aria-hidden="true" />
           <div className="flex items-center gap-0.5" role="group" aria-label="Stroke colour">
             {SWATCHES.map((color) => (

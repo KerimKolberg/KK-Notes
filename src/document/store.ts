@@ -6,6 +6,16 @@
  */
 import { create } from 'zustand';
 import {
+  arrangeStrokes,
+  createGroupId,
+  expandToGroups,
+  groupStrokes,
+  pastedCopies,
+  ungroupStrokes,
+  type ArrangeOp,
+} from '../inking/engine/arrange';
+import {
+  DUPLICATE_OFFSET,
   duplicateStrokes,
   removeStrokesById,
   reshapeStrokes,
@@ -19,6 +29,7 @@ import type { CurveEdit } from '../inking/engine/shapes';
 import { keepStrokes, type EraseFilter } from '../inking/engine/eraseFilter';
 import type { Stroke } from '../inking/types';
 import { TEMPLATE_DEFAULT_SPACING, ZOOM_STEP } from './constants';
+import { useClipboardStore } from './clipboard';
 import { clampZoom } from './layout';
 import {
   addImage as addMediaToList,
@@ -149,6 +160,21 @@ export interface DocumentStore {
   /** Appends offset copies and moves the selection onto them. */
   duplicateSelection: (pageId: string, ids: readonly string[]) => void;
   deleteSelection: (pageId: string, ids: readonly string[]) => void;
+  /** Make the selected strokes one group: a lasso takes them together and aligning moves them as one. */
+  groupSelection: (pageId: string, ids: readonly string[]) => void;
+  ungroupSelection: (pageId: string, ids: readonly string[]) => void;
+  /** Line the selection up, or space it evenly, as one undo step. */
+  arrangeSelection: (pageId: string, ids: readonly string[], op: ArrangeOp) => void;
+  /** Put the selection on the clipboard, leaving it where it is. */
+  copySelection: (pageId: string, ids: readonly string[]) => void;
+  /** Copy it, then delete it. */
+  cutSelection: (pageId: string, ids: readonly string[]) => void;
+  /**
+   * Paste what was last copied onto a page and select the copies. Beside the
+   * originals if it is the page they came from, in the same place on any other.
+   * Returns whether there was anything to paste.
+   */
+  pasteSelection: (pageId: string) => boolean;
   /**
    * Hand the selection to another page, transformed into its coordinates.
    * The strokes keep their ids, so the selection survives the move.
@@ -208,7 +234,7 @@ function updateTargets(doc: Document, target: PageTarget, fn: (page: Page) => Pa
 
 const initialDocument = createDocument(1);
 
-export const useDocumentStore = create<DocumentStore>()((set) => ({
+export const useDocumentStore = create<DocumentStore>()((set, get) => ({
   document: initialDocument,
   scrollRequest: 0,
   arrangerOpen: false,
@@ -444,7 +470,16 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
     })),
 
   setLassoSelection: (selection) =>
-    set(edit((s) => (selection === null && s.lassoSelection === null ? s : { lassoSelection: selection }))),
+    set(
+      edit((s) => {
+        if (selection === null) return s.lassoSelection === null ? s : { lassoSelection: null };
+        // A group is selected whole: one stroke of it in the loop is all of it.
+        const page = s.document.pages.find((p) => p.id === selection.pageId);
+        if (!page) return { lassoSelection: selection };
+        const strokeIds = expandToGroups(page.strokes, selection.strokeIds);
+        return { lassoSelection: { pageId: selection.pageId, strokeIds } };
+      }),
+    ),
 
   clearLassoSelection: () => set((s) => (s.lassoSelection === null ? s : { lassoSelection: null })),
 
@@ -502,6 +537,74 @@ export const useDocumentStore = create<DocumentStore>()((set) => ({
         lassoSelection: s.lassoSelection?.pageId === pageId ? null : s.lassoSelection,
       };
     })),
+
+  groupSelection: (pageId, ids) =>
+    set(edit((s) => {
+      if (ids.length < 2) return s;
+      const idSet = new Set(ids);
+      const groupId = createGroupId();
+      return {
+        document: updatePageById(s.document, pageId, (page) => {
+          const next = groupStrokes(page.strokes, idSet, groupId);
+          return next.every((stroke, i) => stroke === page.strokes[i]) ? page : withStrokes(page, next);
+        }),
+      };
+    })),
+
+  ungroupSelection: (pageId, ids) =>
+    set(edit((s) => {
+      const idSet = new Set(ids);
+      return {
+        document: updatePageById(s.document, pageId, (page) => {
+          const next = ungroupStrokes(page.strokes, idSet);
+          return next.every((stroke, i) => stroke === page.strokes[i]) ? page : withStrokes(page, next);
+        }),
+      };
+    })),
+
+  arrangeSelection: (pageId, ids, op) =>
+    set(edit((s) => {
+      const idSet = new Set(ids);
+      return {
+        document: updatePageById(s.document, pageId, (page) => {
+          const next = arrangeStrokes(page.strokes, idSet, op);
+          return next.every((stroke, i) => stroke === page.strokes[i]) ? page : withStrokes(page, next);
+        }),
+      };
+    })),
+
+  // Copying changes nothing in the document, so it is allowed while it is locked too.
+  copySelection: (pageId, ids) => {
+    const page = get().document.pages.find((p) => p.id === pageId);
+    if (!page) return;
+    const idSet = new Set(ids);
+    useClipboardStore.getState().copy(page.strokes.filter((stroke) => idSet.has(stroke.id)), pageId);
+  },
+
+  cutSelection: (pageId, ids) => {
+    if (get().readOnly) return;
+    get().copySelection(pageId, ids);
+    get().deleteSelection(pageId, ids);
+  },
+
+  pasteSelection: (pageId) => {
+    const clipboard = useClipboardStore.getState();
+    if (get().readOnly || clipboard.strokes.length === 0) return false;
+    const target = get().document.pages.find((p) => p.id === pageId);
+    if (!target) return false;
+    // Beside the originals on their own page (each paste a step further, so pasting twice
+    // does not stack the copies), in the same spot on any other.
+    const steps = clipboard.sourcePageId === pageId ? clipboard.pastes + 1 : clipboard.pastes;
+    const offset = { x: DUPLICATE_OFFSET.x * steps, y: DUPLICATE_OFFSET.y * steps };
+    const copies = pastedCopies(clipboard.strokes, offset, target.dimensions);
+    if (copies.length === 0) return false;
+    clipboard.notePasted();
+    set(edit((s) => ({
+      document: updatePageById(s.document, pageId, (page) => withStrokes(page, [...page.strokes, ...copies])),
+      lassoSelection: { pageId, strokeIds: copies.map((c) => c.id) },
+    })));
+    return true;
+  },
 
   moveSelectionToPage: (fromPageId, toPageId, ids, transform) =>
     set(edit((s) => {

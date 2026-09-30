@@ -278,6 +278,11 @@ interface StrokeBase {
   readonly pointerType: InkPointerType;
   /** `performance.now()`-style timestamp at stroke start. */
   readonly createdAt: number;
+  /**
+   * Strokes that share one are a group: a lasso that takes one takes them all, and
+   * aligning moves them as one thing. Absent on anything not grouped.
+   */
+  readonly groupId?: string;
 }
 
 /** Raw pointer samples rendered through perfect-freehand (or a dashed centreline). */
