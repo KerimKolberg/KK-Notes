@@ -1063,6 +1063,54 @@ async function openPenDocument(browser, stylus) {
 }
 
 /**
+ * Where the colours and the tools stand on each dock. The tools are against the
+ * edge the bar is docked to and the colours on the side facing the page, so the
+ * right dock mirrors the left and the bottom mirrors the top; standing on end, the
+ * settings button heads the column of colours rather than ending the tools.
+ */
+async function checkDocks(browser) {
+  console.log('dock layouts, 1280x800:');
+  const geometry = async (dock) => {
+    const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+    await ctx.addInitScript((d) => localStorage.setItem('notes.preferences.v1', JSON.stringify({ paletteDock: d })), dock);
+    const page = await ctx.newPage();
+    await openDocument(page);
+    await page.waitForSelector('[data-tool-palette]', { state: 'visible', timeout: 10_000 });
+    await page.waitForTimeout(300);
+    const found = await page.evaluate(() => {
+      const box = (el) => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, cx: r.left + r.width / 2, cy: r.top + r.height / 2 }; };
+      const swatches = [...document.querySelectorAll('[data-swatch]')].map((el) => box(el));
+      return {
+        settings: box(document.querySelector('[data-palette-settings-trigger]')),
+        pen: box(document.querySelector('[data-palette-tool="pen"]')),
+        config: box(document.querySelector('[data-tool-config]')),
+        swatches,
+        panel: box(document.querySelector('[data-tool-palette]')),
+      };
+    });
+    await ctx.close();
+    return found;
+  };
+
+  const left = await geometry('left');
+  check('left: the settings button sits over the colours, in their column', Math.abs(left.settings.cx - left.swatches[0].cx) <= 2 && left.settings.b <= left.swatches[0].t, `${Math.round(left.settings.cx)} vs ${Math.round(left.swatches[0].cx)}`);
+  check('left: the tools are on the outside, the colours on the inside', left.pen.cx < left.swatches[0].cx);
+  check('left: the colours fill the height the tools leave, not a third column', left.panel.r - left.swatches[0].r < 20, `${Math.round(left.panel.r - left.swatches[0].r)}px to the edge`);
+
+  const right = await geometry('right');
+  check('right: the settings button sits over the colours too', Math.abs(right.settings.cx - right.swatches[0].cx) <= 2 && right.settings.b <= right.swatches[0].t);
+  check('right: the tools are on the outside (right), the colours on the inside', right.pen.cx > right.swatches[0].cx);
+  check('right mirrors left', Math.abs((left.pen.l - left.panel.l) - (right.panel.r - right.pen.r)) <= 2 && Math.abs((left.swatches[0].l - left.panel.l) - (right.panel.r - right.swatches[0].r)) <= 2, JSON.stringify({ l: left.pen.l - left.panel.l, r: right.panel.r - right.pen.r }));
+
+  const top = await geometry('top');
+  const bottom = await geometry('bottom');
+  check('top: the tools are on the edge, the colours below them', top.pen.cy < top.swatches[0].cy);
+  check('bottom: the tools are on the edge, the colours above them', bottom.pen.cy > bottom.swatches[0].cy);
+  check('top mirrors bottom', Math.abs((top.pen.t - top.panel.t) - (bottom.panel.b - bottom.pen.b)) <= 2 && Math.abs((top.swatches[0].t - top.panel.t) - (bottom.panel.b - bottom.swatches[0].b)) <= 2);
+  check('on a row the settings button stays with the tools', top.settings.cy === top.pen.cy || Math.abs(top.settings.cy - top.pen.cy) <= 2);
+}
+
+/**
  * The pen's buttons, driven with real handlers.
  *
  * Reported from a tablet: "the shortcut is not working". The node tests said the
@@ -1338,6 +1386,7 @@ try {
   await checkTabs(browser);
   await checkSplit(browser);
   await checkToolbar(browser);
+  await checkDocks(browser);
   await checkPenButtons(browser);
   await checkLasso(browser);
   await checkZoomAnchor(browser);

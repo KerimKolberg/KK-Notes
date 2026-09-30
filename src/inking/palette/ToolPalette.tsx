@@ -469,6 +469,31 @@ export const ToolPalette = memo(function ToolPalette({
     [reveal],
   );
 
+  // Part of the tools' row on a horizontal bar; on a standing one it heads the
+  // column of colours instead.
+  const settingsControl = (
+    <div className="relative">
+      <IconButton
+        icon={Settings2}
+        label="Input and page settings"
+        active={flyout === 'settings'}
+        aria-haspopup="dialog"
+        aria-expanded={flyout === 'settings'}
+        onClick={() => toggle('settings')}
+        data-palette-settings-trigger
+      />
+      <Popover open={flyout === 'settings'} onClose={close} label="Input and page settings" side={popSide} align="end">
+        <PaletteSettings
+          settings={settings}
+          onSettingsChange={onSettingsChange}
+          onClear={onClear}
+          arranging={arranging}
+          onArrangingChange={setArranging}
+        />
+      </Popover>
+    </div>
+  );
+
   return (
     <TooltipSideProvider value={tipSide}>
       {dockPreview && <DockTarget edge={dockPreview} />}
@@ -494,7 +519,10 @@ export const ToolPalette = memo(function ToolPalette({
         // costliest thing on the screen, over the largest canvas, on the
         // biggest display. A near-opaque panel reads the same.
         className={`group/palette absolute z-30 flex max-w-[calc(100vw-1.5rem-var(--safe-left)-var(--safe-right))] ${
-          vertical ? 'flex-row items-start' : 'flex-col'
+          // The tools stand against the edge the bar is docked to and the colours
+          // on the side facing the page, so the right dock and the top dock are the
+          // left and bottom docks seen in a mirror.
+          dock === 'right' ? 'flex-row-reverse items-start' : vertical ? 'flex-row items-start' : dock === 'bottom' ? 'flex-col-reverse' : 'flex-col'
         } gap-1 rounded-2xl border border-zinc-200/80 bg-white/95 p-1.5 shadow-2xl data-[dragging=true]:will-change-transform dark:border-zinc-700/80 dark:bg-zinc-900/95 ${
           away ? 'pointer-events-none opacity-0' : 'opacity-100'
         }`}
@@ -515,7 +543,9 @@ export const ToolPalette = memo(function ToolPalette({
           — on a phone the full set is far wider than the screen, and standing on
           end it is taller than a tablet in landscape. */}
       <div
-        className={`flex items-center gap-0.5 ${vertical ? 'flex-col flex-wrap content-start' : 'flex-wrap'}`}
+        className={`flex items-center gap-0.5 ${
+          vertical ? `flex-col content-start ${dock === 'right' ? 'flex-wrap-reverse' : 'flex-wrap'}` : 'flex-wrap'
+        }`}
         style={vertical && capacity ? { maxHeight: capacity - 12 } : undefined}
       >
         {draggable && (
@@ -576,35 +606,29 @@ export const ToolPalette = memo(function ToolPalette({
           </>
         )}
 
-        {DIVIDER}
-
-        <div className="relative">
-          <IconButton
-            icon={Settings2}
-            label="Input and page settings"
-            active={flyout === 'settings'}
-            aria-haspopup="dialog"
-            aria-expanded={flyout === 'settings'}
-            onClick={() => toggle('settings')}
-            data-palette-settings-trigger
-          />
-          <Popover open={flyout === 'settings'} onClose={close} label="Input and page settings" side={popSide} align="end">
-            <PaletteSettings
-              settings={settings}
-              onSettingsChange={onSettingsChange}
-              onClear={onClear}
-              arranging={arranging}
-              onArrangingChange={setArranging}
-            />
-          </Popover>
-        </div>
+        {!vertical && (
+          <>
+            {DIVIDER}
+            {settingsControl}
+          </>
+        )}
       </div>
 
-      {/* Colours and thickness: beneath the tools in a row, and in a column of
-          their own beside them when the toolbar is standing on end. */}
+      {/* Colours and thickness. Standing on end they share one column with the
+          settings button, which heads it, so the column beside the tools is
+          the whole of the rest of the bar; in a row they sit on the side of the
+          tools that faces the page. */}
       {vertical ? (
-        <div className="shrink-0 overflow-y-auto" {...(capacity ? { style: { maxHeight: capacity - 12 } } : {})}>
-          <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} compact />
+        <div
+          className="flex shrink-0 flex-col items-center gap-0.5"
+          data-palette-inner
+          {...(capacity ? { style: { maxHeight: capacity - 12 } } : {})}
+        >
+          {settingsControl}
+          {DIVIDER}
+          <div className="min-h-0 overflow-y-auto">
+            <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} compact />
+          </div>
         </div>
       ) : (
         <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} />
