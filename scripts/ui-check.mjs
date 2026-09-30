@@ -1283,6 +1283,64 @@ async function checkLasso(browser) {
 }
 
 /**
+ * The floating toolbar over a text box. It wraps to two or three rows, and anchored by
+ * its top (as it was) it grew down over the text it was formatting; near the top of
+ * the page it has to go underneath, and it can be pulled aside by its grip.
+ */
+async function checkTextToolbar(browser) {
+  console.log('text box toolbar, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-insert-trigger]', { timeout: 10_000 });
+  await page.click('[data-insert-trigger]');
+  await page.click('[data-insert-text]');
+  await page.waitForSelector('[data-text-content]');
+  await page.type('[data-text-content]', 'Hello there');
+  const rects = () =>
+    page.evaluate(() => {
+      const r = (el) => { const b = el.getBoundingClientRect(); return { t: b.top, b: b.bottom, l: b.left, r: b.right }; };
+      const tb = document.querySelector('[data-media-toolbar]');
+      return { toolbar: r(tb), placement: tb.getAttribute('data-media-toolbar-placement'), box: r(document.querySelector('[data-media-kind="text"]')), page: r(document.querySelector('[data-page-index="0"]')) };
+    });
+  const overlaps = (a, b) => a.l < b.r && a.r > b.l && a.t < b.b && a.b > b.t;
+
+  const mid = await rects();
+  check('in the middle of a page the toolbar stands above the box', mid.placement === 'above' && mid.toolbar.b <= mid.box.t, `${Math.round(mid.toolbar.b)} vs ${Math.round(mid.box.t)}`);
+
+  // Up to the top of the page by the strip above the box.
+  const t = await (await page.$('[data-media-kind="text"]')).boundingBox();
+  await page.mouse.move(t.x + t.width / 2, t.y - 20);
+  await page.mouse.down();
+  await page.mouse.move(t.x + t.width / 2, 150, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+  const top = await rects();
+  check('near the top of the page it goes underneath instead', top.placement === 'below' && top.toolbar.t >= top.box.b, `${top.placement}: ${Math.round(top.toolbar.t)} vs ${Math.round(top.box.b)}`);
+  check('and so never covers the text', !overlaps(top.toolbar, top.box));
+  check('nor spills off the page', top.toolbar.b <= top.page.b && top.toolbar.t >= top.page.t);
+
+  // Pulled aside by its grip, and put back by a double-click on it.
+  const grip = await (await page.$('[data-media-toolbar-grip]')).boundingBox();
+  const gx = grip.x + grip.width / 2;
+  const gy = grip.y + grip.height / 2;
+  await page.mouse.move(gx, gy);
+  await page.mouse.down();
+  await page.mouse.move(gx + 120, gy + 200, { steps: 8 });
+  await page.mouse.up();
+  const moved = await rects();
+  check('its grip moves it', Math.abs(moved.toolbar.t - (top.toolbar.t + 200)) < 6 && Math.abs(moved.toolbar.l - (top.toolbar.l + 120)) < 6, `${Math.round(moved.toolbar.l - top.toolbar.l)}, ${Math.round(moved.toolbar.t - top.toolbar.t)}`);
+  const regrip = await (await page.$('[data-media-toolbar-grip]')).boundingBox();
+  await page.mouse.dblclick(regrip.x + regrip.width / 2, regrip.y + regrip.height / 2);
+  const home = await rects();
+  check('a double-click puts it back', Math.abs(home.toolbar.t - top.toolbar.t) < 4 && Math.abs(home.toolbar.l - top.toolbar.l) < 4);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Turning a selection: the round handle above the box, and the quarter-turn buttons.
  * A flat line is the easiest thing to see turn: it ends up standing.
  */
@@ -1464,6 +1522,7 @@ try {
   await checkPenButtons(browser);
   await checkLasso(browser);
   await checkRotate(browser);
+  await checkTextToolbar(browser);
   await checkZoomAnchor(browser);
 } finally {
   await browser.close();

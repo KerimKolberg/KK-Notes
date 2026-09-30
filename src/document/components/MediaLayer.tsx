@@ -1,10 +1,11 @@
-import { memo, useCallback, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   AlignCenter,
   AlignLeft,
   AlignRight,
   Bold,
+  GripHorizontal,
   Italic,
   Lock,
   LockOpen,
@@ -57,6 +58,7 @@ import {
   trackEdges,
   type ResizeHandle,
 } from '../media';
+import { useViewportShift } from '../../ui/useViewportShift';
 import { useDocumentStore } from '../store';
 import type { MediaObject, NoteShape, Page, StickyNote, TableLayer, TextBox, TextFontId, TextStyle } from '../types';
 
@@ -90,6 +92,8 @@ const HANDLE_CURSORS: Record<ResizeHandle, string> = {
 };
 
 const ROTATION_HANDLE_OFFSET = 28;
+/** Height assumed for the floating toolbar until it has been measured, CSS px. */
+const TOOLBAR_GUESS = 40;
 /** The lip a table is dragged by, page units. A note's comes from its shape. */
 const TABLE_LIP = 14;
 /** How wide the divider's invisible grab strip is, page units. */
@@ -318,6 +322,7 @@ export const MediaLayer = memo(function MediaLayer({ page, zoom, active }: Media
           <TransformBox
             item={shown(selected)}
             zoom={zoom}
+            pageHeight={page.dimensions.height}
             onBegin={(e, kind, handle) => begin(e, kind, selected, handle)}
             onMove={onMove}
             onEnd={finish}
@@ -971,6 +976,8 @@ export function NoteShapeGlyph({ shape, size = 13 }: { shape: NoteShape; size?: 
 interface TransformBoxProps {
   item: MediaObject;
   zoom: number;
+  /** Height of the page it is on, page px: there is only so much room below the box. */
+  pageHeight: number;
   onBegin: (e: ReactPointerEvent<HTMLElement>, kind: DragKind, handle?: ResizeHandle) => void;
   onMove: (e: ReactPointerEvent<HTMLElement>) => void;
   onEnd: (e: ReactPointerEvent<HTMLElement>, commit: boolean) => void;
@@ -981,7 +988,7 @@ interface TransformBoxProps {
   onPatch: (patch: Partial<MediaObject>) => void;
 }
 
-function TransformBox({ item, zoom, onBegin, onMove, onEnd, onDelete, onFront, onBack, onToggleLock, onPatch }: TransformBoxProps) {
+function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete, onFront, onBack, onToggleLock, onPatch }: TransformBoxProps) {
   const handles = handlePositions(item);
   const centre = imageCenter(item);
   const locked = isLocked(item);
@@ -1012,7 +1019,32 @@ function TransformBox({ item, zoom, onBegin, onMove, onEnd, onDelete, onFront, o
     x: topMid.x - Math.sin(rad) * (ROTATION_HANDLE_OFFSET / zoom) * -1,
     y: topMid.y - Math.cos(rad) * (ROTATION_HANDLE_OFFSET / zoom),
   };
-  const toolbarPos = { x: centre.x, y: Math.min(...Object.values(handles).map((h) => h.y)) - 44 / zoom };
+  // The toolbar stands above the object, clear of the rotate handle — or below it when
+  // the object is too near the top of the page for that. It is anchored by the edge
+  // nearest the object and grows away from it: anchored by its top, as it was, a
+  // toolbar that wrapped to two rows (a text box's does) grew down over the very text
+  // it was there to format.
+  const ys = Object.values(handles).map((h) => h.y);
+  const objectTop = Math.min(...ys);
+  const objectBottom = Math.max(...ys);
+  const aboveGap = (ROTATION_HANDLE_OFFSET + 16) / zoom;
+  const belowGap = 14 / zoom;
+  const [toolbarHeight, setToolbarHeight] = useState(TOOLBAR_GUESS);
+  const { ref: toolbarRef, shift: toolbarShift } = useViewportShift<HTMLDivElement>(true);
+  useLayoutEffect(() => {
+    const measured = toolbarRef.current?.offsetHeight ?? 0;
+    if (measured > 0 && Math.abs(measured - toolbarHeight) > 1) setToolbarHeight(measured);
+  });
+  const roomAbove = objectTop - aboveGap - toolbarHeight / zoom;
+  const roomBelow = pageHeight - (objectBottom + belowGap + toolbarHeight / zoom);
+  const toolbarAbove = roomAbove >= 0 || roomAbove >= roomBelow;
+  const toolbarPos = { x: centre.x, y: toolbarAbove ? objectTop - aboveGap : objectBottom + belowGap };
+
+  // A grip to pull the toolbar out of the way. It moves in screen px, for this
+  // selection only: choosing something else puts it back.
+  const [nudge, setNudge] = useState({ x: 0, y: 0 });
+  useEffect(() => setNudge({ x: 0, y: 0 }), [item.id]);
+  const gripRef = useRef<{ pointerId: number; startX: number; startY: number; from: { x: number; y: number } } | null>(null);
   return (
     <>
       <div
@@ -1058,12 +1090,14 @@ function TransformBox({ item, zoom, onBegin, onMove, onEnd, onDelete, onFront, o
         aria-label="Media actions"
         data-media-toolbar
         data-media-locked={locked ? 'true' : undefined}
+        data-media-toolbar-placement={toolbarAbove ? 'above' : 'below'}
+        ref={toolbarRef}
         style={{
           position: 'absolute',
           left: toolbarPos.x,
           top: toolbarPos.y,
-          transform: `translate(-50%, 0) scale(${1 / zoom})`,
-          transformOrigin: 'top center',
+          transform: `translate(calc(-50% + ${(toolbarShift + nudge.x) / zoom}px), calc(${toolbarAbove ? '-100%' : '0px'} + ${nudge.y / zoom}px)) scale(${1 / zoom})`,
+          transformOrigin: toolbarAbove ? 'bottom center' : 'top center',
           zIndex: 10001,
           pointerEvents: 'auto',
           maxWidth: 'calc(100vw - 1rem)',
@@ -1071,6 +1105,33 @@ function TransformBox({ item, zoom, onBegin, onMove, onEnd, onDelete, onFront, o
         className="flex flex-wrap items-center justify-center gap-0.5 rounded-lg bg-zinc-900/95 p-1 shadow-lg"
         onPointerDown={(e) => e.stopPropagation()}
       >
+        <button
+          type="button"
+          className={`${toolbarButton} w-6 cursor-grab touch-none justify-center px-0 text-white/60 active:cursor-grabbing`}
+          aria-label="Move this toolbar"
+          title="Drag to move the toolbar out of the way (double-click to put it back)"
+          data-media-toolbar-grip
+          onDoubleClick={() => setNudge({ x: 0, y: 0 })}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.currentTarget.setPointerCapture(e.pointerId);
+            gripRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, from: nudge };
+          }}
+          onPointerMove={(e) => {
+            const grip = gripRef.current;
+            if (!grip || grip.pointerId !== e.pointerId) return;
+            setNudge({ x: grip.from.x + e.clientX - grip.startX, y: grip.from.y + e.clientY - grip.startY });
+          }}
+          onPointerUp={(e) => {
+            if (gripRef.current?.pointerId === e.pointerId) gripRef.current = null;
+          }}
+          onPointerCancel={() => {
+            gripRef.current = null;
+          }}
+        >
+          <GripHorizontal size={14} aria-hidden="true" />
+        </button>
         <button
           type="button"
           className={`${toolbarButton} ${locked ? 'bg-white/20' : ''}`}
