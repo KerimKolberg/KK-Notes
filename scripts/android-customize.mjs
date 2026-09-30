@@ -15,7 +15,7 @@
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /**
  * True only when this file is *run*, not imported.
@@ -27,7 +27,10 @@ import { pathToFileURL } from 'node:url';
  */
 const RUNNING = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 
-const ROOT = new URL('..', import.meta.url).pathname;
+// `fileURLToPath`, not `new URL(...).pathname`. On Windows the latter gives
+// `/D:/a/repo/...`, and joining that produces `D:\D:\a\...`, which does not
+// exist; it also leaves a space in the folder name percent-encoded as `%20`.
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const ANDROID = join(ROOT, 'src-tauri/gen/android');
 const CONFIG = JSON.parse(readFileSync(join(ROOT, 'src-tauri/tauri.conf.json'), 'utf8'));
 const ANDROID_CONFIG = JSON.parse(readFileSync(join(ROOT, 'src-tauri/tauri.android.conf.json'), 'utf8'));

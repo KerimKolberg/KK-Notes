@@ -23,7 +23,7 @@
 import { deflateSync } from 'node:zlib';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /** True only when run as a script, so the tests can import the geometry. */
 const RUNNING = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -412,7 +412,10 @@ export function ico(sizes, shapes) {
 // Writing them out
 // ---------------------------------------------------------------------------
 
-const ROOT = new URL('..', import.meta.url).pathname;
+// `fileURLToPath`, not `new URL(...).pathname`. On Windows the latter gives
+// `/D:/a/repo/...`, and joining that produces `D:\D:\a\...`, which does not
+// exist; it also leaves a space in the folder name percent-encoded as `%20`.
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const OUT = join(ROOT, 'src-tauri/icons');
 const PUBLIC = join(ROOT, 'public');
 const ANDROID_OUT = join(ROOT, 'src-tauri/gen/android/app/src/main/res');

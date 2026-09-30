@@ -9,8 +9,12 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const dist = new URL('../dist/', import.meta.url).pathname;
+// `fileURLToPath`, not `new URL(...).pathname`. On Windows the latter gives
+// `/D:/a/repo/...`, and joining that produces `D:\D:\a\...`, which does not
+// exist; it also leaves a space in the folder name percent-encoded as `%20`.
+const dist = fileURLToPath(new URL('../dist/', import.meta.url));
 const assets = join(dist, 'assets');
 const html = readFileSync(join(dist, 'index.html'), 'utf8');
 const entry = html.match(/<script[^>]+type="module"[^>]+src="\/?assets\/([^"]+)"/)?.[1];
