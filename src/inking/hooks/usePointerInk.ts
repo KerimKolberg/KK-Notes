@@ -43,6 +43,7 @@ import {
 } from '../engine/renderer';
 import { recognizeShape } from '../engine/shapeRecognition';
 import { coordinatePlaneFromDrag, createGeometricStroke, curveFromDrag, lineFromDrag } from '../engine/shapes';
+import { DEFAULT_SNAP_GRID, snapToGrid } from '../engine/grid';
 import { polylineLength } from '../engine/simplify';
 import { LiveBaker, canBakeLive } from '../engine/liveBake';
 import { StrokeBuilder } from '../engine/strokeBuilder';
@@ -81,6 +82,11 @@ export interface UsePointerInkOptions {
    * by this so strokes are stored in page-local units. Default 1.
    */
   contentScaleRef?: RefObject<number>;
+  /**
+   * The page's grid cell, in drawing units: what the shape tool's ends snap to when its
+   * grid switch is on.
+   */
+  gridSpacing?: number;
   /** Fired when an accepted pointer starts any session (used to activate a page). */
   onInteractionStart?: () => void;
   /** The pen's barrel button is mapped to select mode and was pressed on the surface. */
@@ -705,8 +711,11 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         sessionRef.current = session;
         if (eraseSweep(session, point, point)) opts.redrawCommitted();
       } else if (tool === 'line' || tool === 'coordinate-plane') {
-        const angleSnapDeg = angleSnapFor(settings, true);
-        const shape = buildDragShape(tool, point, point, angleSnapDeg, settings);
+        // On the grid, both ends are; 15° snapping would only pull the far end off it again.
+        const grid = settings.lineGridSnap ? (opts.gridSpacing ?? DEFAULT_SNAP_GRID) : null;
+        const angleSnapDeg = grid === null ? angleSnapFor(settings, true) : undefined;
+        const startPoint = grid === null ? point : snapToGrid(point, grid);
+        const shape = buildDragShape(tool, startPoint, startPoint, angleSnapDeg, settings);
         sessionRef.current = {
           kind: 'shape',
           pointerId: e.pointerId,
@@ -715,11 +724,11 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           style: styleForTool(tool, settings, pointerType),
           rect,
           scale,
-          start: point,
+          start: startPoint,
           settings,
           angleSnapDeg,
           createdAt: now,
-          current: point,
+          current: startPoint,
           shape,
           hud: [],
         };
@@ -777,7 +786,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       } else if (session.kind === 'shape') {
         const sample = samples[samples.length - 1];
         if (sample) {
-          session.current = toInkPoint(sample, session.rect, session.scale);
+          const raw = toInkPoint(sample, session.rect, session.scale);
+          session.current = session.settings.lineGridSnap ? snapToGrid(raw, optionsRef.current.gridSpacing ?? DEFAULT_SNAP_GRID) : raw;
           session.shape = buildDragShape(session.tool, session.start, session.current, session.angleSnapDeg, session.settings);
           session.hud = hudFor(session.shape);
         }

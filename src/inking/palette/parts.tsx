@@ -688,6 +688,13 @@ export function LineOptions({ settings, onSettingsChange }: PanelProps) {
         >
           15°
         </Chip>
+        <Chip
+          active={settings.lineGridSnap}
+          label="Snap the ends to the page's grid"
+          onClick={() => onSettingsChange({ lineGridSnap: !settings.lineGridSnap })}
+        >
+          <span data-line-grid-snap>Grid</span>
+        </Chip>
       </Row>
       <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-line-options-note>
         These belong to the shape tool alone; the pen and highlighter keep

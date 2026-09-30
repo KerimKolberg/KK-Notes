@@ -238,6 +238,7 @@ export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   linePattern: 'solid',
   lineArrowheads: 'none',
   lineAngleSnap: false,
+  lineGridSnap: false,
   lassoFilter: LASSO_ALL_LAYERS,
   lassoMode: 'enclose',
   holdToSnap: true,

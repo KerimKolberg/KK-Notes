@@ -33,6 +33,8 @@ export interface InkSurfaceProps {
   onBarrelStroke?: () => void;
   /** While an eraser is active: how wide it is on screen, in CSS px, so the pointer can show it. */
   eraserDiameterPx?: number | null;
+  /** The page's grid cell, in page units, for the shape tool's grid snapping. */
+  gridSpacing?: number;
   /** The pen's barrel button went down or came up, contact or not. */
   onBarrelButton?: (pressed: boolean) => void;
   /** The barrel gesture must be abandoned (pen out of range, gesture taken over). */
@@ -84,6 +86,7 @@ export const InkSurface = memo(function InkSurface({
   onBarrelCancel,
   onLassoStart,
   onLassoComplete,
+  gridSpacing,
   hiddenStrokeIds = null,
   currentTool,
   interactive = true,
@@ -146,6 +149,7 @@ export const InkSurface = memo(function InkSurface({
     allowMouse,
     allowTouch,
     contentScaleRef: zoomRef,
+    ...(gridSpacing !== undefined ? { gridSpacing } : {}),
     ...(onInteractionStart ? { onInteractionStart } : {}),
     ...(onBarrelSelect ? { onBarrelSelect } : {}),
     ...(onBorrowSelectionTool ? { onBorrowSelectionTool } : {}),
@@ -169,6 +173,7 @@ export const InkSurface = memo(function InkSurface({
       <div
         className={styles.surface}
         data-tool={currentTool}
+        {...(gridSpacing !== undefined ? { 'data-grid-spacing': gridSpacing } : {})}
         data-layer="surface"
         style={{ pointerEvents: interactive ? 'auto' : 'none' }}
       >

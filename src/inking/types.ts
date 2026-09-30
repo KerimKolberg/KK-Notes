@@ -393,6 +393,8 @@ export interface ToolSettings {
   linePattern: StrokePattern;
   lineArrowheads: ArrowheadMode;
   lineAngleSnap: boolean;
+  /** Snap the shape tool's ends to the page's grid. */
+  lineGridSnap: boolean;
   /** Which layers the lasso may pick up. */
   lassoFilter: LassoFilter;
   /** How much of a stroke the lasso has to catch to select it. */

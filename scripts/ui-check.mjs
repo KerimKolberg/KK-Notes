@@ -1589,6 +1589,43 @@ async function checkArrange(browser) {
 }
 
 /**
+ * The shape tool's grid switch: both ends of a line land on the page's grid, not
+ * where the pen was.
+ */
+async function checkGridSnap(browser) {
+  console.log('snap to grid, 1280x800:');
+  const { ctx, page, errors } = await openPenDocument(browser);
+  await page.click('[data-palette-tool="line"]');
+  await page.click('[data-palette-tool="line"]');
+  await page.waitForSelector('[data-line-grid-snap]', { state: 'visible', timeout: 3_000 });
+  await page.click('[data-line-grid-snap]');
+  await page.keyboard.press('Escape');
+  const spacing = await page.$eval('[data-layer="surface"]', (el) => Number(el.getAttribute('data-grid-spacing')));
+  check('the page tells the tool its grid', spacing >= 2, `${spacing}`);
+  const origin = await page.$eval('[data-layer="live"]', (el) => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, scale: el.width / r.width }; });
+  const at = (x, y) => [origin.x + x, origin.y + y];
+  const snap = (v) => Math.round(v / spacing) * spacing;
+  const ex = 4.5 * spacing + 6;
+  const ey = 3 * spacing + 17;
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [[at(spacing + 7, spacing + 9), at(3 * spacing, 2 * spacing), at(ex, ey)]]);
+  await page.waitForTimeout(200);
+  const inkNear = (x, y, r = 3) =>
+    page.$eval('[data-layer="committed"]', (canvas, [px, py, rad, scale]) => {
+      const { data } = canvas.getContext('2d').getImageData(Math.round((px - rad) * scale), Math.round((py - rad) * scale), Math.round(2 * rad * scale), Math.round(2 * rad * scale));
+      let n = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 100) n++;
+      return n;
+    }, [x, y, r, origin.scale]);
+  const endX = snap(ex);
+  const endY = snap(ey);
+  check('the far end lands on the grid point nearest the pen', (await inkNear(endX, endY)) > 0, `grid ${spacing}: ${endX},${endY}`);
+  check('and the line goes no further than it', (await inkNear(endX + 12, endY + 9)) === 0);
+  check('the near end is on the grid too', (await inkNear(snap(spacing + 7), snap(spacing + 9))) > 0);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Turning a selection: the round handle above the box, and the quarter-turn buttons.
  * A flat line is the easiest thing to see turn: it ends up standing.
  */
@@ -1773,6 +1810,7 @@ try {
   await checkLongStroke(browser);
   await checkRotate(browser);
   await checkArrange(browser);
+  await checkGridSnap(browser);
   await checkTextToolbar(browser);
   await checkZoomAnchor(browser);
 } finally {

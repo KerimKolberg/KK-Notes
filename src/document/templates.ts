@@ -4,6 +4,7 @@
  * CSS background) and a canvas painter (used by the raster pipeline for
  * thumbnails and snapshots).
  */
+import { snapSpacing } from '../inking/engine/grid';
 import type { InkContext } from '../inking/engine/renderer';
 import type { PageDimensions, PageTemplate, TemplateConfig } from './types';
 
@@ -151,6 +152,12 @@ export function lineFamily(angleDeg: number, spacing: number, w: number, h: numb
     }
   }
   return out;
+}
+
+/** The grid cell a page snaps the shape tool to: its own if the template draws a grid, a fixed one if not. */
+export function pageSnapSpacing(page: Pick<TemplatePage, 'template' | 'templateConfig'>): number {
+  const hasGrid = page.template === 'grid' || page.template === 'engineering' || page.template === 'ruled';
+  return snapSpacing(page.templateConfig.spacing, hasGrid);
 }
 
 /** All background lines for a page, in page units. */
