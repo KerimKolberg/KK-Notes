@@ -1,7 +1,7 @@
 import { DEFAULT_BRUSH } from './engine/brushes';
 import { ERASE_EVERYTHING } from './engine/eraseFilter';
 import { LASSO_ALL_LAYERS } from './engine/lassoFilter';
-import type { CoordinatePlaneConfig, StrokePattern, StylusSettings, ToolSettings } from './types';
+import type { CoordinatePlaneConfig, StrokePattern, StylusSettings, ToolSettings, ToolType } from './types';
 
 /** Pressure substituted when a device reports `0` (mouse, many touch digitisers). */
 export const DEFAULT_PRESSURE = 0.5;
@@ -159,13 +159,36 @@ export const AXIS_LABEL_PRESETS: readonly { readonly x: string; readonly y: stri
   { x: 'f', y: '|H(f)|' },
 ];
 
+/**
+ * The tools a pen button can be given, with the labels the settings show.
+ *
+ * One list for the settings selects *and* for validating what was saved, so a
+ * stored value that names a tool which no longer exists is rejected by the same
+ * definition that would have offered it.
+ */
+export const STYLUS_TOOLS: readonly { readonly id: ToolType; readonly label: string }[] = [
+  { id: 'pen', label: 'Pen' },
+  { id: 'highlighter', label: 'Highlighter' },
+  { id: 'eraser-stroke', label: 'Stroke eraser' },
+  { id: 'eraser-pixel', label: 'Area eraser' },
+  { id: 'lasso', label: 'Lasso' },
+  { id: 'select', label: 'Select' },
+  { id: 'laser-pointer', label: 'Laser pointer' },
+  { id: 'line', label: 'Lines and shapes' },
+];
+
 export const DEFAULT_STYLUS_SETTINGS: Readonly<StylusSettings> = {
-  // Pen ⇄ eraser is what the button is for on every tablet that has one.
+  // A quick press swaps pen and eraser, which is what the button is for on every
+  // tablet that has one.
   clickToggle: ['pen', 'eraser-stroke'],
-  // A hold reaches for the lasso: the one tool you want for a single gesture
-  // and then never again, which is exactly what a temporary switch is for.
-  holdTool: 'lasso',
-  eraserEnd: 'eraser-stroke',
+  // Holding the barrel button borrows the eraser: the thing you reach for
+  // mid-sentence, and the one that needs no aiming at a toolbar.
+  holdTool: 'eraser-stroke',
+  // The second button borrows the lasso. Windows reports a pen's second button as
+  // its eraser flag, so this is also what an eraser *tip* would do — which is
+  // right for a pen with two buttons and no tip, and worth changing back to an
+  // eraser for one that has a tip.
+  eraserEnd: 'lasso',
 };
 
 /**

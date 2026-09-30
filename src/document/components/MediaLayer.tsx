@@ -1068,7 +1068,7 @@ function TransformBox({ item, zoom, onBegin, onMove, onEnd, onDelete, onFront, o
           pointerEvents: 'auto',
           maxWidth: 'calc(100vw - 1rem)',
         }}
-        className="flex flex-wrap items-center justify-center gap-0.5 rounded-lg bg-zinc-900/90 p-1 shadow-lg backdrop-blur"
+        className="flex flex-wrap items-center justify-center gap-0.5 rounded-lg bg-zinc-900/95 p-1 shadow-lg"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <button

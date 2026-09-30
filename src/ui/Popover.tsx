@@ -1,7 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { useViewportShift } from './useViewportShift';
 
-export type PopoverSide = 'top' | 'bottom';
+export type PopoverSide = 'top' | 'bottom' | 'left' | 'right';
 
 export interface PopoverProps {
   open: boolean;
@@ -17,6 +17,11 @@ export interface PopoverProps {
 const SIDE: Record<PopoverSide, string> = {
   top: 'bottom-full mb-2',
   bottom: 'top-full mt-2',
+  // Beside the trigger rather than above or below it, for a toolbar standing on
+  // one of the sides of the screen: opening upwards from a button at the top of a
+  // column would leave the screen.
+  left: 'right-full mr-2',
+  right: 'left-full ml-2',
 };
 
 /**
@@ -30,6 +35,13 @@ const ALIGN = {
   end: 'right-0',
 };
 
+/** The same three choices for a panel beside its trigger, where they run down the screen. */
+const ALIGN_BESIDE = {
+  start: 'top-0',
+  center: 'top-1/2',
+  end: 'bottom-0',
+};
+
 /**
  * Small anchored panel used by the palette's flyouts. Closes on Escape, on a
  * pointer press outside it, and whenever the trigger asks. The caller wraps
@@ -37,7 +49,9 @@ const ALIGN = {
  */
 export function Popover({ open, onClose, label, side = 'top', align = 'center', children }: PopoverProps) {
   // On a phone a flyout centred on a button near the edge would hang off it.
-  const { ref, shift } = useViewportShift<HTMLDivElement>(open);
+  // Beside a standing toolbar the edge in question is the top or bottom.
+  const beside = side === 'left' || side === 'right';
+  const { ref, shift } = useViewportShift<HTMLDivElement>(open, undefined, beside ? 'y' : 'x');
 
   useEffect(() => {
     if (!open) return;
@@ -69,8 +83,16 @@ export function Popover({ open, onClose, label, side = 'top', align = 'center', 
       role="group"
       aria-label={label}
       data-popover={label}
-      className={`absolute z-40 w-max max-w-[calc(100vw-1rem)] rounded-2xl border border-zinc-200 bg-white/95 p-2 shadow-2xl backdrop-blur-md dark:border-zinc-700 dark:bg-zinc-900/95 ${SIDE[side]} ${ALIGN[align]}`}
-      style={{ transform: align === 'center' ? `translateX(calc(-50% + ${shift}px))` : `translateX(${shift}px)` }}
+      className={`absolute z-40 w-max max-w-[calc(100vw-1rem)] rounded-2xl border border-zinc-200 bg-white/95 p-2 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900/95 ${SIDE[side]} ${beside ? ALIGN_BESIDE[align] : ALIGN[align]}`}
+      style={{
+        transform: beside
+          ? align === 'center'
+            ? `translateY(calc(-50% + ${shift}px))`
+            : `translateY(${shift}px)`
+          : align === 'center'
+            ? `translateX(calc(-50% + ${shift}px))`
+            : `translateX(${shift}px)`,
+      }}
     >
       {children}
     </div>

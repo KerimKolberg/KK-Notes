@@ -38,17 +38,9 @@ import {
   type Segment,
 } from './shapes';
 import { endTangent, resamplePolyline, simplifyRdp, startTangent } from './simplify';
+import { inkContextAttributes } from './canvasMode';
 import { getStrokeOutline, outlineToPath2D } from './strokeOutline';
 
-/**
- * `desynchronized` lets Chromium present the canvas outside the compositor's
- * vsync pipeline, shaving a frame or more of pen-to-ink latency on Windows.
- * Browsers that don't support it ignore the hint.
- */
-const CONTEXT_ATTRIBUTES: CanvasRenderingContext2DSettings = {
-  alpha: true,
-  desynchronized: true,
-};
 
 const UI_FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const HUD_COLOR = '#2563eb';
@@ -61,7 +53,9 @@ const HUD_COLOR = '#2563eb';
 export type InkContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 export function get2dContext(canvas: HTMLCanvasElement | null): CanvasRenderingContext2D | null {
-  return canvas ? canvas.getContext('2d', CONTEXT_ATTRIBUTES) : null;
+  // Read per call, not captured once: the mode can change, and the attributes
+  // only matter on a canvas's first `getContext` (see `canvasMode.ts`).
+  return canvas ? canvas.getContext('2d', inkContextAttributes()) : null;
 }
 
 /** Dash array for a pattern at a given line width (empty = solid). */

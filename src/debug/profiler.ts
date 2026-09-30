@@ -84,8 +84,18 @@ export interface ProfilerSnapshot {
   readonly displayHz: number;
   /** What a commit is compared against, ms — the frame period once it is known. */
   readonly frameBudgetMs: number;
-  /** Pointer sample → live-canvas draw returned, ms. */
+  /** Pointer sample → live-canvas draw returned, ms. The mean. */
   readonly latencyMs: number;
+  /**
+   * The middle sample — what a typical stroke feels like.
+   *
+   * The mean is the wrong headline. One stall of a second and a half in a window
+   * of sixty samples adds twenty-five milliseconds to it, so a pen that answers in
+   * ten reads as sluggish, and the number moves for reasons that have nothing to do
+   * with how the ink feels. The median does not move for a handful of outliers;
+   * they are still there, in `worst`, where they belong.
+   */
+  readonly latencyMedianMs: number;
   readonly latencyP95Ms: number;
   readonly worstLatencyMs: number;
   readonly latencySamples: number;
@@ -104,6 +114,7 @@ export const EMPTY_SNAPSHOT: ProfilerSnapshot = {
   displayHz: 0,
   frameBudgetMs: SLOW_COMMIT_MS,
   latencyMs: 0,
+  latencyMedianMs: 0,
   latencyP95Ms: 0,
   worstLatencyMs: 0,
   latencySamples: 0,
@@ -270,6 +281,7 @@ export function snapshot(): ProfilerSnapshot {
     displayHz: displayHz(),
     frameBudgetMs: frameBudgetMs(),
     latencyMs: latency.average,
+    latencyMedianMs: latency.percentile(0.5),
     latencyP95Ms: latency.percentile(0.95),
     worstLatencyMs: latency.max,
     latencySamples: latency.count,

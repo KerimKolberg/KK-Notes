@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { COLOR_PALETTE } from '../../inking/constants';
-import { DEFAULT_PREFERENCES, isHexColor, normalize, normalizeOrder, normalizeSwatches, reorder, usePreferencesStore } from '../store';
+import { DEFAULT_STYLUS_SETTINGS } from '../../inking/constants';
+import {
+  DEFAULT_PREFERENCES,
+  isHexColor,
+  normalize,
+  normalizeDock,
+  normalizeOrder,
+  normalizeStylus,
+  normalizeSwatches,
+  reorder,
+  usePreferencesStore,
+} from '../store';
 import { DEFAULT_PALETTE_ORDER, MAX_SWATCHES, MIN_SWATCHES } from '../types';
 
 beforeEach(() => {
@@ -123,6 +134,87 @@ describe('page defaults', () => {
   it('refuses a stored default that is not one', () => {
     expect(normalize({ pageDefaults: 'ruled' }).pageDefaults).toBeNull();
     expect(normalize({ pageDefaults: { spacing: 20 } }).pageDefaults).toBeNull();
+  });
+});
+
+describe('pen buttons', () => {
+  it('starts with the eraser on the barrel hold and the lasso on the second button', () => {
+    const { stylus } = usePreferencesStore.getState();
+    expect(stylus.holdTool).toBe('eraser-stroke');
+    expect(stylus.eraserEnd).toBe('lasso');
+  });
+
+  it('keeps a mapping the user chose', () => {
+    usePreferencesStore.getState().setStylus({ ...DEFAULT_STYLUS_SETTINGS, holdTool: 'lasso', eraserEnd: 'eraser-pixel' });
+    const { stylus } = usePreferencesStore.getState();
+    expect(stylus.holdTool).toBe('lasso');
+    expect(stylus.eraserEnd).toBe('eraser-pixel');
+  });
+
+  it('reads a saved mapping back', () => {
+    const stored = { clickToggle: ['highlighter', 'pen'], holdTool: 'select', eraserEnd: 'laser-pointer' };
+    expect(normalizeStylus(stored)).toEqual(stored);
+  });
+
+  it('falls back field by field, so one stale name does not cost the others', () => {
+    // A tool that no longer exists in the middle of an otherwise good mapping.
+    const restored = normalizeStylus({ clickToggle: ['pen', 'eraser-stroke'], holdTool: 'teleport', eraserEnd: 'lasso' });
+    expect(restored.holdTool).toBe(DEFAULT_STYLUS_SETTINGS.holdTool);
+    expect(restored.eraserEnd).toBe('lasso');
+  });
+
+  it('survives storage that is not an object, or a toggle that is not a pair', () => {
+    for (const junk of [null, undefined, 'pen', 7, [], { clickToggle: 'pen' }, { clickToggle: [1, 2] }]) {
+      const restored = normalizeStylus(junk);
+      expect(restored.clickToggle).toHaveLength(2);
+      expect(typeof restored.holdTool).toBe('string');
+      expect(typeof restored.eraserEnd).toBe('string');
+    }
+  });
+
+  it('is cleared by a reset like everything else', () => {
+    usePreferencesStore.getState().setStylus({ ...DEFAULT_STYLUS_SETTINGS, holdTool: 'lasso' });
+    usePreferencesStore.getState().resetPreferences();
+    expect(usePreferencesStore.getState().stylus).toEqual(DEFAULT_PREFERENCES.stylus);
+  });
+});
+
+describe('the toolbar dock', () => {
+  it('starts at the bottom, where the toolbar has always been', () => {
+    expect(usePreferencesStore.getState().paletteDock).toBe('bottom');
+  });
+
+  it('remembers an edge', () => {
+    usePreferencesStore.getState().setPaletteDock('left');
+    expect(usePreferencesStore.getState().paletteDock).toBe('left');
+  });
+
+  it('accepts every real dock and nothing else', () => {
+    for (const dock of ['bottom', 'top', 'left', 'right', 'free']) expect(normalizeDock(dock)).toBe(dock);
+    for (const junk of ['center', '', null, 3, undefined, ['left']]) expect(normalizeDock(junk)).toBe('bottom');
+  });
+});
+
+describe('low-latency ink', () => {
+  it('is off until someone turns it on', () => {
+    // It is a hint that can make a page go black on some GPUs, so the safe state
+    // is the default and the risk is opted into.
+    expect(DEFAULT_PREFERENCES.lowLatencyInk).toBe(false);
+    expect(usePreferencesStore.getState().lowLatencyInk).toBe(false);
+  });
+
+  it('can be turned on and off', () => {
+    usePreferencesStore.getState().setLowLatencyInk(true);
+    expect(usePreferencesStore.getState().lowLatencyInk).toBe(true);
+    usePreferencesStore.getState().setLowLatencyInk(false);
+    expect(usePreferencesStore.getState().lowLatencyInk).toBe(false);
+  });
+
+  it('reads back as on only for a real true', () => {
+    expect(normalize({ lowLatencyInk: true }).lowLatencyInk).toBe(true);
+    for (const junk of ['true', 1, {}, null, undefined, 'yes']) {
+      expect(normalize({ lowLatencyInk: junk }).lowLatencyInk).toBe(false);
+    }
   });
 });
 

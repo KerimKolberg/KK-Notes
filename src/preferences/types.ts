@@ -9,6 +9,7 @@
  * of them without touching the pen you happen to be holding.
  */
 import type { PageTemplate, TemplateConfig } from '../document/types';
+import type { StylusSettings } from '../inking/types';
 
 /**
  * A reorderable position on the palette.
@@ -69,8 +70,35 @@ export interface PageDefaults {
   readonly backgroundColor: string;
 }
 
+/**
+ * Where the toolbar sits. The four edges dock it there, laid out along that
+ * edge; `free` leaves it wherever it was dropped.
+ */
+export type PaletteDock = 'bottom' | 'top' | 'left' | 'right' | 'free';
+
+export const PALETTE_DOCKS: readonly PaletteDock[] = ['bottom', 'top', 'left', 'right', 'free'];
+
 export interface Preferences {
   readonly paletteOrder: readonly PaletteSlot[];
+  /** Where the toolbar is docked. */
+  readonly paletteDock: PaletteDock;
+  /**
+   * What the pen's buttons do.
+   *
+   * Here rather than in the tool settings because tool settings start from their
+   * defaults on every launch, and a button mapping that resets each time the app
+   * opens is one nobody would bother setting.
+   */
+  readonly stylus: StylusSettings;
+  /**
+   * Ask the browser for a low-latency canvas (`desynchronized`).
+   *
+   * Off by default. It presents the canvas through the GPU's overlay hardware,
+   * which saves up to a frame of pen latency and, on some Windows GPUs, makes a
+   * page go black or the cursor flicker. A switch rather than a decision, because
+   * only the device in your hand can say which it does.
+   */
+  readonly lowLatencyInk: boolean;
   /** Quick colours on the palette's second row. */
   readonly swatches: readonly string[];
   /** `null` until the user has pressed "Set as default" on a page. */

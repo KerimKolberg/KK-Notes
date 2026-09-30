@@ -40,7 +40,8 @@ npm run android:apk    # ./build-android.sh — checks the toolchain, then build
 ├── IconButton.tsx          icon + tooltip + loud active state
 ├── Popover.tsx             anchored flyout panel
 ├── dragBounds.ts           pure clamping for the floating palette
-└── useDraggablePanel.ts    pointer dragging, re-clamped on resize
+├── dock.ts                 which edge a drop docks to, and where a docked panel sits
+└── useDraggablePanel.ts    transform-driven dragging, edge docking, re-clamped on resize
 
 src/desktop/`)
 
@@ -118,8 +119,12 @@ title against the last saved snapshot, so scrolling and zooming never count as
 edits.
 
 **Stylus buttons.** `resolveEffectiveTool` maps hardware buttons per the
-*Stylus* settings in the palette. The eraser end (`button 5` / `buttons & 32`)
-routes to the stroke or pixel eraser without touching the palette. The barrel
+*Stylus* settings in the palette. Two bits of `PointerEvent.buttons` are
+buttons: 2 is the **barrel** button and 32 is the **eraser** flag. A pen with a
+real eraser end sets 32 while that end touches, but Windows also reports a pen's
+*second* button that way, so on a pen with no eraser end and no Bluetooth the
+"eraser" bit is simply the other button. The settings therefore call it the
+*second button* and let it borrow any tool (default: the lasso). The barrel
 button carries two gestures, told apart by how long it is held
 (`src/inking/engine/barrelButton.ts`):
 
@@ -148,6 +153,21 @@ because the pen can cross a page boundary mid-hold.
 Drawing with the barrel down borrows the same hold tool, rather than a third
 setting that could disagree with it. A barrel press while merely hovering is
 ignored.
+
+**Which button is which.** Nothing in the web platform says which physical
+button a pen reports as bit 2 and which as bit 32; it depends on the pen and its
+driver. So *Stylus buttons* in the settings has a **pen button test**: press
+each button with the pen over the panel and it prints what the browser saw —
+`tip`, `barrel (2)`, `second / eraser (32)` — live, straight from `e.buttons`.
+Whichever of those it names for a button is the row to set. The shipped mapping
+is *barrel hold → stroke eraser*, *second button → lasso*, and the click gesture
+is left as pen ⇄ stroke eraser to be chosen later.
+
+The mapping is stored in the preferences (`stylus`), not in the tool settings it
+used to live in: tool settings reset with every launch, and a button you had to
+re-assign each morning is a button you stop assigning. `normalizeStylus` reads
+it back defensively — an unknown tool name falls back to that field's default
+rather than discarding the whole mapping.
 
 **Bundle.** pdf.js and pdf-lib are only reached through dynamic `import()`
 (raster client, PDF background, exporter, `React.lazy` import dialog), so the
@@ -563,11 +583,39 @@ each. The popover's body is passed into `ToolPalette` as a render prop
 (`insertMenu`), so the palette stays an inking control that knows nothing
 about pages, notes or tables.
 
-Dragging is handled by `useDraggablePanel` on top of the pure clamping in
-`dragBounds.ts`: the palette is kept fully inside the canvas area with a
-12 px margin, is re-clamped whenever the window or the panel itself
-resizes (so rotating a tablet cannot strand it off-screen), and a
-double-click on its grip returns it to the bottom centre.
+**Docking.** The palette lives on the bottom edge to begin with and can be
+dragged to any side. Push the grip towards an edge — the pointer, not the panel,
+decides, so a wide toolbar is not "near" an edge just because a corner of it is
+— and a bar lights up along that edge; let go and it docks there, centred along
+it. On the left or right it stands on end: the tools become a column that wraps
+into a second column when the window is not tall enough, the colour and
+thickness controls sit beside it, and flyouts and tooltips open *away* from the
+edge, beside their button, instead of above it. Dropping it anywhere else leaves
+it *free*, where it was let go. The same choice is in *Settings → Toolbar*
+(Bottom / Top / Left / Right / Free) for when a drag is awkward, and it is
+remembered between launches. A double-click on the grip returns it to the
+bottom.
+
+The geometry is pure and unit-tested (`src/ui/dock.ts`: `snapDock`,
+`dockedPosition`, `verticalCapacity`); `useDraggablePanel` does the pointer
+work on top of the clamping in `dragBounds.ts`. The panel is kept fully inside
+the canvas area with a 12 px margin and re-clamped whenever the window or the
+panel itself resizes, so rotating a tablet cannot strand it off-screen.
+
+**Dragging costs React nothing.** Moving the toolbar used to set state on every
+pointer move: thirty buttons and their tooltips re-rendered at the pen's report
+rate, positioned with `left`/`top` so the browser laid the page out each time,
+over a panel with `backdrop-blur` that had to be re-composited against a
+full-screen canvas behind it. On a large high-refresh screen that is what made
+it lag. Now the drag writes `transform: translate3d(…)` straight onto the
+element and touches no state until the pointer lifts; only the dock target
+preview changes, and only when the target does. The panel is promoted to its own
+layer for the duration (`will-change: transform`). Small floating panels — the
+toolbar, the selection quick actions, the media handles, the popovers — have no
+backdrop blur at all now; a translucent blurred layer over a live canvas is the
+most expensive thing a UI can put there, and a near-opaque white is
+indistinguishable at that size. `scripts/ui-check.mjs` asserts the drag uses a
+transform, leaves `left`/`top` alone and has no blur, so it cannot creep back.
 
 **Tooltips and touch** — `Tooltip` opens after 300 ms of mouse hover,
 immediately on keyboard focus, and after a 500 ms long press for touch and
@@ -1592,10 +1640,13 @@ in whole cells.
 
 ## Customisation (`src/preferences/`)
 
-Three things belong to the install rather than to a document, so they live in
-their own store and are written straight to `localStorage`: the palette you
-arranged should be the palette you get tomorrow, on whichever notebook you
-open.
+A handful of things belong to the install rather than to a document, so they
+live in their own store and are written straight to `localStorage`: the palette
+you arranged should be the palette you get tomorrow, on whichever notebook you
+open. Besides the three below, it also keeps **where the toolbar is docked**,
+the **pen button mapping** and the **low-latency ink** switch (all under
+*Settings*, described in the sections on the interface, the stylus and *How it
+works*).
 
 - **Palette order.** *Arrange icons* in the settings popover turns each tool
   button into a drag handle (the same pointer-reorder hook the page arranger
@@ -1616,8 +1667,8 @@ open.
   preference through each one means each one can forget it — and an explicit
   template always wins, so a PDF import is still a PDF page.
 
-*Reset to defaults*, also in the settings popover, clears all three at once
-and says so. Everything read back off disk goes through `normalize`: this is
+*Reset to defaults*, also in the settings popover, clears all of it at once
+(order, colours, page defaults, dock, pen buttons, low-latency ink) and says so. Everything read back off disk goes through `normalize`: this is
 user-editable storage that survives upgrades, so a slot that no longer exists,
 a colour that is not a colour, or a list that lost half its entries has to
 leave the app usable. A saved order missing a tool that did not exist when it
@@ -1667,8 +1718,15 @@ choices worth knowing about:
   was trying to report. So this is main-thread latency, which is the part the
   app controls.
 
-Both the mean and the p95 are shown, because a mean of 8 ms hides a stutter
-that a p95 of 40 ms does not. `RollingWindow` keeps them: a fixed-capacity
+The **median** is the headline, with the p95 and the mean beside it. The mean
+was the headline once, and it misled: a session with sixty ordinary 9 ms samples
+and three stalls of a second or more averages over 40 ms, which reads as "the
+pen lags" when the pen was fine and the *app* froze three times. The median says
+what drawing normally feels like, the p95 says how bad the bad frames get, and
+the mean is left in to show how much the stalls are worth (a mean many times the
+median is the signature of a few long freezes rather than constant lag). A
+mean of 8 ms would equally hide a stutter that a p95 of 40 ms does not, which is
+why it is never the only figure. `RollingWindow` keeps them: a fixed-capacity
 ring over a pre-sized `Float64Array`, so pushing from a pointer handler at
 240 Hz allocates nothing and cannot itself become the thing that drops
 frames. The mean is a running sum with the evicted value subtracted — O(1) to
@@ -1727,7 +1785,11 @@ running while the pen is lifted — which is when the app is idle enough to reac
 it. Intervals under 2.5 ms (400 Hz) are discarded as double-fired callbacks.
 
 That row doubles as a hardware check: Windows will happily drive a 180 Hz panel
-at 60, and this is where it shows up first.
+at 60, and this is where it shows up first. A `display` of 60–80 Hz with an fps
+to match, and an ink latency of about one frame at that rate (10–17 ms at the
+p95), is a 60 Hz panel being served at 60 Hz — the fix is Windows' *Advanced
+display* setting (choose the 180 Hz rate, and turn off *Dynamic refresh rate* or
+keep the tablet plugged in), not the app.
 
 ## How it works
 
@@ -1735,8 +1797,24 @@ at 60, and this is where it shows up first.
 touched when history changes: appending a stroke draws just that stroke;
 undo, erase and resize replay the list. `live` shows the stroke in progress
 and is cleared and repainted once per `requestAnimationFrame` from all the
-samples received since the previous frame. Both contexts are created with
-`desynchronized: true` so Chromium can present outside the compositor's vsync.
+samples received since the previous frame.
+
+**Low-latency ink is opt-in.** `desynchronized: true` on the 2D contexts lets
+Chromium present outside the compositor's vsync, which shaves a frame off the
+pen's lag — and on Windows it does so by handing the canvas to a hardware
+overlay plane, of which there are few, shared with the mouse cursor, and which
+stop working when anything translucent is composited over them. Every page has
+two such canvases. On a large screen with several pages visible, and a
+translucent toolbar over the top, that is the most likely reason a page went
+black when scrolled past, the cursor flickered in fullscreen and the toolbar
+stuttered on an ROG Flow Z13. None of that could be reproduced without the
+tablet, so this is a suspected cause, not a proven one. It is therefore **off by
+default**:
+*Settings → Low-latency ink* turns it on, and the canvases are rebuilt when it
+is flipped, because a canvas's attributes are fixed by its first `getContext`
+(`engine/canvasMode.ts` is the one place that decides them). To settle it on a
+device, watch *ink lag* (median) in the overlay with the switch off and then
+on: if the switch buys under a frame and costs a black page, leave it off.
 
 **High-DPI.** A `ResizeObserver` (preferring `device-pixel-content-box`)
 sizes the backing stores to `css × devicePixelRatio` (capped at 3×) and
@@ -1856,6 +1934,12 @@ hit-testing can answer:
   page and stroke counts and admits everything came in as pen. On a phone this
   dialog is the *only* surface that reports an import at all, so a check that it
   appears is a check that the feature does not silently lie.
+- **the toolbar, 1280×800** — it starts docked to the bottom; mid-drag it moves
+  by `transform` with `left`/`top` untouched and has no backdrop blur; pushed to
+  an edge it shows the dock target and docks there; docked left it stands on end,
+  sits against the edge and fits the stage; a flyout opens beside its own button
+  and stays on screen; the settings panel fits the window and scrolls; the
+  settings can dock it top and bottom; the dock survives a reload.
 
 A blocked tap is reported as a failed check naming the element in the way
 (Playwright's own actionability error says which), not as a timeout that hides
@@ -1892,6 +1976,7 @@ src/inking/
 │   ├── hitTest.ts          stroke-eraser geometry for both stroke kinds
 │   ├── history.ts          undo/redo reducer
 │   ├── pointerPolicy.ts    palm rejection, pressure, button mapping
+│   ├── canvasMode.ts       whether the ink canvases are created `desynchronized` (opt-in)
 │   ├── lasso.ts            selection modes, stroke transforms, reshaping, handle geometry
 │   ├── lassoFilter.ts      which layers the lasso may pick up
 │   ├── brushes.ts          pen presets: perfect-freehand params, tilt, grain, tapers
@@ -1917,12 +2002,12 @@ scripts/
 
 src/debug/
 ├── rollingWindow.ts        allocation-free ring window: mean, max, percentiles
-├── profiler.ts             fps, ink latency, draw time, React commits; inert when off
+├── profiler.ts             fps, ink latency (median, p95, mean), draw time, React commits; inert when off
 ├── DebugOverlay.tsx        the corner read-out
 └── RenderProfiler.tsx      always-mounted <Profiler> boundary
 
 src/preferences/
-├── types.ts                palette slots, page defaults, the shapes
+├── types.ts                palette slots, dock edges, page defaults, stylus mapping, the shapes
 ├── store.ts                persisted store + normalisation of anything stored
 └── usePageDefaultsSource.ts  lets createPage see the preferred layout
 

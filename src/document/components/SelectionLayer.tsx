@@ -500,7 +500,7 @@ export const SelectionLayer = memo(function SelectionLayer({
             pointerEvents: 'auto',
             touchAction: 'none',
           }}
-          className="flex flex-wrap items-center justify-center gap-1 rounded-lg bg-zinc-900/90 p-1 shadow-lg backdrop-blur"
+          className="flex flex-wrap items-center justify-center gap-1 rounded-lg bg-zinc-900/95 p-1 shadow-lg"
           onPointerDown={(e) => e.stopPropagation()}
         >
           <button

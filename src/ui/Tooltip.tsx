@@ -1,6 +1,8 @@
 import {
   cloneElement,
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useRef,
@@ -12,6 +14,16 @@ import {
 
 export type TooltipSide = 'top' | 'bottom' | 'left' | 'right';
 
+/**
+ * Which way tooltips open, for everything inside a provider.
+ *
+ * A toolbar docked to the top of the screen needs its tooltips below its buttons
+ * and one on the left side needs them to the right, and threading a `side` through
+ * every button of a toolbar of twenty is how one gets forgotten. An explicit
+ * `side` on a tooltip still wins.
+ */
+const TooltipSideContext = createContext<TooltipSide>('top');
+export const TooltipSideProvider = TooltipSideContext.Provider;
 export interface TooltipProps {
   /** The text shown in the bubble. Also what the trigger is named for assistive tech. */
   label: ReactNode;
@@ -45,7 +57,9 @@ const SIDE_CLASSES: Record<TooltipSide, string> = {
  * no hover. The trigger keeps its own `aria-label`, so the bubble is purely
  * visual and is hidden from assistive tech.
  */
-export function Tooltip({ label, side = 'top', delay = TOOLTIP_DELAY_MS, hint, disabled = false, children }: TooltipProps) {
+export function Tooltip({ label, side: sideProp, delay = TOOLTIP_DELAY_MS, hint, disabled = false, children }: TooltipProps) {
+  const inherited = useContext(TooltipSideContext);
+  const side = sideProp ?? inherited;
   const [open, setOpen] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const id = useId();

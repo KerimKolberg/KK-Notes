@@ -6,6 +6,7 @@ import type { Point, Stroke, ToolSettings } from '../../inking/types';
 import { FormOverlay } from '../../pdf/FormOverlay';
 import { PdfBackground } from '../../pdf/PdfBackground';
 import type { PageLayout } from '../layout';
+import { usePreferencesStore } from '../../preferences/store';
 import { useDocumentStore } from '../store';
 import { templateSvgDataUrl } from '../templates';
 import { cancelBarrelButton, noteBarrelButton } from '../stylusBarrel';
@@ -54,6 +55,9 @@ export const PageFrame = memo(function PageFrame({
   const clearLassoSelection = useDocumentStore((s) => s.clearLassoSelection);
   const lassoIds = useDocumentStore((s) => (s.lassoSelection?.pageId === page.id ? s.lassoSelection.strokeIds : null));
   const readOnly = useDocumentStore((s) => s.readOnly);
+  // Only used as a `key`: a canvas's attributes are fixed by its first
+  // `getContext`, so the surface has to be rebuilt for the switch to take effect.
+  const lowLatencyInk = usePreferencesStore((s) => s.lowLatencyInk);
   const pageRef = useLatestRef(page);
   /** Strokes the selection layer is previewing; the ink layer leaves them out meanwhile. */
   const [hiddenStrokeIds, setHiddenStrokeIds] = useState<ReadonlySet<string> | null>(null);
@@ -121,6 +125,7 @@ export const PageFrame = memo(function PageFrame({
           {/* The wrapper only provides the z-index; the surface itself decides whether it takes pointer input. */}
           <div className="pointer-events-none absolute inset-0 z-20">
             <InkSurface
+              key={lowLatencyInk ? 'low-latency' : 'standard'}
               width={page.dimensions.width}
               height={page.dimensions.height}
               zoom={zoom}

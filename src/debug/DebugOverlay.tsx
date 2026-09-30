@@ -98,7 +98,10 @@ export function DebugOverlay({ enabled }: DebugOverlayProps) {
       />
 
       <div className="mt-1 border-t border-white/10 pt-1">
-        <Line label="ink lag" value={ms(stats.latencyMs)} tone={latencyTone(stats.latencyMs)} />
+        {/* The median, not the mean: see `latencyMedianMs`. One long stall in the
+            window would otherwise colour the whole reading. */}
+        <Line label="ink lag" value={ms(stats.latencyMedianMs)} tone={latencyTone(stats.latencyMedianMs)} />
+        <Line label="mean" value={ms(stats.latencyMs)} />
         <Line label="p95" value={ms(stats.latencyP95Ms)} />
         <Line label="worst" value={ms(stats.worstLatencyMs)} />
         <Line label="samples" value={String(stats.latencySamples)} />

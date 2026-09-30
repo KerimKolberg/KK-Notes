@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Brush, Pen, PenLine, PenTool, Pencil, Pipette, type LucideIcon } from 'lucide-react';
 import { IconButton } from '../../ui/IconButton';
@@ -7,6 +7,7 @@ import {
   AXIS_LABEL_PRESETS,
   COLOR_PALETTE,
   DEFAULT_AXIS_STEP,
+  DEFAULT_STYLUS_SETTINGS,
   MAX_AXIS_STEP,
   MIN_AXIS_STEP,
   DEFAULT_WASHI_ACCENT,
@@ -27,11 +28,12 @@ import {
   MIN_WASHI_OPACITY,
   MIN_WASHI_WIDTH,
   STROKE_PATTERNS,
+  STYLUS_TOOLS,
 } from '../constants';
 import { ERASE_FILTERS, filterIsActive } from '../engine/eraseFilter';
 import { LASSO_MODES, type LassoMode } from '../engine/lasso';
 import { LASSO_LAYERS, lassoFilterIsEmpty } from '../engine/lassoFilter';
-import { DEFAULT_PALETTE_ORDER, MAX_SWATCHES, MIN_SWATCHES } from '../../preferences/types';
+import { DEFAULT_PALETTE_ORDER, MAX_SWATCHES, MIN_SWATCHES, type PaletteDock } from '../../preferences/types';
 import { DEFAULT_PREFERENCES, usePreferencesStore } from '../../preferences/store';
 import { BARREL_CLICK_MS } from '../engine/barrelButton';
 import { formatTickValue } from '../engine/shapes';
@@ -50,22 +52,13 @@ import type {
 } from '../types';
 
 /**
- * Tools the barrel button can reach.
+ * Tools a pen button can reach.
  *
- * Not every tool: the ones worth a hardware button are the ones you switch
- * to for a moment and back. A pen-to-plotting-a-coordinate-plane button is
- * not a thing anyone wants.
+ * Not every tool: the ones worth a hardware button are the ones you switch to
+ * for a moment and back. The list lives in `constants` so that what the settings
+ * offer and what a saved mapping is checked against are the same list.
  */
-const BARREL_TOOLS: readonly { readonly id: ToolType; readonly label: string }[] = [
-  { id: 'pen', label: 'Pen' },
-  { id: 'highlighter', label: 'Highlighter' },
-  { id: 'eraser-stroke', label: 'Stroke eraser' },
-  { id: 'eraser-pixel', label: 'Area eraser' },
-  { id: 'lasso', label: 'Lasso' },
-  { id: 'select', label: 'Select' },
-  { id: 'laser-pointer', label: 'Laser pointer' },
-  { id: 'line', label: 'Lines and shapes' },
-];
+const BARREL_TOOLS = STYLUS_TOOLS;
 
 /** How long a swatch must be held before it becomes editable, in ms. */
 const SWATCH_HOLD_MS = 550;
@@ -209,7 +202,7 @@ export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
         {swatches.map((color, index) => {
           const selected = activeColor.toLowerCase() === color.toLowerCase();
           return (
-            <Tooltip key={`${color}-${index}`} label={`Colour ${color}`} hint="hold to change" side="top">
+            <Tooltip key={`${color}-${index}`} label={`Colour ${color}`} hint="hold to change">
               <button
                 type="button"
                 aria-label={`Colour ${color}`}
@@ -1045,6 +1038,65 @@ export interface PaletteSettingsProps extends PanelProps {
   onArrangingChange?: (value: boolean) => void;
 }
 
+const DOCK_CHOICES: readonly { readonly dock: PaletteDock; readonly label: string }[] = [
+  { dock: 'bottom', label: 'Bottom' },
+  { dock: 'top', label: 'Top' },
+  { dock: 'left', label: 'Left' },
+  { dock: 'right', label: 'Right' },
+  { dock: 'free', label: 'Free' },
+];
+
+/** The names Windows gives the bits of `PointerEvent.buttons`, for a pen. */
+function describePenButtons(buttons: number): string {
+  if (buttons === 0) return 'no button';
+  const names: string[] = [];
+  if (buttons & 1) names.push('pen tip (1)');
+  if (buttons & 2) names.push('barrel button (2)');
+  if (buttons & 32) names.push('second button / eraser (32)');
+  if (buttons & ~(1 | 2 | 32)) names.push(`other (${buttons & ~(1 | 2 | 32)})`);
+  return names.join(' + ');
+}
+
+/**
+ * Which button the pen is reporting, live.
+ *
+ * Two-button pens disagree about which physical button is which — Windows sends
+ * one as the barrel and the other as the eraser — and a mapping cannot be set up
+ * by guessing. This shows what the pen actually says when a button is pressed, so
+ * the two dropdowns above can be matched to the two buttons under the thumb.
+ *
+ * Listens only while the settings are open, and only re-renders when the reported
+ * buttons change, not on every hover move.
+ */
+function PenButtonTest(): React.JSX.Element {
+  const [buttons, setButtons] = useState<number | null>(null);
+  useEffect(() => {
+    const onPen = (e: PointerEvent): void => {
+      if (e.pointerType !== 'pen') return;
+      setButtons((current) => (current === e.buttons ? current : e.buttons));
+    };
+    // Capture, so it sees the event even if the page underneath handles it.
+    window.addEventListener('pointermove', onPen, true);
+    window.addEventListener('pointerdown', onPen, true);
+    window.addEventListener('pointerup', onPen, true);
+    return () => {
+      window.removeEventListener('pointermove', onPen, true);
+      window.removeEventListener('pointerdown', onPen, true);
+      window.removeEventListener('pointerup', onPen, true);
+    };
+  }, []);
+  return (
+    <div className="rounded-lg bg-zinc-100 px-2 py-1.5 text-xs dark:bg-zinc-800" data-pen-button-test>
+      <div className="font-medium text-zinc-700 dark:text-zinc-200">Pen button test</div>
+      <div className="text-zinc-500 dark:text-zinc-400" data-pen-buttons>
+        {buttons === null
+          ? 'Hold the pen just above the screen and press a button.'
+          : `The pen reports: ${describePenButtons(buttons)}`}
+      </div>
+    </div>
+  );
+}
+
 /** Input settings that are not a tool: touch drawing, stylus buttons, layout, clear. */
 export function PaletteSettings({
   settings,
@@ -1053,22 +1105,37 @@ export function PaletteSettings({
   arranging = false,
   onArrangingChange,
 }: PaletteSettingsProps) {
-  const { paletteOrder, swatches, pageDefaults, resetPreferences } = usePreferencesStore(
-    useShallow((s) => ({
-      paletteOrder: s.paletteOrder,
-      swatches: s.swatches,
-      pageDefaults: s.pageDefaults,
-      resetPreferences: s.resetPreferences,
-    })),
-  );
+  const { paletteOrder, swatches, pageDefaults, resetPreferences, paletteDock, setPaletteDock, lowLatencyInk, setLowLatencyInk } =
+    usePreferencesStore(
+      useShallow((s) => ({
+        paletteOrder: s.paletteOrder,
+        swatches: s.swatches,
+        pageDefaults: s.pageDefaults,
+        resetPreferences: s.resetPreferences,
+        paletteDock: s.paletteDock,
+        setPaletteDock: s.setPaletteDock,
+        lowLatencyInk: s.lowLatencyInk,
+        setLowLatencyInk: s.setLowLatencyInk,
+      })),
+    );
   // Subscribed rather than read once, so the button enables itself the moment
   // something is customised rather than on the next unrelated re-render.
   const customised =
     pageDefaults !== null ||
     paletteOrder.join() !== DEFAULT_PALETTE_ORDER.join() ||
-    swatches.join() !== DEFAULT_PREFERENCES.swatches.join();
+    swatches.join() !== DEFAULT_PREFERENCES.swatches.join() ||
+    paletteDock !== DEFAULT_PREFERENCES.paletteDock ||
+    lowLatencyInk !== DEFAULT_PREFERENCES.lowLatencyInk ||
+    JSON.stringify(settings.stylus) !== JSON.stringify(DEFAULT_STYLUS_SETTINGS);
   return (
-    <div className="flex w-[min(18rem,calc(100vw-2.5rem))] flex-col gap-1" data-palette-settings>
+    // Scrolls instead of growing: this panel has more in it than a tablet in
+    // landscape has height, and a panel taller than the screen cuts off its own
+    // first rows with no way to reach them. The cap leaves room for the top bar
+    // above and the toolbar it opened from.
+    <div
+      className="flex max-h-[calc(100dvh-12rem)] w-[min(18rem,calc(100vw-2.5rem))] flex-col gap-1 overflow-y-auto overscroll-contain pr-1"
+      data-palette-settings
+    >
       <Row label="Finger input">
         <Switch checked={settings.touchDraw} onChange={(v) => onSettingsChange({ touchDraw: v })}>
           Touch Draw
@@ -1136,17 +1203,58 @@ export function PaletteSettings({
         button past {BARREL_CLICK_MS} ms borrows the second tool until you let
         go.
       </p>
-      <Row label="Eraser end">
+      <Row label="Second button">
         <select
           className={SELECT}
-          aria-label="Eraser end"
+          aria-label="Second button, held"
+          data-second-button
           value={settings.stylus.eraserEnd}
           onChange={(e) => onSettingsChange({ stylus: { ...settings.stylus, eraserEnd: e.target.value as EraserEndAction } })}
         >
-          <option value="eraser-stroke">Stroke eraser</option>
-          <option value="eraser-pixel">Pixel eraser</option>
+          {BARREL_TOOLS.map((tool) => (
+            <option key={tool.id} value={tool.id}>
+              {tool.label}
+            </option>
+          ))}
         </select>
       </Row>
+      <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-second-button-note>
+        The pen&rsquo;s other button (or eraser end), held while you draw. If
+        the two buttons come out the wrong way round, swap them here.
+      </p>
+      <PenButtonTest />
+      <Row label="Toolbar">
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Toolbar position">
+          {DOCK_CHOICES.map((choice) => (
+            <button
+              key={choice.dock}
+              type="button"
+              aria-pressed={paletteDock === choice.dock}
+              data-palette-dock-choice={choice.dock}
+              className={`h-7 rounded-md px-2 text-xs font-medium ${
+                paletteDock === choice.dock
+                  ? 'bg-blue-600 text-white dark:bg-blue-500'
+                  : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700'
+              }`}
+              onClick={() => setPaletteDock(choice.dock)}
+            >
+              {choice.label}
+            </button>
+          ))}
+        </div>
+      </Row>
+      <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-dock-note>
+        Or drag it by its handle and push it against an edge.
+      </p>
+      <Row label="Low-latency ink">
+        <Switch checked={lowLatencyInk} onChange={setLowLatencyInk}>
+          <span data-low-latency-ink>Experimental</span>
+        </Switch>
+      </Row>
+      <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-low-latency-note>
+        Saves up to a frame of pen lag, but on some Windows GPUs it can turn a
+        page black or make the cursor flicker. Off unless you turn it on.
+      </p>
       <Row label="Diagnostics">
         <Switch checked={settings.debugMode} onChange={(v) => onSettingsChange({ debugMode: v })}>
           <span data-debug-mode>Debug mode</span>
@@ -1192,8 +1300,10 @@ export function PaletteSettings({
           disabled={!customised}
           className="inline-flex h-8 w-full items-center justify-center rounded-lg px-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 dark:text-zinc-300 dark:hover:bg-zinc-800"
           onClick={() => {
-            if (window.confirm('Reset the palette order, quick colours and page defaults?')) {
+            if (window.confirm('Reset the toolbar, pen buttons, quick colours and page defaults?')) {
               resetPreferences();
+              // The live tool settings hold their own copy of the pen mapping.
+              onSettingsChange({ stylus: DEFAULT_STYLUS_SETTINGS });
               onArrangingChange?.(false);
             }
           }}
@@ -1202,7 +1312,7 @@ export function PaletteSettings({
           Reset to defaults
         </button>
         <p className="px-1 pt-0.5 text-center text-[11px] text-zinc-400 dark:text-zinc-500">
-          {customised ? 'Clears custom colours, tool order and page defaults.' : 'Nothing has been customised yet.'}
+          {customised ? 'Clears the toolbar position, pen buttons, colours, tool order and page defaults.' : 'Nothing has been customised yet.'}
         </p>
       </div>
     </div>

@@ -56,7 +56,7 @@ const DANGER = 'text-rose-600 hover:bg-rose-100 dark:text-rose-300 dark:hover:bg
 
 /** Icon-only button: tooltip, accessible name and a strong active state. */
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { icon: Icon, label, hint, active = false, size = 'md', tone = 'default', tooltipSide = 'top', badge, hasPopover, tooltipDisabled, className = '', ...rest },
+  { icon: Icon, label, hint, active = false, size = 'md', tone = 'default', tooltipSide, badge, hasPopover, tooltipDisabled, className = '', ...rest },
   ref,
 ) {
   const sizing = SIZES[size];
@@ -65,7 +65,10 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
     <Tooltip
       label={label}
       {...(hint ? { hint } : {})}
-      side={tooltipSide}
+      // Only when asked for: left unset, the tooltip follows its surroundings
+      // (a toolbar docked to the top opens them downwards) instead of being pinned
+      // to "above" by a default that overrides that.
+      {...(tooltipSide ? { side: tooltipSide } : {})}
       disabled={tooltipDisabled ?? rest['aria-expanded'] === true}
     >
       <button

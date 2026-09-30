@@ -18,13 +18,14 @@ import {
 import { useShallow } from 'zustand/react/shallow';
 import { usePointerReorder, type ReorderItemProps } from '../../document/hooks/usePointerReorder';
 import { usePreferencesStore } from '../../preferences/store';
-import { PALETTE_GROUP_STARTS, PALETTE_SLOT_LABELS, type PaletteSlot } from '../../preferences/types';
+import { PALETTE_GROUP_STARTS, PALETTE_SLOT_LABELS, type PaletteDock, type PaletteSlot } from '../../preferences/types';
 import { filterIsActive } from '../engine/eraseFilter';
 import { lassoFilterIsOpen } from '../engine/lassoFilter';
 import { IconButton } from '../../ui/IconButton';
-import { Popover } from '../../ui/Popover';
-import { Tooltip } from '../../ui/Tooltip';
-import { useDraggablePanel } from '../../ui/useDraggablePanel';
+import { Popover, type PopoverSide } from '../../ui/Popover';
+import { TooltipSideProvider, Tooltip, type TooltipSide } from '../../ui/Tooltip';
+import { isVerticalDock, verticalCapacity } from '../../ui/dock';
+import { PANEL_MARGIN, useDraggablePanel } from '../../ui/useDraggablePanel';
 import { useSafeAreaInsets } from '../../ui/useSafeAreaInsets';
 import type { ToolSettings, ToolType } from '../types';
 import {
@@ -91,7 +92,18 @@ function lineLabel(curve: ToolSettings['lineCurve']): string {
   return LINE_LABELS[curve];
 }
 
-const DIVIDER = <span className="mx-0.5 h-8 w-px shrink-0 bg-zinc-200 dark:bg-zinc-700" aria-hidden="true" />;
+/**
+ * A divider between groups. Drawn as a vertical bar in a row and a horizontal one
+ * in a column, chosen by CSS off the panel's `data-vertical` so the one element
+ * serves both — it is shared by every slot, and threading an orientation to each
+ * of them for a line would be a lot of plumbing for a line.
+ */
+const DIVIDER = (
+  <span
+    className="mx-0.5 h-8 w-px shrink-0 bg-zinc-200 group-data-[vertical=true]/palette:mx-0 group-data-[vertical=true]/palette:my-0.5 group-data-[vertical=true]/palette:h-px group-data-[vertical=true]/palette:w-8 dark:bg-zinc-700"
+    aria-hidden="true"
+  />
+);
 
 interface PaletteSlotButtonProps {
   slot: PaletteSlot;
@@ -169,21 +181,37 @@ export const ToolPalette = memo(function ToolPalette({
   const [flyout, setFlyout] = useState<Flyout>(null);
   // On a tablet the palette must stay clear of the status bar and the gesture pill.
   const insets = useSafeAreaInsets();
-  const { position, dragging, handleProps, reset } = useDraggablePanel({
+  const { paletteOrder, movePaletteSlot, paletteDock, setPaletteDock } = usePreferencesStore(
+    useShallow((s) => ({
+      paletteOrder: s.paletteOrder,
+      movePaletteSlot: s.movePaletteSlot,
+      paletteDock: s.paletteDock,
+      setPaletteDock: s.setPaletteDock,
+    })),
+  );
+  // A palette that cannot be dragged (an embedded canvas) has no dock either.
+  const dock = draggable ? paletteDock : 'free';
+  const { position, dragging, dockPreview, container, handleProps, reset } = useDraggablePanel({
     panelRef,
     containerRef,
     enabled: draggable && !hidden,
     insets,
+    dock,
+    onDockChange: setPaletteDock,
   });
+  const vertical = isVerticalDock(dock);
+  /** Flyouts open away from the edge the toolbar is against, not always upwards. */
+  const popSide: PopoverSide = dock === 'top' ? 'bottom' : dock === 'left' ? 'right' : dock === 'right' ? 'left' : 'top';
+  const tipSide: TooltipSide = popSide;
+  // A standing toolbar cannot be taller than the room it stands in, so its column
+  // of tools wraps into a second one instead of running off the screen.
+  const capacity = vertical && container ? verticalCapacity(container, PANEL_MARGIN, insets) : undefined;
 
   // Arranging the icons is a mode, not something a stray drag can trigger:
   // the palette sits over a canvas someone is drawing on, and a tool button
   // that moved because the pen slipped would be worse than one in the wrong
   // place. Entered from the settings popover.
   const [arranging, setArranging] = useState(false);
-  const { paletteOrder, movePaletteSlot } = usePreferencesStore(
-    useShallow((s) => ({ paletteOrder: s.paletteOrder, movePaletteSlot: s.movePaletteSlot })),
-  );
   const noSelect = useCallback(() => {}, []);
   const { drag, getItemProps } = usePointerReorder({
     count: paletteOrder.length,
@@ -234,7 +262,7 @@ export const ToolPalette = memo(function ToolPalette({
                 data-lasso-mode={settings.lassoMode}
                 data-lasso-filtered={lassoFilterIsOpen(settings.lassoFilter) ? undefined : 'true'}
               />
-              <Popover open={flyout === 'lasso'} onClose={close} label="Lasso selection" side="top" align="center">
+              <Popover open={flyout === 'lasso'} onClose={close} label="Lasso selection" side={popSide} align="center">
                 <LassoOptions settings={settings} onSettingsChange={onSettingsChange} />
               </Popover>
             </div>
@@ -254,7 +282,7 @@ export const ToolPalette = memo(function ToolPalette({
                   onClick={() => toggle('insert')}
                   data-insert-trigger
                 />
-                <Popover open={flyout === 'insert'} onClose={close} label="Add to the page" side="top" align="center">
+                <Popover open={flyout === 'insert'} onClose={close} label="Add to the page" side={popSide} align="center">
                   {insertMenu(close)}
                 </Popover>
               </div>
@@ -271,7 +299,7 @@ export const ToolPalette = memo(function ToolPalette({
                 onClick={() => (penActive ? toggle('brush') : pick('pen'))}
                 data-palette-tool="pen"
               />
-              <Popover open={flyout === 'brush'} onClose={close} label="Pen brushes" side="top" align="center">
+              <Popover open={flyout === 'brush'} onClose={close} label="Pen brushes" side={popSide} align="center">
                 <BrushFlyout settings={settings} onSettingsChange={onSettingsChange} onPick={close} />
               </Popover>
             </div>
@@ -289,7 +317,7 @@ export const ToolPalette = memo(function ToolPalette({
                 data-palette-tool="highlighter"
                 data-highlighter-gradient={settings.highlighterGradient}
               />
-              <Popover open={flyout === 'highlighter'} onClose={close} label="Highlighter" side="top" align="center">
+              <Popover open={flyout === 'highlighter'} onClose={close} label="Highlighter" side={popSide} align="center">
                 <HighlighterOptions settings={settings} onSettingsChange={onSettingsChange} />
               </Popover>
             </div>
@@ -307,7 +335,7 @@ export const ToolPalette = memo(function ToolPalette({
                 onClick={() => (washiActive ? toggle('washi') : pick('washi-tape'))}
                 data-palette-tool="washi-tape"
               />
-              <Popover open={flyout === 'washi'} onClose={close} label="Washi tape" side="top" align="center">
+              <Popover open={flyout === 'washi'} onClose={close} label="Washi tape" side={popSide} align="center">
                 <WashiOptions settings={settings} onSettingsChange={onSettingsChange} />
               </Popover>
             </div>
@@ -325,7 +353,7 @@ export const ToolPalette = memo(function ToolPalette({
                 data-palette-tool="line"
                 data-line-curve={settings.lineCurve}
               />
-              <Popover open={flyout === 'line'} onClose={close} label="Line path and pattern" side="top" align="center">
+              <Popover open={flyout === 'line'} onClose={close} label="Line path and pattern" side={popSide} align="center">
                 <LineOptions settings={settings} onSettingsChange={onSettingsChange} />
               </Popover>
             </div>
@@ -342,7 +370,7 @@ export const ToolPalette = memo(function ToolPalette({
                 onClick={() => (planeActive ? toggle('plane') : pick('coordinate-plane'))}
                 data-palette-tool="coordinate-plane"
               />
-              <Popover open={flyout === 'plane'} onClose={close} label="Coordinate plane options" side="top" align="center">
+              <Popover open={flyout === 'plane'} onClose={close} label="Coordinate plane options" side={popSide} align="center">
                 <PlaneOptions settings={settings} onSettingsChange={onSettingsChange} />
               </Popover>
             </div>
@@ -358,7 +386,7 @@ export const ToolPalette = memo(function ToolPalette({
                 onClick={() => toggle('stroke')}
                 data-stroke-options-trigger
               />
-              <Popover open={flyout === 'stroke'} onClose={close} label="Line pattern and snapping" side="top" align="center">
+              <Popover open={flyout === 'stroke'} onClose={close} label="Line pattern and snapping" side={popSide} align="center">
                 <StrokeOptions settings={settings} onSettingsChange={onSettingsChange} />
               </Popover>
             </div>
@@ -378,7 +406,7 @@ export const ToolPalette = memo(function ToolPalette({
                 data-eraser-mode={settings.eraserMode}
                 data-erase-filtered={filterIsActive(settings.eraseFilter) ? 'true' : undefined}
               />
-              <Popover open={flyout === 'eraser'} onClose={close} label="Eraser" side="top" align="center">
+              <Popover open={flyout === 'eraser'} onClose={close} label="Eraser" side={popSide} align="center">
                 <EraserOptions
                   settings={settings}
                   onSettingsChange={onSettingsChange}
@@ -397,34 +425,49 @@ export const ToolPalette = memo(function ToolPalette({
   };
 
   return (
-    <div
-      ref={panelRef}
-      role="toolbar"
-      aria-label="Drawing tools"
-      aria-orientation="horizontal"
-      aria-hidden={hidden}
-      data-tool-palette
-      data-dragging={dragging ? 'true' : undefined}
-      className={`absolute z-30 flex max-w-[calc(100vw-1.5rem-var(--safe-left)-var(--safe-right))] flex-col gap-1 rounded-2xl border border-zinc-200/80 bg-white/90 p-1.5 shadow-2xl backdrop-blur-md transition-opacity duration-200 dark:border-zinc-700/80 dark:bg-zinc-900/90 ${
-        hidden ? 'pointer-events-none opacity-0' : 'opacity-100'
-      }`}
-      style={{
-        left: position?.x ?? 16,
-        top: position?.y ?? 16,
-        visibility: position === null ? 'hidden' : 'visible',
-        touchAction: 'none',
-      }}
-    >
-      {/* Row 1: the tools. Wraps onto further lines rather than growing past
-          the panel — on a phone the full set is far wider than the screen. */}
-      <div className="flex flex-wrap items-center gap-0.5">
+    <TooltipSideProvider value={tipSide}>
+      {dockPreview && <DockTarget edge={dockPreview} />}
+      <div
+        ref={panelRef}
+        role="toolbar"
+        aria-label="Drawing tools"
+        aria-orientation={vertical ? 'vertical' : 'horizontal'}
+        aria-hidden={hidden}
+        data-tool-palette
+        data-dock={dock}
+        data-vertical={vertical ? 'true' : 'false'}
+        data-dragging={dragging ? 'true' : undefined}
+        // No backdrop blur. It looked like little, and it made the browser
+        // re-blur the page behind the toolbar on every frame it moved — the
+        // costliest thing on the screen, over the largest canvas, on the
+        // biggest display. A near-opaque panel reads the same.
+        className={`group/palette absolute z-30 flex max-w-[calc(100vw-1.5rem-var(--safe-left)-var(--safe-right))] ${
+          vertical ? 'flex-row items-start' : 'flex-col'
+        } gap-1 rounded-2xl border border-zinc-200/80 bg-white/95 p-1.5 shadow-2xl transition-opacity duration-200 data-[dragging=true]:will-change-transform dark:border-zinc-700/80 dark:bg-zinc-900/95 ${
+          hidden ? 'pointer-events-none opacity-0' : 'opacity-100'
+        }`}
+        style={{
+          left: position?.x ?? 16,
+          top: position?.y ?? 16,
+          visibility: position === null ? 'hidden' : 'visible',
+          touchAction: 'none',
+          ...(capacity ? { maxHeight: capacity } : {}),
+        }}
+      >
+      {/* The tools. Wraps onto further lines rather than growing past the panel
+          — on a phone the full set is far wider than the screen, and standing on
+          end it is taller than a tablet in landscape. */}
+      <div
+        className={`flex items-center gap-0.5 ${vertical ? 'flex-col flex-wrap content-start' : 'flex-wrap'}`}
+        style={vertical && capacity ? { maxHeight: capacity - 12 } : undefined}
+      >
         {draggable && (
-          <Tooltip label="Move the palette" hint="double-click to reset" side="top">
+          <Tooltip label="Move the palette" hint="double-click to reset">
             <button
               type="button"
               aria-label="Move the palette"
               data-palette-handle
-              className="inline-flex h-11 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-200/70 active:cursor-grabbing dark:text-zinc-500 dark:hover:bg-zinc-700/70"
+              className="inline-flex h-11 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-200/70 active:cursor-grabbing group-data-[vertical=true]/palette:h-6 group-data-[vertical=true]/palette:w-11 dark:text-zinc-500 dark:hover:bg-zinc-700/70"
               onDoubleClick={reset}
               {...handleProps}
             >
@@ -475,7 +518,7 @@ export const ToolPalette = memo(function ToolPalette({
             onClick={() => toggle('settings')}
             data-palette-settings-trigger
           />
-          <Popover open={flyout === 'settings'} onClose={close} label="Input and page settings" side="top" align="end">
+          <Popover open={flyout === 'settings'} onClose={close} label="Input and page settings" side={popSide} align="end">
             <PaletteSettings
               settings={settings}
               onSettingsChange={onSettingsChange}
@@ -487,7 +530,38 @@ export const ToolPalette = memo(function ToolPalette({
         </div>
       </div>
 
-      <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} />
-    </div>
+      {/* Colours and thickness: beneath the tools in a row, and in a column of
+          their own beside them when the toolbar is standing on end. */}
+      {vertical ? (
+        <div className="w-40 shrink-0">
+          <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} />
+        </div>
+      ) : (
+        <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} />
+      )}
+      </div>
+    </TooltipSideProvider>
   );
 });
+
+/**
+ * Where the toolbar will land if let go: a bar along the edge it is being pushed
+ * against, shown only while it is dragged. Without it, docking is a guess — the
+ * toolbar is still under the finger, nowhere near the edge it is about to jump to.
+ */
+function DockTarget({ edge }: { edge: PaletteDock }): React.JSX.Element {
+  const place: Record<PaletteDock, string> = {
+    bottom: 'inset-x-6 bottom-1 h-1.5',
+    top: 'inset-x-6 top-1 h-1.5',
+    left: 'inset-y-6 left-1 w-1.5',
+    right: 'inset-y-6 right-1 w-1.5',
+    free: 'hidden',
+  };
+  return (
+    <div
+      className={`pointer-events-none absolute z-20 rounded-full bg-blue-500/70 ${place[edge]}`}
+      data-dock-target={edge}
+      aria-hidden="true"
+    />
+  );
+}

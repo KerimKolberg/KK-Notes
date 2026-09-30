@@ -33,6 +33,27 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('the median', () => {
+  it('reads the typical stroke, not the stalls', () => {
+    // Fifty-eight ordinary samples and three long stalls, which is what a real
+    // tablet produced: p95 of ten milliseconds and a mean of thirty.
+    for (let i = 0; i < 58; i++) roundTrip(i * 100, i * 100 + 4, i * 100 + 9);
+    roundTrip(10_000, 10_000, 11_500);
+    roundTrip(12_000, 12_000, 13_300);
+    roundTrip(14_000, 14_000, 15_700);
+    const stats = snapshot();
+    expect(stats.latencyMedianMs).toBeCloseTo(9, 0);
+    // The mean is dragged up by the stalls, which is exactly why it is not the headline.
+    expect(stats.latencyMs).toBeGreaterThan(stats.latencyMedianMs * 4);
+    // And the stalls are not hidden: they are still the worst.
+    expect(stats.worstLatencyMs).toBeCloseTo(1700, 0);
+  });
+
+  it('is zero before anything has been measured', () => {
+    expect(snapshot().latencyMedianMs).toBe(0);
+  });
+});
+
 describe('latency measurement', () => {
   it('measures from the pointer timestamp to the end of the draw', () => {
     roundTrip(1000, 1005, 1012);

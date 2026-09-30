@@ -698,6 +698,141 @@ async function checkSplit(browser) {
   await ctx.close();
 }
 
+/**
+ * The toolbar: dragging it, docking it, and what it costs to move.
+ *
+ * Reported from a real tablet: the toolbar lagged when dragged in fullscreen, and
+ * could not be moved to the sides. Both are layout and paint behaviour that a
+ * node test cannot see, so this drives it in Chromium — at desktop size, where
+ * the toolbar is a floating bar and a side dock is a real change of shape.
+ */
+async function checkToolbar(browser) {
+  console.log('toolbar, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-tool-palette]', { state: 'visible', timeout: 10_000 });
+
+  const info = () =>
+    page.$eval('[data-tool-palette]', (el) => {
+      const r = el.getBoundingClientRect();
+      const host = el.offsetParent.getBoundingClientRect();
+      return {
+        dock: el.getAttribute('data-dock'),
+        vertical: el.getAttribute('data-vertical'),
+        orientation: el.getAttribute('aria-orientation'),
+        x: r.left - host.left,
+        y: r.top - host.top,
+        w: r.width,
+        h: r.height,
+        hostW: host.width,
+        hostH: host.height,
+        blur: getComputedStyle(el).backdropFilter,
+      };
+    });
+
+  const start = await info();
+  check('the toolbar starts docked to the bottom', start.dock === 'bottom', start.dock);
+  check('it is a horizontal bar', start.orientation === 'horizontal' && start.h < 200, `${Math.round(start.w)}x${Math.round(start.h)}`);
+  check(
+    'it has no backdrop blur to re-composite while it moves',
+    start.blur === 'none' || start.blur === '',
+    start.blur,
+  );
+
+  // Drag by the handle. While the pointer is down, the panel must be moved with a
+  // transform, not with left/top — that is the whole reason it is cheap.
+  const handle = await (await page.$('[data-palette-handle]')).boundingBox();
+  const hx = handle.x + handle.width / 2;
+  const hy = handle.y + handle.height / 2;
+  await page.mouse.move(hx, hy);
+  await page.mouse.down();
+  const leftBefore = await page.$eval('[data-tool-palette]', (el) => el.style.left);
+  await page.mouse.move(hx - 300, hy - 250, { steps: 6 });
+  const mid = await page.$eval('[data-tool-palette]', (el) => ({
+    transform: el.style.transform,
+    left: el.style.left,
+    willChange: getComputedStyle(el).willChange,
+  }));
+  check('mid-drag it moves by transform', mid.transform.startsWith('translate3d'), mid.transform);
+  check('mid-drag left/top are untouched, so nothing lays out', mid.left === leftBefore, `${leftBefore} -> ${mid.left}`);
+  check('mid-drag it is promoted to its own layer', mid.willChange === 'transform', mid.willChange);
+
+  // Pushing the pointer against the left edge shows where it would dock.
+  const box = await page.$eval('[data-tool-palette]', (el) => el.offsetParent.getBoundingClientRect().toJSON());
+  await page.mouse.move(box.left + 10, box.top + box.height / 2, { steps: 6 });
+  check(
+    'pushing towards an edge shows the dock target',
+    await page.waitForSelector('[data-dock-target="left"]', { state: 'visible', timeout: 2_000 }).then(() => true, () => false),
+  );
+  await page.mouse.up();
+
+  const left = await info();
+  check('released against the left edge, it docks there', left.dock === 'left', left.dock);
+  check('docked left it stands on end', left.orientation === 'vertical' && left.vertical === 'true', left.orientation);
+  check('it sits against the left edge', left.x < 24, `x=${Math.round(left.x)}`);
+  check('it fits inside the stage, wrapping rather than overflowing', left.y >= 0 && left.y + left.h <= left.hostH, `y=${Math.round(left.y)} h=${Math.round(left.h)} of ${Math.round(left.hostH)}`);
+  check('the dock target goes away once released', (await page.$('[data-dock-target]')) === null);
+
+  // A flyout from a side dock opens beside the toolbar, not above a button that
+  // may be at the top of the screen.
+  // The pen is already the active tool, so one press opens its flyout; a second
+  // would close it again.
+  await page.click('[data-palette-tool="pen"]');
+  const popover = await page.waitForSelector('[data-popover="Pen brushes"]', { state: 'visible', timeout: 3_000 }).then(() => true, () => false);
+  check('a flyout opens from the side dock', popover);
+  if (popover) {
+    const geometry = await page.evaluate(() => {
+      const pop = document.querySelector('[data-popover="Pen brushes"]').getBoundingClientRect();
+      // Beside the button that owns it. The toolbar is wider than the tools — its
+      // colours sit in a column of their own — so the button is the right anchor.
+      const owner = document.querySelector('[data-palette-tool="pen"]').getBoundingClientRect();
+      return { popLeft: pop.left, ownerRight: owner.right, top: pop.top, bottom: pop.bottom, vh: window.innerHeight };
+    });
+    check('it opens to the right of its button', geometry.popLeft >= geometry.ownerRight - 1, `${Math.round(geometry.popLeft)} vs ${Math.round(geometry.ownerRight)}`);
+    check('and stays on screen', geometry.top >= 0 && geometry.bottom <= geometry.vh, `${Math.round(geometry.top)}..${Math.round(geometry.bottom)}`);
+    await page.keyboard.press('Escape');
+  }
+
+  // The settings panel holds more than a small window is tall. It must scroll
+  // rather than run off the top, or its first rows cannot be reached at all.
+  await page.click('[data-palette-settings-trigger]');
+  await page.waitForSelector('[data-palette-settings]', { state: 'visible', timeout: 3_000 });
+  const panel = await page.$eval('[data-palette-settings]', (el) => {
+    const r = el.getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, vh: window.innerHeight, scrolls: el.scrollHeight > el.clientHeight, overflowY: getComputedStyle(el).overflowY };
+  });
+  check('the settings panel fits inside the window', panel.top >= 0 && panel.bottom <= panel.vh, `${Math.round(panel.top)}..${Math.round(panel.bottom)} of ${panel.vh}`);
+  check('and scrolls when it has more than fits', panel.overflowY === 'auto' && panel.scrolls, `overflow-y ${panel.overflowY}, scrolls ${panel.scrolls}`);
+  await page.keyboard.press('Escape');
+
+  // Choosing an edge from the settings needs no dragging at all, which matters
+  // with a pen in one hand and a target a few pixels wide.
+  await page.click('[data-palette-settings-trigger]');
+  await page.waitForSelector('[data-palette-dock-choice="top"]', { state: 'visible', timeout: 3_000 });
+  await page.click('[data-palette-dock-choice="top"]');
+  const top = await info();
+  check('the settings can dock it to the top', top.dock === 'top' && top.orientation === 'horizontal' && top.y < 40, `${top.dock} y=${Math.round(top.y)}`);
+
+  await page.click('[data-palette-dock-choice="bottom"]');
+  const back = await info();
+  check('and back to the bottom', back.dock === 'bottom' && back.y > back.hostH / 2, `${back.dock} y=${Math.round(back.y)}`);
+
+  // The dock is remembered.
+  await page.click('[data-palette-dock-choice="right"]');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-new-document]', { timeout: 20_000 });
+  await page.click('[data-new-document]');
+  await page.waitForSelector('[data-tool-palette]', { state: 'visible', timeout: 10_000 });
+  const remembered = await info();
+  check('the dock survives a restart', remembered.dock === 'right', remembered.dock);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
 // --------------------------------------------------------------------- main
 
 const executablePath = findChromium();
@@ -734,6 +869,7 @@ try {
   await checkFileDrop(browser);
   await checkTabs(browser);
   await checkSplit(browser);
+  await checkToolbar(browser);
 } finally {
   await browser.close();
   if (server) {

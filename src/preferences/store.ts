@@ -14,12 +14,16 @@
  */
 import { create } from 'zustand';
 import { DEFAULT_TEMPLATE_CONFIG, LIGHT_PAGE_BACKGROUND } from '../document/constants';
-import { COLOR_PALETTE } from '../inking/constants';
+import { COLOR_PALETTE, DEFAULT_STYLUS_SETTINGS, STYLUS_TOOLS } from '../inking/constants';
+import { setLowLatencyCanvas } from '../inking/engine/canvasMode';
+import type { StylusSettings, ToolType } from '../inking/types';
 import {
   DEFAULT_PALETTE_ORDER,
   MAX_SWATCHES,
   MIN_SWATCHES,
+  PALETTE_DOCKS,
   type PageDefaults,
+  type PaletteDock,
   type PaletteSlot,
   type Preferences,
 } from './types';
@@ -28,9 +32,45 @@ const STORAGE_KEY = 'notes.preferences.v1';
 
 export const DEFAULT_PREFERENCES: Preferences = {
   paletteOrder: DEFAULT_PALETTE_ORDER,
+  paletteDock: 'bottom',
+  stylus: DEFAULT_STYLUS_SETTINGS,
+  lowLatencyInk: false,
   swatches: COLOR_PALETTE,
   pageDefaults: null,
 };
+
+const STYLUS_TOOL_IDS: ReadonlySet<string> = new Set(STYLUS_TOOLS.map((tool) => tool.id));
+
+function stylusTool(value: unknown, fallback: ToolType): ToolType {
+  return typeof value === 'string' && STYLUS_TOOL_IDS.has(value) ? (value as ToolType) : fallback;
+}
+
+/**
+ * Pen buttons read back from storage.
+ *
+ * Each field is checked against the same list the settings offer, and falls back
+ * on its own: one stale tool name must not throw away the other two mappings, and
+ * a stylus with no valid mapping at all would be a pen that draws nothing when a
+ * button is held.
+ */
+export function normalizeStylus(stored: unknown): StylusSettings {
+  const record = typeof stored === 'object' && stored !== null ? (stored as Record<string, unknown>) : {};
+  const toggle = Array.isArray(record.clickToggle) ? record.clickToggle : [];
+  return {
+    clickToggle: [
+      stylusTool(toggle[0], DEFAULT_STYLUS_SETTINGS.clickToggle[0]),
+      stylusTool(toggle[1], DEFAULT_STYLUS_SETTINGS.clickToggle[1]),
+    ],
+    holdTool: stylusTool(record.holdTool, DEFAULT_STYLUS_SETTINGS.holdTool),
+    eraserEnd: stylusTool(record.eraserEnd, DEFAULT_STYLUS_SETTINGS.eraserEnd),
+  };
+}
+
+export function normalizeDock(stored: unknown): PaletteDock {
+  return typeof stored === 'string' && (PALETTE_DOCKS as readonly string[]).includes(stored)
+    ? (stored as PaletteDock)
+    : DEFAULT_PREFERENCES.paletteDock;
+}
 
 /** A CSS hex colour, the only form the swatch editor produces. */
 export function isHexColor(value: unknown): value is string {
@@ -87,6 +127,10 @@ export function normalize(stored: unknown): Preferences {
   const record = typeof stored === 'object' && stored !== null ? (stored as Record<string, unknown>) : {};
   return {
     paletteOrder: normalizeOrder(record.paletteOrder),
+    paletteDock: normalizeDock(record.paletteDock),
+    stylus: normalizeStylus(record.stylus),
+    // Strictly `true`: anything else, including a stale or mangled value, is off.
+    lowLatencyInk: record.lowLatencyInk === true,
     swatches: normalizeSwatches(record.swatches),
     pageDefaults: normalizePageDefaults(record.pageDefaults),
   };
@@ -125,23 +169,36 @@ export interface PreferencesStore extends Preferences {
   addSwatch: (color: string) => void;
   removeSwatch: (index: number) => void;
   setPageDefaults: (defaults: PageDefaults | null) => void;
+  setPaletteDock: (dock: PaletteDock) => void;
+  setStylus: (stylus: StylusSettings) => void;
+  setLowLatencyInk: (enabled: boolean) => void;
   /** Clear custom colours, tool order and page defaults in one go. */
   resetPreferences: () => void;
 }
 
 export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
   const save = (patch: Partial<Preferences>): void => {
+    const current = get();
     const next: Preferences = {
-      paletteOrder: patch.paletteOrder ?? get().paletteOrder,
-      swatches: patch.swatches ?? get().swatches,
-      pageDefaults: patch.pageDefaults !== undefined ? patch.pageDefaults : get().pageDefaults,
+      paletteOrder: patch.paletteOrder ?? current.paletteOrder,
+      paletteDock: patch.paletteDock ?? current.paletteDock,
+      stylus: patch.stylus ?? current.stylus,
+      lowLatencyInk: patch.lowLatencyInk ?? current.lowLatencyInk,
+      swatches: patch.swatches ?? current.swatches,
+      pageDefaults: patch.pageDefaults !== undefined ? patch.pageDefaults : current.pageDefaults,
     };
     write(next);
+    // Before the state changes, so a surface that remounts on the change already
+    // sees the new mode when it creates its canvases.
+    setLowLatencyCanvas(next.lowLatencyInk);
     set(next);
   };
 
+  const initial = read();
+  setLowLatencyCanvas(initial.lowLatencyInk);
+
   return {
-    ...read(),
+    ...initial,
 
     movePaletteSlot: (from, to) => save({ paletteOrder: reorder(get().paletteOrder, from, to) }),
     setPaletteOrder: (order) => save({ paletteOrder: normalizeOrder(order) }),
@@ -166,6 +223,9 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
     },
 
     setPageDefaults: (defaults) => save({ pageDefaults: defaults }),
+    setPaletteDock: (dock) => save({ paletteDock: normalizeDock(dock) }),
+    setStylus: (stylus) => save({ stylus: normalizeStylus(stylus) }),
+    setLowLatencyInk: (enabled) => save({ lowLatencyInk: enabled === true }),
 
     resetPreferences: () => {
       try {
@@ -173,6 +233,7 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
       } catch {
         /* nothing stored to remove */
       }
+      setLowLatencyCanvas(DEFAULT_PREFERENCES.lowLatencyInk);
       set(DEFAULT_PREFERENCES);
     },
   };

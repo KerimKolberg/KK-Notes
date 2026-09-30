@@ -69,8 +69,26 @@ describe('resolveEffectiveTool', () => {
     expect(resolveEffectiveTool('highlighter', 'pen', 0, 1)).toBe('highlighter');
   });
 
-  it('switches to the stroke eraser for the pen eraser end', () => {
-    expect(resolveEffectiveTool('pen', 'pen', 5, 32)).toBe('eraser-stroke');
+  it('gives the second button the tool it is mapped to', () => {
+    // Windows reports a pen's second button as its eraser flag, whether or not
+    // the pen has an eraser tip — so this is "the other button", not "the eraser".
+    expect(resolveEffectiveTool('pen', 'pen', 5, 32)).toBe(DEFAULT_STYLUS_SETTINGS.eraserEnd);
+  });
+
+  it('ships with the eraser on the barrel hold and the lasso on the second button', () => {
+    // The mapping for a two-button pen with no tip and no Bluetooth: hold one
+    // button to erase, hold the other to select, without touching the toolbar.
+    expect(DEFAULT_STYLUS_SETTINGS.holdTool).toBe('eraser-stroke');
+    expect(DEFAULT_STYLUS_SETTINGS.eraserEnd).toBe('lasso');
+    expect(resolveEffectiveTool('pen', 'pen', 0, 1 | 2)).toBe('eraser-stroke');
+    expect(resolveEffectiveTool('pen', 'pen', 5, 32)).toBe('lasso');
+  });
+
+  it('lets the second button be any tool, not only an eraser', () => {
+    for (const tool of ['lasso', 'highlighter', 'select', 'eraser-pixel', 'laser-pointer'] as const) {
+      const stylus = { ...DEFAULT_STYLUS_SETTINGS, eraserEnd: tool };
+      expect(resolveEffectiveTool('pen', 'pen', 5, 32, stylus)).toBe(tool);
+    }
   });
 
   it('borrows the hold tool for barrel button + contact', () => {
@@ -85,7 +103,7 @@ describe('resolveEffectiveTool', () => {
 
   it('falls back to `button` when `buttons` is missing', () => {
     expect(resolveEffectiveTool('pen', 'pen', 0, 0)).toBe('pen');
-    expect(resolveEffectiveTool('pen', 'pen', 5, 0)).toBe('eraser-stroke');
+    expect(resolveEffectiveTool('pen', 'pen', 5, 0)).toBe(DEFAULT_STYLUS_SETTINGS.eraserEnd);
   });
 
   it('only accepts the primary mouse button', () => {

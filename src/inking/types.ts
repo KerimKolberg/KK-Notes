@@ -297,8 +297,16 @@ export type Stroke = FreehandStroke | GeometricStroke;
 // Settings / history / component API
 // ---------------------------------------------------------------------------
 
-/** What the pen's eraser end (inverted stylus) does (tool ids). */
-export type EraserEndAction = 'eraser-stroke' | 'eraser-pixel';
+/**
+ * What the pen's second button (or inverted eraser end) does while it is held.
+ *
+ * Any tool, not just an eraser. Windows reports a pen's *second* button as the
+ * eraser flag whether or not the pen has an eraser tip, so on a two-button pen
+ * with no tip this is simply "the other button" — and being able to make it the
+ * lasso is the difference between it being useful and being a second copy of the
+ * eraser.
+ */
+export type EraserEndAction = ToolType;
 
 /**
  * The barrel button does two different things depending on how long it is
