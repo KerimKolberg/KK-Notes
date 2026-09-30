@@ -57,6 +57,16 @@ npm run desktop:build       # installers in src-tauri/target/release/bundle/
 npm run icons               # redraw every app icon from scripts/make-icons.mjs
 ```
 
+**Without a Windows toolchain of your own:** *Actions → Windows installer → Run
+workflow* builds the NSIS setup `.exe` on GitHub's Windows runner and attaches it
+to a `windows-<run>` release as a plain download. It builds NSIS only — the MSI's
+WiX toolchain is fetched at build time and is the likeliest thing to fail for
+reasons unrelated to this code — and it reads the **Desktop** OAuth client id from
+the `NOTEX_GOOGLE_DESKTOP_CLIENT_ID` repository variable (the Android workflow's
+`NOTEX_GOOGLE_CLIENT_ID` holds the Android client; they are different clients).
+The installer is unsigned, so Windows shows "Windows protected your PC": *More
+info → Run anyway*.
+
 From a non-Windows host the Rust side can still be verified without the
 GTK/WebKit libraries: `npm run check:rust` runs `cargo check` for the
 `x86_64-pc-windows-msvc` target (add it with `rustup target add`).

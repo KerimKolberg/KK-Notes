@@ -1,0 +1,101 @@
+name: Windows installer
+
+# Manual trigger, like the Android one: Actions tab -> Windows installer -> Run
+# workflow. Produces a single NSIS setup .exe you download and run, so testing on
+# a Windows tablet needs no Rust, Node or Visual Studio installed on it.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # to attach the installer to a release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The runner already has the MSVC build tools, which is what `ring`'s C and
+      # assembly build (behind the HTTPS transport) needs. That is the reason this
+      # job exists at all: the Linux checks build the shell without that feature.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-windows-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: cargo-windows-${{ runner.os }}-
+
+      - run: npm ci
+
+      - name: Build the installer
+        env:
+          # The *Desktop* OAuth client id, which is a different client from the
+          # Android one that NOTEX_GOOGLE_CLIENT_ID holds for the APK workflow (see
+          # docs/google-drive-setup.md, stage 2). Not a secret: an installed app is
+          # a public OAuth client, which is why the flow uses PKCE. Left unset, the
+          # app still builds and its Cloud Sync panel says it has no client id.
+          NOTEX_GOOGLE_CLIENT_ID: ${{ vars.NOTEX_GOOGLE_DESKTOP_CLIENT_ID }}
+        # NSIS only. `tauri.conf.json` also lists MSI, whose WiX toolchain is
+        # downloaded at build time and is the likeliest thing here to fail for
+        # reasons unrelated to this code. One installer is all testing needs; the
+        # MSI is still built by `npm run desktop:build` on a machine of your own.
+        run: npm run tauri build -- --bundles nsis
+
+      - name: Locate the installer
+        id: exe
+        shell: bash
+        run: |
+          EXE="$(find src-tauri/target/release/bundle/nsis -name '*-setup.exe' | head -1)"
+          [ -n "$EXE" ] || { echo "::error::No NSIS installer produced"; exit 1; }
+          echo "path=$EXE" >> "$GITHUB_OUTPUT"
+          echo "Built: $EXE ($(du -h "$EXE" | cut -f1))"
+          # A checksum, so a download can be checked against what CI actually built.
+          sha256sum "$EXE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kk-notes-windows-installer
+          path: ${{ steps.exe.outputs.path }}
+
+      # Attached to a release as a plain .exe, for the same reason the APK is: an
+      # artifact only downloads as a zip, and a zip is one more step on a tablet.
+      # Retried, because a release asset this size fails intermittently with a bare
+      # "Error saving asset", which cost an otherwise-green Android build once.
+      - name: Publish as a release asset (plain .exe, no zip to extract)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: windows-${{ github.run_number }}
+          EXE: ${{ steps.exe.outputs.path }}
+        run: |
+          cat > notes.md <<'EOF'
+          Unsigned Windows installer (NSIS). Windows will say "Windows protected
+          your PC": click **More info**, then **Run anyway**. Signing needs a paid
+          certificate, which this build does not have.
+
+          Registers KK-Notes for `.notex`, `.goodnotes` and `.pdf` under "Open
+          with" and in Default apps. It does not take PDFs from your browser.
+          EOF
+          echo "Built from ${{ github.sha }}." >> notes.md
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --prerelease --title "Windows installer (run ${{ github.run_number }})" --notes-file notes.md
+          for attempt in 1 2 3; do
+            if gh release upload "$TAG" "$EXE" --clobber; then
+              echo "Attached $(basename "$EXE") ($(du -h "$EXE" | cut -f1)) on attempt $attempt"
+              exit 0
+            fi
+            echo "::warning::Upload attempt $attempt failed; retrying"
+            sleep $((attempt * 15))
+          done
+          echo "::error::Could not attach the installer to $TAG after 3 attempts"
+          exit 1
