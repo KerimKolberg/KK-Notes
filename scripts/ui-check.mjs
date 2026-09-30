@@ -981,6 +981,144 @@ async function checkToolbar(browser) {
   await ctx.close();
 }
 
+/**
+ * The pen's buttons, driven with real handlers.
+ *
+ * Reported from a tablet: "the shortcut is not working". The node tests said the
+ * mapping resolved to the right tool, and it did — but a lasso taken by a held
+ * button left a selection nobody could see, because the selection only lives while
+ * the lasso is the active tool. That is a gap between a decision and what the page
+ * does with it, which only a page can show. Pen events are synthesised (no browser
+ * can be handed an eraser-flag button any other way) and carry `buttons` exactly as
+ * Windows reports them: 2 the barrel, 32 the eraser flag, 1 the tip.
+ */
+async function checkPenButtons(browser) {
+  console.log('pen buttons, 1280x800:');
+
+  const open = async (stylus) => {
+    const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+    if (stylus) {
+      await ctx.addInitScript((value) => {
+        try { localStorage.setItem('notes.preferences.v1', JSON.stringify({ stylus: value })); } catch { /* none */ }
+      }, stylus);
+    }
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await openDocument(page);
+    await page.waitForSelector('[data-layer="live"]', { state: 'attached', timeout: 10_000 });
+    await page.evaluate(() => {
+      const canvas = () => document.querySelector('[data-layer="live"]');
+      const fire = (type, x, y, buttons, button) => {
+        canvas().dispatchEvent(
+          new PointerEvent(type, {
+            pointerType: 'pen', pointerId: 7, isPrimary: true, bubbles: true, cancelable: true,
+            clientX: x, clientY: y, buttons, button, pressure: buttons & 1 ? 0.5 : 0,
+          }),
+        );
+      };
+      window.__pen = {
+        hover: (x, y, buttons = 0) => fire('pointermove', x, y, buttons, -1),
+        stroke: async (points, buttons) => {
+          fire('pointerdown', points[0][0], points[0][1], buttons, 0);
+          for (const [x, y] of points.slice(1)) {
+            fire('pointermove', x, y, buttons, -1);
+            await new Promise((r) => setTimeout(r, 6));
+          }
+          const last = points[points.length - 1];
+          fire('pointerup', last[0], last[1], 0, 0);
+        },
+        ink: () => {
+          const c = document.querySelector('[data-layer="committed"]');
+          const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+          let n = 0;
+          for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+          return n;
+        },
+      };
+    });
+    const r = await page.$eval('[data-layer="live"]', (el) => el.getBoundingClientRect().toJSON());
+    const cx = r.x + r.width / 2;
+    const cy = r.y + 200;
+    const line = Array.from({ length: 40 }, (_, i) => [cx - 150 + i * 7.5, cy]);
+    const around = (rx, ry, y = cy) =>
+      Array.from({ length: 31 }, (_, i) => [cx + rx * Math.cos((i * 12 * Math.PI) / 180), y + ry * Math.sin((i * 12 * Math.PI) / 180)]);
+    const tool = () => page.$eval('[data-palette-tool][aria-pressed="true"]', (el) => el.getAttribute('data-palette-tool')).catch(() => 'none');
+    const selected = () => page.$('[data-selection-box]').then((x) => x !== null);
+    return { ctx, page, errors, cx, cy, line, around, tool, selected };
+  };
+
+  // --- the shipped mapping: barrel hold = stroke eraser, second button = lasso
+  {
+    const { ctx, page, errors, cx, cy, line, around, tool, selected } = await open();
+    await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [line]);
+    const inked = await page.evaluate(() => window.__pen.ink());
+    check('a pen stroke leaves ink', inked > 0, String(inked));
+
+    await page.evaluate(([x, y]) => window.__pen.hover(x, y, 2), [cx, cy - 100]);
+    await page.waitForTimeout(450);
+    check('holding the barrel button (hovering) borrows the eraser', (await tool()) === 'eraser', await tool());
+    await page.evaluate(([x, y]) => window.__pen.hover(x, y, 0), [cx, cy - 100]);
+    await page.waitForTimeout(100);
+    check('and letting go gives the pen back', (await tool()) === 'pen', await tool());
+
+    // The second button, held, with a loop drawn round the stroke.
+    await page.evaluate(([pts]) => window.__pen.stroke(pts, 33), [around(190, 60)]);
+    await page.waitForTimeout(300);
+    check('the second button lassos: the selection is shown', await selected());
+    check('and the lasso is the active tool while there is a selection', (await tool()) === 'lasso', await tool());
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(100);
+    check('dismissing the selection gives the pen back', (await tool()) === 'pen' && !(await selected()), `${await tool()}, selected ${await selected()}`);
+
+    // A loop round nothing leaves nothing behind, and the pen comes straight back.
+    await page.evaluate(([pts]) => window.__pen.stroke(pts, 33), [around(60, 30, cy + 300)]);
+    await page.waitForTimeout(300);
+    check('a loop round nothing gives the pen back at once', (await tool()) === 'pen' && !(await selected()), `${await tool()}, selected ${await selected()}`);
+
+    // Barrel held with the tip on the page erases what it crosses.
+    await page.evaluate(([pts]) => window.__pen.stroke(pts, 3), [line]);
+    await page.waitForTimeout(200);
+    check('the barrel button with the tip down erases', (await page.evaluate(() => window.__pen.ink())) === 0);
+    check('the pen is still the pen afterwards', (await tool()) === 'pen', await tool());
+    check('no page errors', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+  }
+
+  // --- the barrel hold mapped to the lasso, which is the case the original design named
+  {
+    const { ctx, page, errors, cx, cy, line, around, tool, selected } = await open({
+      clickToggle: ['pen', 'eraser-stroke'], holdTool: 'lasso', eraserEnd: 'lasso',
+    });
+    await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [line]);
+    await page.evaluate(([x, y]) => window.__pen.hover(x, y, 2), [cx, cy - 100]);
+    await page.waitForTimeout(450);
+    check('the barrel hold can be the lasso', (await tool()) === 'lasso', await tool());
+    await page.evaluate(([pts]) => window.__pen.stroke(pts, 3), [around(190, 60)]);
+    // Let go of the button after the loop, as a hand does.
+    await page.evaluate(([x, y]) => window.__pen.hover(x, y, 0), [cx, cy - 100]);
+    await page.waitForTimeout(300);
+    check('the selection survives the button being let go', await selected());
+    check('with the lasso still active to use it', (await tool()) === 'lasso', await tool());
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(100);
+    check('and the pen returns when it is dismissed', (await tool()) === 'pen', await tool());
+
+    // The performance overlay says what window it is measuring, so a "laggier in
+    // fullscreen" report can be a comparison rather than an impression.
+    await page.click('[data-palette-settings-trigger]');
+    await page.click('[data-debug-mode]');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('[data-debug-overlay]', { state: 'visible', timeout: 3_000 });
+    await page.waitForTimeout(600);
+    const overlay = await page.$eval('[data-debug-overlay]', (el) => el.textContent ?? '');
+    check('the overlay names the viewport it is measuring', overlay.includes(`${DESKTOP.width}×`) && overlay.includes('@1×'), overlay.slice(0, 120));
+    check('and whether it is windowed or fullscreen', overlay.includes('windowed'), overlay.slice(0, 120));
+    check('no page errors', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+  }
+}
+
 // --------------------------------------------------------------------- main
 
 const executablePath = findChromium();
@@ -1018,6 +1156,7 @@ try {
   await checkTabs(browser);
   await checkSplit(browser);
   await checkToolbar(browser);
+  await checkPenButtons(browser);
 } finally {
   await browser.close();
   if (server) {

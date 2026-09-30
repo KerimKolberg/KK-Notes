@@ -9,7 +9,8 @@ import type { PageLayout } from '../layout';
 import { usePreferencesStore } from '../../preferences/store';
 import { useDocumentStore } from '../store';
 import { templateSvgDataUrl } from '../templates';
-import { cancelBarrelButton, noteBarrelButton } from '../stylusBarrel';
+import { cancelBarrelButton, consumeBarrelButton, noteBarrelButton } from '../stylusBarrel';
+import { borrowSelectionTool } from '../toolBorrow';
 import { beginTemporaryTool } from '../toolStore';
 import type { Page } from '../types';
 import { MediaLayer } from './MediaLayer';
@@ -135,6 +136,8 @@ export const PageFrame = memo(function PageFrame({
               onEraseStrokes={onErase}
               onInteractionStart={onInteractionStart}
               onBarrelSelect={onBarrelSelect}
+              onBorrowSelectionTool={borrowSelectionTool}
+              onBarrelStroke={consumeBarrelButton}
               onBarrelButton={noteBarrelButton}
               onBarrelCancel={cancelBarrelButton}
               onLassoStart={onLassoStart}

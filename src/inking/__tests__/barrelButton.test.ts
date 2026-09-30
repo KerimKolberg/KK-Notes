@@ -3,6 +3,7 @@ import {
   BARREL_CLICK_MS,
   IDLE_BARREL,
   barrelCancel,
+  barrelConsume,
   barrelDown,
   barrelTick,
   barrelUp,
@@ -142,6 +143,49 @@ describe('gestures that do not end cleanly', () => {
   it('leaves a hold alone when a stray press arrives', () => {
     const held = barrelTick(barrelDown(IDLE_BARREL, 0).state, 400, 'lasso', 'pen').state;
     expect(barrelDown(held, 500).state).toBe(held);
+  });
+});
+
+describe('a press spent on a stroke', () => {
+  it('is not a click when the button comes up soon after, however quick the swipe', () => {
+    let state: BarrelState = barrelDown(IDLE_BARREL, 0).state;
+    state = barrelConsume(state);
+    // Press, touch, drag, lift, release: 120 ms in all.
+    const step = barrelUp(state, 120);
+    expect(step.action).toEqual({ kind: 'none' });
+    expect(step.state).toEqual(IDLE_BARREL);
+  });
+
+  it('is not promoted to a hold by the timer either', () => {
+    const state = barrelConsume(barrelDown(IDLE_BARREL, 0).state);
+    const step = barrelTick(state, BARREL_CLICK_MS + 50, 'lasso', 'pen');
+    expect(step.action).toEqual({ kind: 'none' });
+    expect(step.state.phase).toBe('used');
+  });
+
+  it('is not a click either after a long press', () => {
+    const state = barrelConsume(barrelDown(IDLE_BARREL, 0).state);
+    expect(barrelUp(state, 5000).action).toEqual({ kind: 'none' });
+  });
+
+  it('leaves a press that already became a hold alone, so releasing it gives the tool back', () => {
+    let state: BarrelState = barrelDown(IDLE_BARREL, 0).state;
+    state = barrelTick(state, BARREL_CLICK_MS, 'eraser-stroke', 'pen').state;
+    expect(barrelConsume(state)).toBe(state);
+    expect(barrelUp(state, 900).action).toEqual({ kind: 'hold-end', tool: 'pen' });
+  });
+
+  it('does nothing when there is no press to spend', () => {
+    expect(barrelConsume(IDLE_BARREL)).toBe(IDLE_BARREL);
+  });
+
+  it('is dropped without a click if the pen leaves range mid-stroke', () => {
+    const state = barrelConsume(barrelDown(IDLE_BARREL, 0).state);
+    expect(barrelCancel(state)).toEqual({ state: IDLE_BARREL, action: { kind: 'none' } });
+  });
+
+  it('is what an ordinary quick click still is when nothing touched the page', () => {
+    expect(press(120).actions).toEqual(['click']);
   });
 });
 

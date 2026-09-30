@@ -11,6 +11,7 @@ import {
   BARREL_CLICK_MS,
   IDLE_BARREL,
   barrelCancel,
+  barrelConsume,
   barrelDown,
   barrelTick,
   barrelUp,
@@ -18,6 +19,7 @@ import {
   type BarrelAction,
   type BarrelState,
 } from '../inking/engine/barrelButton';
+import { handBackTool } from './toolBorrow';
 import { useToolStore } from './toolStore';
 
 let state: BarrelState = IDLE_BARREL;
@@ -42,7 +44,9 @@ function apply(action: BarrelAction): void {
       store.update({ tool: action.tool });
       return;
     case 'hold-end':
-      store.update({ tool: action.tool });
+      // What the hold borrowed is the tool now; a lasso is kept while it has a
+      // selection to show (see `toolBorrow.ts`), anything else goes straight back.
+      handBackTool(store.settings.tool, action.tool);
       return;
   }
 }
@@ -79,6 +83,18 @@ export function noteBarrelButton(pressed: boolean): void {
   const step = barrelUp(state, now);
   state = step.state;
   apply(step.action);
+}
+
+/**
+ * The pen touched the page with the button down, so this press is a stroke and not
+ * a click (see `barrelConsume`). Cancels the timer that would have promoted it to
+ * a hold, too: nothing is being borrowed for a stroke whose tool is already chosen.
+ */
+export function consumeBarrelButton(): void {
+  const next = barrelConsume(state);
+  if (next === state) return;
+  state = next;
+  clearHoldTimer();
 }
 
 /**

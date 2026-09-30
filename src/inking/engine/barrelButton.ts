@@ -30,7 +30,13 @@ export type BarrelPhase =
   /** Pressed, but not yet long enough to be a hold. */
   | 'pending'
   /** Held past the threshold; a tool is on loan. */
-  | 'held';
+  | 'held'
+  /**
+   * Pressed and already spent: the pen touched the page while it was down, so it
+   * was a stroke with the button held, not a gesture of its own. Letting go is
+   * neither a click nor the end of a hold.
+   */
+  | 'used';
 
 export interface BarrelState {
   readonly phase: BarrelPhase;
@@ -79,6 +85,7 @@ export function barrelDown(state: BarrelState, now: number): BarrelStep {
  */
 export function barrelUp(state: BarrelState, now: number, threshold = BARREL_CLICK_MS): BarrelStep {
   if (state.phase === 'idle') return { state, action: NOTHING };
+  if (state.phase === 'used') return { state: IDLE_BARREL, action: NOTHING };
   if (state.phase === 'held') {
     const restore = state.borrowedFrom;
     return { state: IDLE_BARREL, action: restore ? { kind: 'hold-end', tool: restore } : NOTHING };
@@ -113,6 +120,18 @@ export function barrelTick(
     state: { phase: 'held', pressedAt: state.pressedAt, borrowedFrom: currentTool },
     action: { kind: 'hold-start', tool: holdTool, restore: currentTool },
   };
+}
+
+/**
+ * The pen touched the page with the button down: the press is a stroke, not a click.
+ *
+ * Without this, an erase swipe made with the button held — press, touch, drag, lift,
+ * release, all inside 300 ms, which a quick swipe is — reads as a click and swaps
+ * the pen for the eraser afterwards. A press that has already become a hold is
+ * left alone: releasing it hands the borrowed tool back, which is right.
+ */
+export function barrelConsume(state: BarrelState): BarrelState {
+  return state.phase === 'pending' ? { phase: 'used', pressedAt: state.pressedAt, borrowedFrom: null } : state;
 }
 
 /**

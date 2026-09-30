@@ -110,7 +110,7 @@ export function TopBar() {
       // static flex child, so a *fixed* drawer paints over it and swallows every
       // tap on the arranger toggle — which on a touchscreen reads as a dead
       // button, because there is no hover to tell you the bar is covered.
-      className="relative z-40 flex h-14 min-h-14 shrink-0 items-center gap-1 border-b border-zinc-200 bg-white/85 px-2 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/85"
+      className="relative z-40 flex h-14 min-h-14 shrink-0 items-center gap-1 border-b border-zinc-200 bg-white/95 px-2 dark:border-zinc-800 dark:bg-zinc-950/95"
       style={{
         // Android draws the app edge to edge, so the bar owns the status-bar strip.
         height: 'var(--topbar-h)',

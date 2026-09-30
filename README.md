@@ -164,6 +164,27 @@ Whichever of those it names for a button is the row to set. The shipped mapping
 is *barrel hold → stroke eraser*, *second button → lasso*, and the click gesture
 is left as pen ⇄ stroke eraser to be chosen later.
 
+**A held button that takes the lasso keeps it (`src/document/toolBorrow.ts`).** A
+button can borrow any tool for as long as it is held, and for an eraser that is the
+whole story. A lasso is different: it leaves a *selection*, and the selection only
+lives while the lasso is the active tool — so handing the pen back the moment the
+button came up cleared the selection with it, and a lasso taken by the second
+button selected something nobody could see. (Worse, Delete would still have removed
+those invisible strokes.) Now a borrowed lasso is kept while there is something
+selected, or a loop still being drawn, and handed back when the selection is
+dismissed (Escape, Deselect, delete, a tap outside it), when a loop selects nothing,
+or is superseded by the user choosing another tool. It is the same for the barrel
+button's hold, and the second button can now also be the select tool, which
+before did nothing.
+
+Two ordering details matter here. The stroke is closed *before* the button is read
+on pointer-up: lifting the tip and releasing the button are often one motion, and
+reading the button first ended the hold before the loop had become a selection.
+And a barrel press that touches the page is a stroke, not a click
+(`barrelConsume`): the click/hold machine only saw the button, so an erase swipe
+made with it held — press, touch, drag, lift, release, all inside 300 ms, which a
+quick swipe is — was read as a click and swapped the pen for the eraser afterwards.
+
 The mapping is stored in the preferences (`stylus`), not in the tool settings it
 used to live in: tool settings reset with every launch, and a button you had to
 re-assign each morning is a button you stop assigning. `normalizeStylus` reads
@@ -543,7 +564,7 @@ src/pdf/
 Tablet-first and icon-only, with [lucide-react] for the icons and a small
 tooltip of our own rather than another dependency.
 
-**Top app bar** — fixed, blurred, three groups:
+**Top app bar** — fixed, three groups:
 
 | Group | Contents |
 | --- | --- |
@@ -645,10 +666,11 @@ full-screen canvas behind it. On a large high-refresh screen that is what made
 it lag. Now the drag writes `transform: translate3d(…)` straight onto the
 element and touches no state until the pointer lifts; only the dock target
 preview changes, and only when the target does. The panel is promoted to its own
-layer for the duration (`will-change: transform`). Small floating panels — the
-toolbar, the selection quick actions, the media handles, the popovers — have no
-backdrop blur at all now; a translucent blurred layer over a live canvas is the
-most expensive thing a UI can put there, and a near-opaque white is
+layer for the duration (`will-change: transform`). Nothing in the app uses
+backdrop blur now — not the toolbar, the selection quick actions, the media
+handles or the popovers, and no longer the top bar, the page arranger or the
+performance overlay either; a translucent blurred layer over a live canvas is the
+most expensive thing a UI can put there, and a near-opaque fill is
 indistinguishable at that size. `scripts/ui-check.mjs` asserts the drag uses a
 transform, leaves `left`/`top` alone and has no blur, so it cannot creep back.
 
@@ -1825,6 +1847,23 @@ to match, and an ink latency of about one frame at that rate (10–17 ms at the
 p95), is a 60 Hz panel being served at 60 Hz — the fix is Windows' *Advanced
 display* setting (choose the 180 Hz rate, and turn off *Dynamic refresh rate* or
 keep the tablet plugged in), not the app.
+
+**Windowed against fullscreen.** The overlay also shows the `view` it is measuring
+(the viewport in CSS pixels and the device pixel ratio) and the `mode`, windowed or
+fullscreen, so a report of "laggier in fullscreen" carries both halves of the
+comparison in one screenshot. That comparison is the open question about fullscreen
+on the ROG Flow Z13: with the low-latency canvases off, the cursor blinks and ink
+feels laggier there and not in a maximised window. The app does nothing different in
+fullscreen — its idle layout and style counts are zero at every window size and pixel
+ratio tried, and the toggle is tao's ordinary borderless fullscreen (the window is
+resized to cover the monitor and the taskbar is told to step aside), the same thing
+Chromium's own F11 does — so the difference is in how Windows presents a window that
+covers the whole monitor. A hypothesis worth checking with these rows is that a
+maximised window is served at about 60 Hz while a fullscreen one gets the panel's
+full 180 Hz, cutting the frame budget from 16.7 ms to 5.6 ms; if `display` reads 180 Hz
+in fullscreen and the `react` and `frame` rows go amber, that is the answer and it is
+the app's per-frame cost to reduce. If `display` reads the same in both, the fault is
+below the app.
 
 ## How it works
 

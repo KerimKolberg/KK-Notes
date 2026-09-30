@@ -5,7 +5,7 @@ import { useLatestRef } from './hooks/useLatestRef';
 import { usePageCanvas } from './hooks/usePageCanvas';
 import { usePointerInk } from './hooks/usePointerInk';
 import styles from './InkingCanvas.module.css';
-import type { CanvasSize, Point, Stroke, ToolSettings } from './types';
+import type { CanvasSize, Point, Stroke, ToolSettings, ToolType } from './types';
 
 export interface InkSurfaceProps {
   /** Page size in drawing units. */
@@ -26,6 +26,10 @@ export interface InkSurfaceProps {
   onInteractionStart?: () => void;
   /** Barrel button mapped to select was pressed: switch tools temporarily. */
   onBarrelSelect?: () => void;
+  /** A pen button took the lasso while another tool is selected: switch to it and keep it. */
+  onBorrowSelectionTool?: (tool: ToolType) => void;
+  /** The pen touched down with its barrel button held: that press is a stroke, not a click. */
+  onBarrelStroke?: () => void;
   /** The pen's barrel button went down or came up, contact or not. */
   onBarrelButton?: (pressed: boolean) => void;
   /** The barrel gesture must be abandoned (pen out of range, gesture taken over). */
@@ -70,6 +74,8 @@ export const InkSurface = memo(function InkSurface({
   onEraseStrokes,
   onInteractionStart,
   onBarrelSelect,
+  onBorrowSelectionTool,
+  onBarrelStroke,
   onBarrelButton,
   onBarrelCancel,
   onLassoStart,
@@ -138,6 +144,8 @@ export const InkSurface = memo(function InkSurface({
     contentScaleRef: zoomRef,
     ...(onInteractionStart ? { onInteractionStart } : {}),
     ...(onBarrelSelect ? { onBarrelSelect } : {}),
+    ...(onBorrowSelectionTool ? { onBorrowSelectionTool } : {}),
+    ...(onBarrelStroke ? { onBarrelStroke } : {}),
     ...(onBarrelButton ? { onBarrelButton } : {}),
     ...(onBarrelCancel ? { onBarrelCancel } : {}),
     ...(onLassoStart ? { onLassoStart } : {}),

@@ -25,6 +25,7 @@ import {
 import {
   POINTER_BUTTONS,
   isBarrelPress,
+  isEraserEndPress,
   isPointerAccepted,
   normalizePointerType,
   normalizePressure,
@@ -57,6 +58,7 @@ import type {
   Stroke,
   StrokeStyle,
   ToolSettings,
+  ToolType,
 } from '../types';
 import { noteFramePainted, noteInput, profilingEnabled } from '../../debug/profiler';
 import { useLatestRef } from './useLatestRef';
@@ -82,6 +84,10 @@ export interface UsePointerInkOptions {
   onInteractionStart?: () => void;
   /** The pen's barrel button is mapped to select mode and was pressed on the surface. */
   onBarrelSelect?: () => void;
+  /** A pen button took a selection tool (the lasso) that is not the selected one. */
+  onBorrowSelectionTool?: (tool: ToolType) => void;
+  /** The pen touched down with its barrel button held: that press is a stroke, not a click. */
+  onBarrelStroke?: () => void;
   /**
    * The pen's barrel button went down or came up, contact or not. The host
    * runs the click / hold gesture from this; the surface only reports it,
@@ -610,12 +616,26 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
 
       const tool = resolveEffectiveTool(settings.tool, pointerType, e.button, e.buttons, settings.stylus);
       if (tool === null) return;
+      if (
+        pointerType === 'pen' &&
+        (e.buttons & POINTER_BUTTONS.SECONDARY) !== 0 &&
+        (e.buttons & POINTER_BUTTONS.PRIMARY) !== 0 &&
+        (e.buttons & POINTER_BUTTONS.ERASER) === 0
+      ) {
+        opts.onBarrelStroke?.();
+      }
       // The select tool leaves the surface to the media / form layers. When a
       // barrel press asked for it, let the host switch tools for the duration.
       if (tool === 'select') {
-        if (settings.tool !== 'select' && isBarrelPress(pointerType, e.button, e.buttons)) opts.onBarrelSelect?.();
+        // Either pen button can be mapped to it — the second one as well as the barrel.
+        const byButton = isBarrelPress(pointerType, e.button, e.buttons) || isEraserEndPress(pointerType, e.button, e.buttons);
+        if (settings.tool !== 'select' && byButton) opts.onBarrelSelect?.();
         return;
       }
+      // A lasso a button asked for while another tool is selected: the selection it
+      // makes only lives with the lasso tool, so the host switches to it and keeps
+      // it until the selection is done with.
+      if (tool === 'lasso' && settings.tool !== 'lasso') opts.onBorrowSelectionTool?.(tool);
 
       const canvas = e.currentTarget;
       const rect = canvas.getBoundingClientRect();
@@ -753,16 +773,19 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       scheduleFrame();
     };
 
+    // Close the stroke *before* reading the button: lifting the tip and releasing
+    // the barrel button are often one motion, and ending a held lasso first would
+    // hand the pen back before the loop had become a selection to keep.
     const onPointerUp: CanvasPointerHandler = (e) => {
-      noteBarrel(normalizePointerType(e.pointerType), e.buttons);
       const session = sessionRef.current;
       if (session && session.pointerId === e.pointerId) finishSession();
+      noteBarrel(normalizePointerType(e.pointerType), e.buttons);
     };
 
     const onPointerCancel: CanvasPointerHandler = (e) => {
-      noteBarrel(normalizePointerType(e.pointerType), e.buttons);
       const session = sessionRef.current;
       if (session && session.pointerId === e.pointerId) cancelSession();
+      noteBarrel(normalizePointerType(e.pointerType), e.buttons);
     };
 
     const onPointerEnter: CanvasPointerHandler = (e) => {

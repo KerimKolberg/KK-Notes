@@ -151,7 +151,7 @@ export function PageArranger() {
         // Mounted-but-closing: inert takes it out of the a11y tree and stops it
         // catching taps meant for the page while it slides away.
         inert={!open}
-        className={`fixed bottom-0 right-0 z-30 flex w-full max-w-[440px] flex-col border-l border-zinc-200 bg-white/95 shadow-2xl backdrop-blur-md transition-transform duration-200 ease-out motion-reduce:transition-none dark:border-zinc-800 dark:bg-zinc-950/95 ${
+        className={`fixed bottom-0 right-0 z-30 flex w-full max-w-[440px] flex-col border-l border-zinc-200 bg-white/95 shadow-2xl transition-transform duration-200 ease-out motion-reduce:transition-none dark:border-zinc-800 dark:bg-zinc-950/95 ${
           shown ? 'translate-x-0' : 'translate-x-full'
         }`}
         // Anchored under the top bar rather than to the top of the window: at

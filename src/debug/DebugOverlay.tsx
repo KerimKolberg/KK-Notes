@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useDesktopStore } from '../desktop/desktopStore';
 import {
   EMPTY_SNAPSHOT,
   resetProfiler,
@@ -51,6 +52,7 @@ function Line({ label, value, tone = '' }: { label: string; value: string; tone?
  */
 export function DebugOverlay({ enabled }: DebugOverlayProps) {
   const [stats, setStats] = useState<ProfilerSnapshot>(EMPTY_SNAPSHOT);
+  const fullscreen = useDesktopStore((s) => s.fullscreen);
 
   useEffect(() => {
     setProfilingEnabled(enabled);
@@ -68,6 +70,12 @@ export function DebugOverlay({ enabled }: DebugOverlayProps) {
   if (!enabled) return null;
 
   const slowCommits = stats.commits.reduce((total, c) => total + c.slow, 0);
+  // Read on each repaint (four a second), not subscribed to: the size only needs to
+  // be right when someone looks, and a resize listener would be one more thing to
+  // leave running behind a diagnostic.
+  const dpr = Number(window.devicePixelRatio.toFixed(2));
+  const view = `${window.innerWidth}×${window.innerHeight} @${dpr}×`;
+  const windowMode = fullscreen || document.fullscreenElement !== null ? 'fullscreen' : 'windowed';
 
   return (
     <div
@@ -75,7 +83,7 @@ export function DebugOverlay({ enabled }: DebugOverlayProps) {
       aria-live="off"
       aria-label="Performance monitor"
       data-debug-overlay
-      className="pointer-events-none absolute z-50 w-44 select-none rounded-lg bg-zinc-950/80 p-2 font-mono text-[10px] leading-relaxed text-white shadow-lg backdrop-blur-sm"
+      className="pointer-events-none absolute z-50 w-44 select-none rounded-lg bg-zinc-950/80 p-2 font-mono text-[10px] leading-relaxed text-white shadow-lg"
       style={{ top: 'calc(0.5rem + var(--safe-top))', right: 'calc(0.5rem + var(--safe-right))' }}
     >
       <div className="mb-1 flex items-baseline justify-between border-b border-white/15 pb-1">
@@ -96,6 +104,11 @@ export function DebugOverlay({ enabled }: DebugOverlayProps) {
           ? { tone: 'text-amber-300' }
           : {})}
       />
+
+      {/* What the numbers above were measured in. A report of "laggier in fullscreen"
+          is a comparison, and a screenshot should carry both halves of it. */}
+      <Line label="view" value={view} />
+      <Line label="mode" value={windowMode} />
 
       <div className="mt-1 border-t border-white/10 pt-1">
         {/* The median, not the mean: see `latencyMedianMs`. One long stall in the
