@@ -33,8 +33,10 @@ import {
   PALETTE_DOCKS,
   type PageDefaults,
   type FullscreenStyle,
+  POINTER_STYLES,
   type PaletteDock,
   type PaletteSlot,
+  type PointerStyle,
   type Preferences,
 } from './types';
 
@@ -45,6 +47,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   paletteDock: 'bottom',
   palettePinned: true,
   fullscreenStyle: 'window',
+  pointerStyle: 'cross',
   stylus: DEFAULT_STYLUS_SETTINGS,
   lowLatencyInk: false,
   swatches: COLOR_PALETTE,
@@ -83,6 +86,22 @@ export function normalizeFullscreenStyle(stored: unknown): FullscreenStyle {
   return typeof stored === 'string' && (FULLSCREEN_STYLES as readonly string[]).includes(stored)
     ? (stored as FullscreenStyle)
     : DEFAULT_PREFERENCES.fullscreenStyle;
+}
+
+export function normalizePointerStyle(stored: unknown): PointerStyle {
+  return typeof stored === 'string' && (POINTER_STYLES as readonly string[]).includes(stored)
+    ? (stored as PointerStyle)
+    : DEFAULT_PREFERENCES.pointerStyle;
+}
+
+/**
+ * Tell the stylesheet which pointer to use. On the root element, so every surface
+ * (a page, a reference pane) follows one setting without being handed it.
+ */
+export function applyPointerStyle(style: PointerStyle): void {
+  if (typeof document === 'undefined') return;
+  if (style === 'cross') delete document.documentElement.dataset.pointer;
+  else document.documentElement.dataset.pointer = style;
 }
 
 export function normalizeDock(stored: unknown): PaletteDock {
@@ -162,6 +181,7 @@ export function normalize(stored: unknown): Preferences {
     // toolbar start disappearing on someone.
     palettePinned: record.palettePinned !== false,
     fullscreenStyle: normalizeFullscreenStyle(record.fullscreenStyle),
+    pointerStyle: normalizePointerStyle(record.pointerStyle),
     stylus: normalizeStylus(record.stylus),
     // Strictly `true`: anything else, including a stale or mangled value, is off.
     lowLatencyInk: record.lowLatencyInk === true,
@@ -209,6 +229,7 @@ export interface PreferencesStore extends Preferences {
   setPaletteDock: (dock: PaletteDock) => void;
   setPalettePinned: (pinned: boolean) => void;
   setFullscreenStyle: (style: FullscreenStyle) => void;
+  setPointerStyle: (style: PointerStyle) => void;
   setStylus: (stylus: StylusSettings) => void;
   setLowLatencyInk: (enabled: boolean) => void;
   /** Clear custom colours, tool order and page defaults in one go. */
@@ -223,6 +244,7 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
       paletteDock: patch.paletteDock ?? current.paletteDock,
       palettePinned: patch.palettePinned ?? current.palettePinned,
       fullscreenStyle: patch.fullscreenStyle ?? current.fullscreenStyle,
+      pointerStyle: patch.pointerStyle ?? current.pointerStyle,
       stylus: patch.stylus ?? current.stylus,
       lowLatencyInk: patch.lowLatencyInk ?? current.lowLatencyInk,
       swatches: patch.swatches ?? current.swatches,
@@ -233,11 +255,13 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
     // Before the state changes, so a surface that remounts on the change already
     // sees the new mode when it creates its canvases.
     setLowLatencyCanvas(next.lowLatencyInk);
+    applyPointerStyle(next.pointerStyle);
     set(next);
   };
 
   const initial = read();
   setLowLatencyCanvas(initial.lowLatencyInk);
+  applyPointerStyle(initial.pointerStyle);
 
   return {
     ...initial,
@@ -277,6 +301,7 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
     setPaletteDock: (dock) => save({ paletteDock: normalizeDock(dock) }),
     setPalettePinned: (pinned) => save({ palettePinned: pinned !== false }),
     setFullscreenStyle: (style) => save({ fullscreenStyle: normalizeFullscreenStyle(style) }),
+    setPointerStyle: (style) => save({ pointerStyle: normalizePointerStyle(style) }),
     setStylus: (stylus) => save({ stylus: normalizeStylus(stylus) }),
     setLowLatencyInk: (enabled) => save({ lowLatencyInk: enabled === true }),
 
@@ -287,6 +312,7 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
         /* nothing stored to remove */
       }
       setLowLatencyCanvas(DEFAULT_PREFERENCES.lowLatencyInk);
+      applyPointerStyle(DEFAULT_PREFERENCES.pointerStyle);
       set(DEFAULT_PREFERENCES);
     },
   };

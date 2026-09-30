@@ -1350,7 +1350,7 @@ async function checkQuickSettings(browser) {
   const errors = [];
   for (const dock of ['bottom', 'left']) {
     const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
-    await ctx.addInitScript((d) => localStorage.setItem('notes.preferences.v1', JSON.stringify({ paletteDock: d })), dock);
+    await ctx.addInitScript((d) => { if (!localStorage.getItem('notes.preferences.v1')) localStorage.setItem('notes.preferences.v1', JSON.stringify({ paletteDock: d })); }, dock);
     const page = await ctx.newPage();
     page.on('pageerror', (e) => errors.push(e.message));
     await openDocument(page);
@@ -1394,6 +1394,25 @@ async function checkQuickSettings(browser) {
     await page.mouse.up();
     check(`${dock}: holding a quick width saves the slider's width into it`, (await page.$eval('[data-width-preset="1"]', (e) => e.getAttribute('data-width-value'))) === '3');
     check(`${dock}: and that hold did not also pick it`, (await reading()) === '3px');
+
+    if (dock === 'bottom') {
+      // The pointer over a page is a setting: the small cross, the system's own, or the arrow.
+      const cursor = () => page.$eval('[data-layer="live"]', (el) => getComputedStyle(el).cursor);
+      check('the pointer starts as the small cross', (await cursor()).startsWith('url('), (await cursor()).slice(0, 40));
+      await page.click('[data-palette-settings-trigger]');
+      await page.waitForSelector('[data-pointer-style="crosshair"]', { state: 'visible' });
+      await page.click('[data-pointer-style="crosshair"]');
+      check('the system crosshair swaps it in', (await cursor()) === 'crosshair', await cursor());
+      await page.click('[data-pointer-style="arrow"]');
+      check('the arrow does too', (await cursor()) === 'default', await cursor());
+      await page.click('[data-pointer-style="cross"]');
+      check('and the small cross comes back', (await cursor()).startsWith('url('));
+      await page.click('[data-pointer-style="crosshair"]');
+      await page.keyboard.press('Escape');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('[data-new-document]');
+      check('the choice is still there after a reload', (await page.evaluate(() => document.documentElement.dataset.pointer)) === 'crosshair');
+    }
     await ctx.close();
   }
   check('no page errors', errors.length === 0, errors.join(' | '));

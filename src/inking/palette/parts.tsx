@@ -1275,6 +1275,8 @@ export function PaletteSettings({
     palettePinned,
     fullscreenStyle,
     setFullscreenStyle,
+    pointerStyle,
+    setPointerStyle,
     lowLatencyInk,
     setLowLatencyInk,
   } = usePreferencesStore(
@@ -1289,6 +1291,8 @@ export function PaletteSettings({
       palettePinned: s.palettePinned,
       fullscreenStyle: s.fullscreenStyle,
       setFullscreenStyle: s.setFullscreenStyle,
+      pointerStyle: s.pointerStyle,
+      setPointerStyle: s.setPointerStyle,
       lowLatencyInk: s.lowLatencyInk,
       setLowLatencyInk: s.setLowLatencyInk,
     })),
@@ -1304,6 +1308,7 @@ export function PaletteSettings({
     paletteDock !== DEFAULT_PREFERENCES.paletteDock ||
     palettePinned !== DEFAULT_PREFERENCES.palettePinned ||
     fullscreenStyle !== DEFAULT_PREFERENCES.fullscreenStyle ||
+    pointerStyle !== DEFAULT_PREFERENCES.pointerStyle ||
     lowLatencyInk !== DEFAULT_PREFERENCES.lowLatencyInk ||
     JSON.stringify(settings.stylus) !== JSON.stringify(DEFAULT_STYLUS_SETTINGS);
   return (
@@ -1461,6 +1466,36 @@ export function PaletteSettings({
           </p>
         </>
       )}
+      <Row label="Pointer">
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Pointer over the page">
+          {(
+            [
+              { style: 'cross', label: 'Small cross' },
+              { style: 'crosshair', label: 'System crosshair' },
+              { style: 'arrow', label: 'Arrow' },
+            ] as const
+          ).map((choice) => (
+            <button
+              key={choice.style}
+              type="button"
+              aria-pressed={pointerStyle === choice.style}
+              data-pointer-style={choice.style}
+              className={`h-7 rounded-md px-2 text-xs font-medium ${
+                pointerStyle === choice.style
+                  ? 'bg-blue-600 text-white dark:bg-blue-500'
+                  : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700'
+              }`}
+              onClick={() => setPointerStyle(choice.style)}
+            >
+              {choice.label}
+            </button>
+          ))}
+        </div>
+      </Row>
+      <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-pointer-note>
+        What the mouse pointer looks like over a page. If it trails the mouse in fullscreen,
+        try the system crosshair or the arrow: they are drawn by Windows itself.
+      </p>
       <Row label="Low-latency ink">
         <Switch checked={lowLatencyInk} onChange={setLowLatencyInk}>
           <span data-low-latency-ink>Experimental</span>

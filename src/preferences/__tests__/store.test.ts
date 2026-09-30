@@ -13,6 +13,7 @@ import {
   normalizeDock,
   normalizeFullscreenStyle,
   normalizeOrder,
+  normalizePointerStyle,
   normalizeStylus,
   normalizeSwatches,
   normalizeWidthPresets,
@@ -357,5 +358,32 @@ describe('the quick widths', () => {
     usePreferencesStore.getState().setWidthPreset(0, 3);
     usePreferencesStore.getState().resetPreferences();
     expect(usePreferencesStore.getState().widthPresets).toEqual([1, 5]);
+  });
+});
+
+describe('the pointer over a page', () => {
+  it('is the small cross until the settings say otherwise', () => {
+    expect(DEFAULT_PREFERENCES.pointerStyle).toBe('cross');
+    expect(usePreferencesStore.getState().pointerStyle).toBe('cross');
+  });
+
+  it('reads back only the three it offers', () => {
+    for (const ok of ['cross', 'crosshair', 'arrow'] as const) expect(normalizePointerStyle(ok)).toBe(ok);
+    for (const bad of [undefined, null, 3, 'hand', 'none', '', {}]) expect(normalizePointerStyle(bad)).toBe('cross');
+  });
+
+  it('is kept by the store, and put back by a reset', () => {
+    usePreferencesStore.getState().setPointerStyle('crosshair');
+    expect(usePreferencesStore.getState().pointerStyle).toBe('crosshair');
+    usePreferencesStore.getState().setPointerStyle('bogus' as never);
+    expect(usePreferencesStore.getState().pointerStyle).toBe('cross');
+    usePreferencesStore.getState().setPointerStyle('arrow');
+    usePreferencesStore.getState().resetPreferences();
+    expect(usePreferencesStore.getState().pointerStyle).toBe('cross');
+  });
+
+  it('is part of what a stored preferences object carries', () => {
+    expect(normalize({ pointerStyle: 'arrow' }).pointerStyle).toBe('arrow');
+    expect(normalize({}).pointerStyle).toBe('cross');
   });
 });

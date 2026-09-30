@@ -87,10 +87,22 @@ export type FullscreenStyle = 'window' | 'screen';
 
 export const FULLSCREEN_STYLES: readonly FullscreenStyle[] = ['window', 'screen'];
 
+/**
+ * The pointer over a page while a pen tool is selected: the app's own small cross, the
+ * system's crosshair, or the plain arrow. A way to tell whether the pointer that lags
+ * in fullscreen on some tablets is the picture (a custom cursor image can take a
+ * slower path through the system than a stock one) or the screen it is shown on.
+ */
+export type PointerStyle = 'cross' | 'crosshair' | 'arrow';
+
+export const POINTER_STYLES: readonly PointerStyle[] = ['cross', 'crosshair', 'arrow'];
+
 export interface Preferences {
   readonly paletteOrder: readonly PaletteSlot[];
   /** How the desktop app goes fullscreen. */
   readonly fullscreenStyle: FullscreenStyle;
+  /** The pointer over a page. */
+  readonly pointerStyle: PointerStyle;
   /** Where the toolbar is docked. */
   readonly paletteDock: PaletteDock;
   /**

@@ -54,6 +54,21 @@
   cursor: var(--ink-cursor);
 }
 
+/*
+ * The pointer chosen in the settings, on the root element. Two specificity steps up
+ * from where `--ink-cursor` is defined, so it wins without being repeated on every
+ * rule that reads it.
+ */
+:global(html[data-pointer='crosshair']) .root,
+:global(html[data-pointer='crosshair']) .surface {
+  --ink-cursor: crosshair;
+}
+
+:global(html[data-pointer='arrow']) .root,
+:global(html[data-pointer='arrow']) .surface {
+  --ink-cursor: default;
+}
+
 .surface[data-tool='select'] .live {
   cursor: default;
 }

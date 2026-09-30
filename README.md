@@ -1835,6 +1835,15 @@ works*).
   (`LEGACY_COLOR_PALETTE`): saved preferences that still equal it — kept only
   because something else in them changed — move to the new row, and a row the
   person edited is left alone.
+- **Pointer.** The pointer over a page while a pen tool is selected: the app's small
+  cross (the default), the system's crosshair, or the plain arrow. Set on the root element
+  (`data-pointer`) and read by the stylesheet, so a page and a reference pane follow one
+  setting. It exists to *tell something apart*: on the ROG Flow Z13 the mouse pointer lags
+  in fullscreen while the pen's does not, and nothing in the page runs when a mouse merely
+  hovers over it (the canvas handlers return before doing anything without a session), so
+  the pointer that trails is the operating system's own. A custom cursor image can take a
+  slower path through it than a stock one; if the stock pointers do not lag in fullscreen,
+  the image is the cause, and if they do, the screen's presentation is.
 - **Quick widths.** Two buttons beside the thickness slider, **1** to write with
   (the finest the slider goes, and the pen's starting width) and **5** to rule lines
   with. A tap sets the width; a hold saves the slider's width into that slot. They
