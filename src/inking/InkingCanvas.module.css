@@ -1,3 +1,21 @@
+/*
+ * The pointer over a page: the system crosshair, made a quarter smaller.
+ *
+ * The built-in `crosshair` is a fixed-size cross (32 px at 100% scaling) that
+ * cannot be resized, which on a high-DPI tablet is a lot of pointer laid over the
+ * thing being drawn. This is
+ * the same cross at 24 px — a 1 px black line with a 1 px white edge either side,
+ * so it reads on ink, on a dark page and on a PDF alike. Hot spot is the centre
+ * pixel. Anything that cannot draw an SVG cursor falls back to the system
+ * crosshair after the comma.
+ *
+ * Defined once as a custom property so the `.live` rules below share it.
+ */
+.root,
+.surface {
+  --ink-cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' shape-rendering='crispEdges'%3E%3Cpath d='M11.5 0v24M0 11.5h24' stroke='%23fff' stroke-width='3'/%3E%3Cpath d='M11.5 1v22M1 11.5h22' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") 11 11, crosshair;
+}
+
 .root {
   position: relative;
   width: 100%;
@@ -33,7 +51,7 @@
 }
 
 .live {
-  cursor: crosshair;
+  cursor: var(--ink-cursor);
 }
 
 .surface[data-tool='select'] .live {
@@ -41,12 +59,12 @@
 }
 
 .surface[data-tool='lasso'] .live {
-  cursor: crosshair;
+  cursor: var(--ink-cursor);
 }
 
 .root[data-tool='laser-pointer'] .live,
 .surface[data-tool='laser-pointer'] .live {
-  cursor: crosshair;
+  cursor: var(--ink-cursor);
 }
 
 .root[data-tool='eraser-stroke'] .live,

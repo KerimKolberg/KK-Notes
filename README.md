@@ -41,6 +41,7 @@ npm run android:apk    # ./build-android.sh — checks the toolchain, then build
 ├── Popover.tsx             anchored flyout panel
 ├── dragBounds.ts           pure clamping for the floating palette
 ├── dock.ts                 which edge a drop docks to, and where a docked panel sits
+├── idleHide.ts             when an unpinned toolbar hides, and the hook that applies it
 └── useDraggablePanel.ts    transform-driven dragging, edge docking, re-clamped on resize
 
 src/desktop/`)
@@ -589,8 +590,42 @@ decides, so a wide toolbar is not "near" an edge just because a corner of it is
 — and a bar lights up along that edge; let go and it docks there, centred along
 it. On the left or right it stands on end: the tools become a column that wraps
 into a second column when the window is not tall enough, the colour and
-thickness controls sit beside it, and flyouts and tooltips open *away* from the
-edge, beside their button, instead of above it. Dropping it anywhere else leaves
+thickness controls sit beside it in a narrow column of their own, and flyouts and
+tooltips open *away* from the edge, beside their button, instead of above it.
+
+The colour column is the same `ToolConfigRow` in a `compact` layout rather than a
+second component: the eight swatches in a grid two wide, the pipette on its own
+line, the thickness as a dot and a reading above a full-width slider, and the
+swatch editor and the laser's Rainbow button stacked. It was first a fixed-width
+box around the *row* layout, which kept its own width regardless and pushed the
+toolbar to about 350 px on a wide screen; it is 146 px now, and
+`scripts/ui-check.mjs` asserts both that width and that nothing in the column —
+the laser button and the editor included — spills out of it.
+
+**Pin and auto-hide.** The pin beside the grip keeps the toolbar on screen
+(default). Unpinned, it slips away after 5 idle seconds and leaves a small tab in
+the middle of the edge it is docked to; pointing at the tab with a mouse, tapping
+it with a finger or a pen, or activating it from the keyboard brings the toolbar
+back, and it goes again 5 seconds after it is let go of. "In use" is anything that
+would make a vanishing toolbar wrong: the pointer over it, keyboard focus in it, a
+flyout open, a drag, or the icons being arranged — a pointer resting on it or a
+flyout left open keeps it up indefinitely. Keyboard focus counts only when it came
+from the keyboard (`:focus-visible`): a button that was merely clicked keeps focus
+too, and would otherwise hold it open for ever. The tab does not reveal on a
+pen's hover, because a pen hovers over the page all the time it is writing and a
+toolbar popping up over the words whenever it drifted past the middle of the bottom
+edge would be worse than one that stayed hidden; nor on a touch's landing, because
+touch reports "enter" the instant it lands and the tab would vanish under the
+finger before the tap finished. Both reveal on the click. The choice is remembered (`palettePinned`), and reset means pinned.
+
+The timing is `IdleHide` (`src/ui/idleHide.ts`), a small class that knows two facts
+(unpinned? in use?) and one answer (concealed?), tested against a fake clock:
+nothing hides before its delay, being picked up mid-countdown restarts the delay
+rather than resuming it, and telling it the same thing twice does not push the
+deadline back (development mounts effects twice). The hidden toolbar is
+`visibility: hidden`, so its buttons cannot be tabbed to; going away the
+`visibility` change waits for the 200 ms fade, and coming back it is immediate, so
+the toolbar is focusable the moment it is asked for. Dropping it anywhere else leaves
 it *free*, where it was let go. The same choice is in *Settings → Toolbar*
 (Bottom / Top / Left / Right / Free) for when a drag is awkward, and it is
 remembered between launches. A double-click on the grip returns it to the
@@ -1799,22 +1834,31 @@ undo, erase and resize replay the list. `live` shows the stroke in progress
 and is cleared and repainted once per `requestAnimationFrame` from all the
 samples received since the previous frame.
 
-**Low-latency ink is opt-in.** `desynchronized: true` on the 2D contexts lets
-Chromium present outside the compositor's vsync, which shaves a frame off the
-pen's lag — and on Windows it does so by handing the canvas to a hardware
-overlay plane, of which there are few, shared with the mouse cursor, and which
-stop working when anything translucent is composited over them. Every page has
-two such canvases. On a large screen with several pages visible, and a
-translucent toolbar over the top, that is the most likely reason a page went
-black when scrolled past, the cursor flickered in fullscreen and the toolbar
-stuttered on an ROG Flow Z13. None of that could be reproduced without the
-tablet, so this is a suspected cause, not a proven one. It is therefore **off by
-default**:
-*Settings → Low-latency ink* turns it on, and the canvases are rebuilt when it
-is flipped, because a canvas's attributes are fixed by its first `getContext`
-(`engine/canvasMode.ts` is the one place that decides them). To settle it on a
-device, watch *ink lag* (median) in the overlay with the switch off and then
-on: if the switch buys under a frame and costs a black page, leave it off.
+**Low-latency ink is opt-in, and known to break on one Windows tablet.**
+`desynchronized: true` on the 2D contexts lets Chromium present outside the
+compositor's vsync, which shaves a frame off the pen's lag — and on Windows it
+does so by handing the canvas to a hardware overlay plane, of which there are few,
+shared with the mouse cursor, and which stop working when anything translucent is
+composited over them. Every page has two such canvases. It was on for every
+canvas at first, and on an ROG Flow Z13 a page went black when scrolled past, the
+cursor flickered in fullscreen and the toolbar stuttered. It is now **off by
+default**, behind *Settings → Low-latency ink*, and the same tablet then showed
+what the switch does: turned on, every page goes dark and the fullscreen cursor
+blinks. That confirms the cause as far as a switch can — it was not reproducible
+without the device, and nothing in the app was found that explains it any other
+way. The canvases are rebuilt when it is flipped, because a canvas's attributes
+are fixed by its first `getContext` (`engine/canvasMode.ts` is the one place that
+decides them). The switch stays for hardware where it helps, and the note beside
+it says what it did on this one; if pages go dark, switch it back off.
+
+**The pointer over a page** is the system crosshair made a quarter smaller. The
+built-in `crosshair` is a fixed-size cross (32 px at 100% scaling) that cannot be
+resized, which on a high-DPI tablet is a lot of pointer over the thing being
+drawn. `InkingCanvas.module.css` supplies the same cross as a 24 px SVG cursor —
+a 1 px black line with a white edge, so it reads on ink and on a dark page — in
+one custom property shared by the pen, lasso and laser; the system crosshair
+follows it as the fallback. The eraser is untouched: it hides the pointer and
+draws its own ring at the size of the eraser.
 
 **High-DPI.** A `ResizeObserver` (preferring `device-pixel-content-box`)
 sizes the backing stores to `css × devicePixelRatio` (capped at 3×) and
@@ -1939,7 +1983,13 @@ hit-testing can answer:
   an edge it shows the dock target and docks there; docked left it stands on end,
   sits against the edge and fits the stage; a flyout opens beside its own button
   and stays on screen; the settings panel fits the window and scrolls; the
-  settings can dock it top and bottom; the dock survives a reload.
+  settings can dock it top and bottom; the dock survives a reload. Docked left it
+  is a slim column and the colours, the laser's Rainbow button and the swatch
+  editor stay inside it. Unpinned, it stays up while the pointer is on it or a
+  flyout is open, hides after its idle delay, leaves a tab in the middle of its
+  edge, comes back to a mouse hover or the keyboard, and stays unpinned across a
+  reload. The pen's pointer is the 24 px custom cursor with the system crosshair
+  behind it, and the eraser's is still none.
 
 A blocked tap is reported as a failed check naming the element in the way
 (Playwright's own actionability error says which), not as a timeout that hides

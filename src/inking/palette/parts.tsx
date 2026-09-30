@@ -157,8 +157,13 @@ export function usesColor(tool: ToolType): boolean {
  * Lives outside the palette because a locked document still shows it: the
  * laser pointer marks nothing, so presenting with it stays available — and
  * useless without its colour and width.
+ *
+ * `compact` is for the toolbar standing on end at a side of the screen, where
+ * every pixel of width is taken from the page: the same controls, stacked in a
+ * column a little over five rems wide instead of laid out in a row that runs to
+ * three hundred pixels.
  */
-export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
+export function ToolConfigRow({ settings, onSettingsChange, compact = false }: PanelProps & { compact?: boolean }) {
   const colorInputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const laser = settings.tool === 'laser-pointer';
@@ -197,8 +202,18 @@ export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-xl bg-zinc-100/70 px-2 py-1.5 dark:bg-zinc-800/60" data-tool-config>
-      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Stroke colour">
+    <div
+      className={`rounded-xl bg-zinc-100/70 dark:bg-zinc-800/60 ${
+        compact ? 'flex w-[5.25rem] flex-col items-stretch gap-2 px-2 py-2' : 'flex flex-wrap items-center gap-2 px-2 py-1.5'
+      }`}
+      data-tool-config
+      {...(compact ? { 'data-compact': 'true' } : {})}
+    >
+      <div
+        className={compact ? 'grid grid-cols-2 justify-items-center gap-1.5' : 'flex flex-wrap items-center gap-1'}
+        role="group"
+        aria-label="Stroke colour"
+      >
         {swatches.map((color, index) => {
           const selected = activeColor.toLowerCase() === color.toLowerCase();
           return (
@@ -243,6 +258,8 @@ export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
           size="sm"
           disabled={colorDisabled}
           onClick={() => colorInputRef.current?.click()}
+          // On its own line beneath the colours: the button is wider than a swatch.
+          {...(compact ? { className: 'col-span-2' } : {})}
           data-custom-color
         />
         <input
@@ -267,7 +284,12 @@ export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
           }}
         />
         {editing !== null && (
-          <span className="inline-flex items-center gap-1 rounded-lg bg-amber-100 px-1.5 py-0.5 dark:bg-amber-950/60" data-swatch-editor>
+          <span
+            className={`rounded-lg bg-amber-100 px-1.5 py-0.5 dark:bg-amber-950/60 ${
+              compact ? 'col-span-2 flex w-full flex-col items-start gap-0.5' : 'inline-flex items-center gap-1'
+            }`}
+            data-swatch-editor
+          >
             <button
               type="button"
               className="text-xs font-medium text-amber-900 hover:underline dark:text-amber-200"
@@ -301,22 +323,33 @@ export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
         )}
       </div>
 
-      <span className="mx-0.5 h-6 w-px bg-zinc-300 dark:bg-zinc-600" aria-hidden="true" />
+      <span
+        className={compact ? 'h-px w-full bg-zinc-300 dark:bg-zinc-600' : 'mx-0.5 h-6 w-px bg-zinc-300 dark:bg-zinc-600'}
+        aria-hidden="true"
+      />
 
-      <label className="flex min-w-0 flex-1 items-center gap-2" title="Stroke thickness">
+      <label className={compact ? 'flex min-w-0 flex-col gap-1.5' : 'flex min-w-0 flex-1 items-center gap-2'} title="Stroke thickness">
         <span className="sr-only">Stroke thickness</span>
-        <span
-          className="shrink-0 rounded-full bg-current"
-          aria-hidden="true"
-          style={{
-            width: Math.max(3, Math.min(14, settings.size)),
-            height: Math.max(3, Math.min(14, settings.size)),
-            color: colorDisabled ? '#a1a1aa' : activeColor,
-          }}
-        />
+        {/* Beside the slider in a row; above it in a column, where the slider needs the whole width. */}
+        <span className={compact ? 'flex items-center justify-between gap-1' : 'contents'}>
+          <span
+            className="shrink-0 rounded-full bg-current"
+            aria-hidden="true"
+            style={{
+              width: Math.max(3, Math.min(14, settings.size)),
+              height: Math.max(3, Math.min(14, settings.size)),
+              color: colorDisabled ? '#a1a1aa' : activeColor,
+            }}
+          />
+          {compact && (
+            <span className="text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-thickness-value>
+              {settings.size}px
+            </span>
+          )}
+        </span>
         <input
           type="range"
-          className="h-1 min-w-16 flex-1 accent-blue-600"
+          className={`h-1 accent-blue-600 ${compact ? 'w-full min-w-0' : 'min-w-16 flex-1'}`}
           min={MIN_STROKE_SIZE}
           max={MAX_STROKE_SIZE}
           step={0.5}
@@ -325,9 +358,11 @@ export function ToolConfigRow({ settings, onSettingsChange }: PanelProps) {
           onChange={(e) => onSettingsChange({ size: Number(e.target.value) })}
           data-thickness
         />
-        <span className="w-9 shrink-0 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-thickness-value>
-          {settings.size}px
-        </span>
+        {!compact && (
+          <span className="w-9 shrink-0 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400" data-thickness-value>
+            {settings.size}px
+          </span>
+        )}
       </label>
 
       {laser && (
@@ -1105,19 +1140,29 @@ export function PaletteSettings({
   arranging = false,
   onArrangingChange,
 }: PaletteSettingsProps) {
-  const { paletteOrder, swatches, pageDefaults, resetPreferences, paletteDock, setPaletteDock, lowLatencyInk, setLowLatencyInk } =
-    usePreferencesStore(
-      useShallow((s) => ({
-        paletteOrder: s.paletteOrder,
-        swatches: s.swatches,
-        pageDefaults: s.pageDefaults,
-        resetPreferences: s.resetPreferences,
-        paletteDock: s.paletteDock,
-        setPaletteDock: s.setPaletteDock,
-        lowLatencyInk: s.lowLatencyInk,
-        setLowLatencyInk: s.setLowLatencyInk,
-      })),
-    );
+  const {
+    paletteOrder,
+    swatches,
+    pageDefaults,
+    resetPreferences,
+    paletteDock,
+    setPaletteDock,
+    palettePinned,
+    lowLatencyInk,
+    setLowLatencyInk,
+  } = usePreferencesStore(
+    useShallow((s) => ({
+      paletteOrder: s.paletteOrder,
+      swatches: s.swatches,
+      pageDefaults: s.pageDefaults,
+      resetPreferences: s.resetPreferences,
+      paletteDock: s.paletteDock,
+      setPaletteDock: s.setPaletteDock,
+      palettePinned: s.palettePinned,
+      lowLatencyInk: s.lowLatencyInk,
+      setLowLatencyInk: s.setLowLatencyInk,
+    })),
+  );
   // Subscribed rather than read once, so the button enables itself the moment
   // something is customised rather than on the next unrelated re-render.
   const customised =
@@ -1125,6 +1170,7 @@ export function PaletteSettings({
     paletteOrder.join() !== DEFAULT_PALETTE_ORDER.join() ||
     swatches.join() !== DEFAULT_PREFERENCES.swatches.join() ||
     paletteDock !== DEFAULT_PREFERENCES.paletteDock ||
+    palettePinned !== DEFAULT_PREFERENCES.palettePinned ||
     lowLatencyInk !== DEFAULT_PREFERENCES.lowLatencyInk ||
     JSON.stringify(settings.stylus) !== JSON.stringify(DEFAULT_STYLUS_SETTINGS);
   return (
@@ -1244,7 +1290,9 @@ export function PaletteSettings({
         </div>
       </Row>
       <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-dock-note>
-        Or drag it by its handle and push it against an edge.
+        Or drag it by its handle and push it against an edge. The pin beside the
+        handle keeps it on screen; unpinned, it hides when idle and comes back
+        from the tab on its edge.
       </p>
       <Row label="Low-latency ink">
         <Switch checked={lowLatencyInk} onChange={setLowLatencyInk}>
@@ -1252,8 +1300,9 @@ export function PaletteSettings({
         </Switch>
       </Row>
       <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-low-latency-note>
-        Saves up to a frame of pen lag, but on some Windows GPUs it can turn a
-        page black or make the cursor flicker. Off unless you turn it on.
+        Can save up to a frame of pen lag, but on some Windows GPUs (a ROG Flow
+        Z13 was one) it turns every page dark and makes the cursor blink in
+        fullscreen. Off by default; if pages go dark, switch it back off.
       </p>
       <Row label="Diagnostics">
         <Switch checked={settings.debugMode} onChange={(v) => onSettingsChange({ debugMode: v })}>

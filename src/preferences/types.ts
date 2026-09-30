@@ -83,6 +83,11 @@ export interface Preferences {
   /** Where the toolbar is docked. */
   readonly paletteDock: PaletteDock;
   /**
+   * Whether the toolbar stays on screen. Unpinned, it slips away after a few idle
+   * seconds and comes back from a small tab on the edge it is docked to.
+   */
+  readonly palettePinned: boolean;
+  /**
    * What the pen's buttons do.
    *
    * Here rather than in the tool settings because tool settings start from their
@@ -96,7 +101,8 @@ export interface Preferences {
    * Off by default. It presents the canvas through the GPU's overlay hardware,
    * which saves up to a frame of pen latency and, on some Windows GPUs, makes a
    * page go black or the cursor flicker. A switch rather than a decision, because
-   * only the device in your hand can say which it does.
+   * only the device in your hand can say which it does — and on the ROG Flow Z13
+   * it said: every page went dark and the fullscreen cursor blinked.
    */
   readonly lowLatencyInk: boolean;
   /** Quick colours on the palette's second row. */

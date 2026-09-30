@@ -195,6 +195,36 @@ describe('the toolbar dock', () => {
   });
 });
 
+describe('pinning the toolbar', () => {
+  it('starts pinned: a toolbar that hides itself is opted into', () => {
+    expect(DEFAULT_PREFERENCES.palettePinned).toBe(true);
+    expect(usePreferencesStore.getState().palettePinned).toBe(true);
+  });
+
+  it('remembers being unpinned', () => {
+    usePreferencesStore.getState().setPalettePinned(false);
+    expect(usePreferencesStore.getState().palettePinned).toBe(false);
+    usePreferencesStore.getState().setPalettePinned(true);
+    expect(usePreferencesStore.getState().palettePinned).toBe(true);
+  });
+
+  it('reads back as unpinned only for a real false', () => {
+    expect(normalize({ palettePinned: false }).palettePinned).toBe(false);
+    // Anything mangled leaves the toolbar where it always was.
+    for (const junk of ['false', 0, null, undefined, {}, 'no']) {
+      expect(normalize({ palettePinned: junk }).palettePinned).toBe(true);
+    }
+    // And an install from before the setting existed is pinned.
+    expect(normalize({}).palettePinned).toBe(true);
+  });
+
+  it('is pinned again after a reset', () => {
+    usePreferencesStore.getState().setPalettePinned(false);
+    usePreferencesStore.getState().resetPreferences();
+    expect(usePreferencesStore.getState().palettePinned).toBe(true);
+  });
+});
+
 describe('low-latency ink', () => {
   it('is off until someone turns it on', () => {
     // It is a hint that can make a page go black on some GPUs, so the safe state

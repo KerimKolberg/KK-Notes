@@ -776,6 +776,54 @@ async function checkToolbar(browser) {
   check('it fits inside the stage, wrapping rather than overflowing', left.y >= 0 && left.y + left.h <= left.hostH, `y=${Math.round(left.y)} h=${Math.round(left.h)} of ${Math.round(left.hostH)}`);
   check('the dock target goes away once released', (await page.$('[data-dock-target]')) === null);
 
+  // Standing on end it must not take the width of a whole row of colours with it:
+  // the colours and the thickness stack in a narrow column beside the tools.
+  check('docked left it is a slim column, not a wide panel', left.w <= 180, `${Math.round(left.w)}px wide`);
+  // Everything in the colour column stays inside the column. Tooltips are left out:
+  // they are meant to hang beside the toolbar, and the mouse is often on a button.
+  const fits = () =>
+    page.evaluate(() => {
+      const config = document.querySelector('[data-tool-config]').getBoundingClientRect();
+      const panel = document.querySelector('[data-tool-palette]').getBoundingClientRect();
+      const outside = [];
+      for (const el of document.querySelectorAll('[data-tool-config] *')) {
+        if (el.closest('[role="tooltip"]') || el.classList.contains('sr-only')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        if (r.left < config.left - 0.5 || r.right > config.right + 0.5) {
+          outside.push(`${el.getAttribute('data-swatch') ?? el.tagName} ${Math.round(r.right - config.right)}px over`);
+        }
+      }
+      return { outside, columnInsidePanel: config.left >= panel.left && config.right <= panel.right, width: Math.round(config.width) };
+    });
+  const stacked = await fits();
+  check('every colour and the slider stay inside it', stacked.outside.length === 0 && stacked.columnInsidePanel, JSON.stringify(stacked));
+  check(
+    'the colours are laid out in a grid of two',
+    await page.$eval('[data-tool-config] [role="group"]', (el) => getComputedStyle(el).display === 'grid'),
+  );
+
+  // The laser adds a Rainbow button and the swatch editor adds three, both wider
+  // than a swatch; neither may push the column wider.
+  await page.click('[data-palette-tool="laser-pointer"]');
+  const laser = await fits();
+  check('the laser\'s Rainbow button fits too', laser.outside.length === 0 && laser.columnInsidePanel, JSON.stringify(laser));
+  const laserWidth = (await info()).w;
+  check('and does not widen the toolbar', Math.abs(laserWidth - left.w) <= 1, `${Math.round(left.w)} -> ${Math.round(laserWidth)}`);
+  await page.click('[data-palette-tool="pen"]');
+  await page.keyboard.press('Escape');
+  const swatch = await (await page.$('[data-swatch-index="1"]')).boundingBox();
+  await page.mouse.move(swatch.x + swatch.width / 2, swatch.y + swatch.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(700);
+  await page.mouse.up();
+  const editor = await page.waitForSelector('[data-swatch-editor]', { state: 'visible', timeout: 2_000 }).then(() => true, () => false);
+  if (editor) {
+    const editing = await fits();
+    check('the swatch editor fits inside it', editing.outside.length === 0 && editing.columnInsidePanel, JSON.stringify(editing));
+    await page.click('[data-swatch-done]');
+  }
+
   // A flyout from a side dock opens beside the toolbar, not above a button that
   // may be at the top of the screen.
   // The pen is already the active tool, so one press opens its flyout; a second
@@ -795,6 +843,103 @@ async function checkToolbar(browser) {
     check('and stays on screen', geometry.top >= 0 && geometry.bottom <= geometry.vh, `${Math.round(geometry.top)}..${Math.round(geometry.bottom)}`);
     await page.keyboard.press('Escape');
   }
+
+  // Pinning. Unpinned, the toolbar gets out of the way after a few idle seconds and
+  // leaves a tab on its edge; anything using it holds it up.
+  const state = () =>
+    page.$eval('[data-tool-palette]', (el) => ({
+      pinned: el.getAttribute('data-pinned'),
+      concealed: el.getAttribute('data-concealed') === 'true',
+      visibility: getComputedStyle(el).visibility,
+      pressed: el.querySelector('[data-palette-pin]')?.getAttribute('aria-pressed'),
+    }));
+  const pinned = await state();
+  check('the toolbar starts pinned', pinned.pinned === 'true' && pinned.pressed === 'true', JSON.stringify(pinned));
+  await page.click('[data-palette-pin]');
+  const unpinned = await state();
+  check('the pin button unpins it', unpinned.pinned === 'false' && unpinned.pressed === 'false', JSON.stringify(unpinned));
+  // Pointer over it (the click left it there): it stays up however long that is.
+  await page.waitForTimeout(6_500);
+  check('while the pointer is on it, it stays', !(await state()).concealed);
+  await page.mouse.move(700, 300);
+  await page.waitForTimeout(2_500);
+  check('it does not vanish the moment the pointer leaves', !(await state()).concealed);
+  const hidden = await page
+    .waitForSelector('[data-tool-palette][data-concealed="true"]', { state: 'attached', timeout: 6_000 })
+    .then(() => true, () => false);
+  check('after a few idle seconds it slips away', hidden);
+  await page.waitForTimeout(350);
+  check('and cannot be tabbed to or tapped', (await state()).visibility === 'hidden');
+  const tab = await page.$('[data-palette-reveal]');
+  check('a tab is left on its edge', tab !== null);
+  if (tab) {
+    const t = await page.$eval('[data-palette-reveal]', (el) => {
+      const r = el.getBoundingClientRect();
+      const host = el.offsetParent.getBoundingClientRect();
+      return { edge: el.getAttribute('data-palette-reveal'), x: r.left - host.left, midY: r.top - host.top + r.height / 2, hostH: host.height };
+    });
+    check('on the edge it is docked to, in the middle', t.edge === 'left' && t.x < 4 && Math.abs(t.midY - t.hostH / 2) < 4, JSON.stringify(t));
+    // A pen hovers over the page all the time it writes, and a finger reports
+    // "enter" as it lands; neither may pop the toolbar up over the work.
+    await page.$eval('[data-palette-reveal]', (el) => {
+      for (const pointerType of ['pen', 'touch']) {
+        el.dispatchEvent(new PointerEvent('pointerover', { pointerType, bubbles: true, relatedTarget: document.body }));
+      }
+    });
+    await page.waitForTimeout(250);
+    check('a pen hovering over the tab, or a touch landing on it, does not bring the toolbar up', (await state()).concealed);
+    await page.hover('[data-palette-reveal]');
+    const back = await page
+      .waitForSelector('[data-tool-palette]:not([data-concealed])', { timeout: 2_000 })
+      .then(() => true, () => false);
+    check('pointing at the tab with a mouse brings the toolbar back', back);
+    await page.waitForTimeout(350);
+    check('and it is usable again', (await state()).visibility === 'visible');
+    check('the tab goes away with it', (await page.$('[data-palette-reveal]')) === null);
+  }
+
+  // An open flyout is in use even with the pointer somewhere else entirely.
+  await page.click('[data-palette-tool="pen"]');
+  await page.waitForSelector('[data-popover="Pen brushes"]', { state: 'visible', timeout: 3_000 });
+  await page.mouse.move(700, 300);
+  await page.waitForTimeout(6_500);
+  check(
+    'an open flyout holds the toolbar up',
+    !(await state()).concealed && (await page.$('[data-popover="Pen brushes"]')) !== null,
+  );
+  await page.keyboard.press('Escape');
+  await page.mouse.move(701, 301);
+  check(
+    'once it is closed the toolbar goes again',
+    await page
+      .waitForSelector('[data-tool-palette][data-concealed="true"]', { state: 'attached', timeout: 8_000 })
+      .then(() => true, () => false),
+  );
+
+  // The keyboard reaches the tab too, and lands on the toolbar it brings back.
+  await page.focus('[data-palette-reveal]');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('[data-tool-palette]:not([data-concealed])', { timeout: 2_000 });
+  await page.waitForTimeout(400);
+  check(
+    'the keyboard brings it back and moves focus onto it',
+    await page.evaluate(() => document.querySelector('[data-tool-palette]').contains(document.activeElement)),
+  );
+  await page.click('[data-palette-pin]');
+  check('pinning it again keeps it', (await state()).pinned === 'true');
+
+  // The pointer over a page: the built-in crosshair, made a quarter smaller.
+  const cursorOf = () => page.$eval('[data-layer="live"]', (el) => getComputedStyle(el).cursor);
+  const cursor = await cursorOf();
+  const url = /url\("?([^")]+)"?\)/.exec(cursor)?.[1] ?? '';
+  const size = Number(/width='(\d+)'/.exec(decodeURIComponent(url))?.[1] ?? Number.NaN);
+  check('the pen shows a custom pointer', url.startsWith('data:image/svg+xml'), cursor.slice(0, 60));
+  check('it is 24 px — three quarters of the 32 px crosshair', size === 24, `${size}px`);
+  check('the system crosshair is still the fallback', /crosshair\s*$/.test(cursor));
+  await page.click('[data-palette-tool="eraser"]');
+  check('the eraser still hides it (it draws its own ring)', (await cursorOf()) === 'none');
+  await page.click('[data-palette-tool="pen"]');
+  await page.keyboard.press('Escape');
 
   // The settings panel holds more than a small window is tall. It must scroll
   // rather than run off the top, or its first rows cannot be reached at all.
@@ -822,12 +967,15 @@ async function checkToolbar(browser) {
 
   // The dock is remembered.
   await page.click('[data-palette-dock-choice="right"]');
+  await page.keyboard.press('Escape');
+  await page.click('[data-palette-pin]');
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('[data-new-document]', { timeout: 20_000 });
   await page.click('[data-new-document]');
   await page.waitForSelector('[data-tool-palette]', { state: 'visible', timeout: 10_000 });
   const remembered = await info();
   check('the dock survives a restart', remembered.dock === 'right', remembered.dock);
+  check('so does being unpinned', (await state()).pinned === 'false');
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await ctx.close();

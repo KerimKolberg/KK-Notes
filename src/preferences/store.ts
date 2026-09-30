@@ -33,6 +33,7 @@ const STORAGE_KEY = 'notes.preferences.v1';
 export const DEFAULT_PREFERENCES: Preferences = {
   paletteOrder: DEFAULT_PALETTE_ORDER,
   paletteDock: 'bottom',
+  palettePinned: true,
   stylus: DEFAULT_STYLUS_SETTINGS,
   lowLatencyInk: false,
   swatches: COLOR_PALETTE,
@@ -128,6 +129,9 @@ export function normalize(stored: unknown): Preferences {
   return {
     paletteOrder: normalizeOrder(record.paletteOrder),
     paletteDock: normalizeDock(record.paletteDock),
+    // Pinned unless it was explicitly unpinned: a mangled value must not make the
+    // toolbar start disappearing on someone.
+    palettePinned: record.palettePinned !== false,
     stylus: normalizeStylus(record.stylus),
     // Strictly `true`: anything else, including a stale or mangled value, is off.
     lowLatencyInk: record.lowLatencyInk === true,
@@ -170,6 +174,7 @@ export interface PreferencesStore extends Preferences {
   removeSwatch: (index: number) => void;
   setPageDefaults: (defaults: PageDefaults | null) => void;
   setPaletteDock: (dock: PaletteDock) => void;
+  setPalettePinned: (pinned: boolean) => void;
   setStylus: (stylus: StylusSettings) => void;
   setLowLatencyInk: (enabled: boolean) => void;
   /** Clear custom colours, tool order and page defaults in one go. */
@@ -182,6 +187,7 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
     const next: Preferences = {
       paletteOrder: patch.paletteOrder ?? current.paletteOrder,
       paletteDock: patch.paletteDock ?? current.paletteDock,
+      palettePinned: patch.palettePinned ?? current.palettePinned,
       stylus: patch.stylus ?? current.stylus,
       lowLatencyInk: patch.lowLatencyInk ?? current.lowLatencyInk,
       swatches: patch.swatches ?? current.swatches,
@@ -224,6 +230,7 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
 
     setPageDefaults: (defaults) => save({ pageDefaults: defaults }),
     setPaletteDock: (dock) => save({ paletteDock: normalizeDock(dock) }),
+    setPalettePinned: (pinned) => save({ palettePinned: pinned !== false }),
     setStylus: (stylus) => save({ stylus: normalizeStylus(stylus) }),
     setLowLatencyInk: (enabled) => save({ lowLatencyInk: enabled === true }),
 
