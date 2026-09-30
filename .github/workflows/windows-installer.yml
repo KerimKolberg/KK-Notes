@@ -44,7 +44,9 @@ jobs:
           # docs/google-drive-setup.md, stage 2). Not a secret: an installed app is
           # a public OAuth client, which is why the flow uses PKCE. Left unset, the
           # app still builds and its Cloud Sync panel says it has no client id.
-          NOTEX_GOOGLE_CLIENT_ID: ${{ vars.NOTEX_GOOGLE_DESKTOP_CLIENT_ID }}
+          # The repository variable wins if it is set; otherwise the id of the project's
+          # Desktop client, so no settings change is needed to get sign-in working.
+          NOTEX_GOOGLE_CLIENT_ID: ${{ vars.NOTEX_GOOGLE_DESKTOP_CLIENT_ID || '712516787688-s13if6j47v7a800md4iqqk103gtr5qab.apps.googleusercontent.com' }}
         # NSIS only. `tauri.conf.json` also lists MSI, whose WiX toolchain is
         # downloaded at build time and is the likeliest thing here to fail for
         # reasons unrelated to this code. One installer is all testing needs; the

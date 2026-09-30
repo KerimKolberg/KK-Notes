@@ -77,7 +77,9 @@ You never register it: Google accepts any loopback port for a Desktop client.
    `KK-Notes desktop`.
 2. There is nothing to register: Desktop clients take no redirect URIs. Copy the
    **Client ID** (it ends in `.apps.googleusercontent.com`).
-3. Build or run the desktop app with it set:
+3. The Windows installer workflow already has the Desktop client id built in
+   (override it with a repository variable `NOTEX_GOOGLE_DESKTOP_CLIENT_ID` if you
+   ever create a new client). To build on your own machine instead, set it:
 
    ```powershell
    # PowerShell, in the repo
