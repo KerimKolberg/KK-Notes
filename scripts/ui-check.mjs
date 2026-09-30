@@ -1626,6 +1626,112 @@ async function checkGridSnap(browser) {
 }
 
 /**
+ * The ruler and the protractor: brought out from the Add menu, moved, turned and put
+ * away by their controls, and a pen drawn along the ruler comes out straight.
+ */
+async function checkAids(browser) {
+  console.log('ruler and protractor, 1280x800:');
+  const { ctx, page, errors } = await openPenDocument(browser);
+  const rulerRect = () => page.$eval('[data-ruler]', (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, angle: Number(el.getAttribute('data-ruler-angle')) }; });
+  const openFromMenu = async (selector) => {
+    await page.click('[data-insert-trigger]');
+    await page.waitForSelector(selector, { state: 'visible', timeout: 3_000 });
+    await page.click(selector);
+  };
+  const inkBox = (selector = '[data-layer="committed"]') =>
+    page.$eval(selector, (canvas) => {
+      const rect = canvas.getBoundingClientRect();
+      const s = canvas.width / rect.width;
+      const { data, width, height } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+      let minX = width, minY = height, maxX = -1, maxY = -1, count = 0;
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (data[(y * width + x) * 4 + 3] > 100) { count++; if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+      return { count, x0: rect.left + minX / s, x1: rect.left + maxX / s, y0: rect.top + minY / s, y1: rect.top + maxY / s };
+    });
+
+  check('there is no ruler until one is asked for', (await page.$('[data-ruler]')) === null);
+  await openFromMenu('[data-insert-ruler]');
+  await page.waitForSelector('[data-ruler]', { timeout: 3_000 });
+  const flat = await rulerRect();
+  check('the ruler comes out level, across the upper part of the page', flat.angle === 0 && flat.w > 300 && flat.h > 40);
+
+  // A wandering hand along the ruler's upper edge comes out straight.
+  const y = flat.y - 8;
+  const wobble = Array.from({ length: 40 }, (_, i) => [flat.x + 60 + i * 8, y + Math.sin(i / 2) * 6]);
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [wobble]);
+  await page.waitForTimeout(150);
+  const ruled = await inkBox();
+  check('it follows the edge, however the hand wandered', ruled.y1 - ruled.y0 <= 3, `${(ruled.y1 - ruled.y0).toFixed(1)}px tall`);
+  check('and sits on the edge, not where the pen was', Math.abs(ruled.y0 - flat.y) <= 3, `${ruled.y0.toFixed(1)} vs ${flat.y.toFixed(1)}`);
+  check('as far as the pen went', Math.abs(ruled.x1 - ruled.x0 - 39 * 8) <= 6, `${(ruled.x1 - ruled.x0).toFixed(1)} of ${39 * 8}`);
+
+  // One started away from the ruler is an ordinary stroke.
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [Array.from({ length: 30 }, (_, i) => [flat.x + 60 + i * 8, flat.y - 140 + Math.sin(i / 2) * 12])]);
+  await page.waitForTimeout(150);
+  const free = await inkBox();
+  check('a stroke that starts away from the ruler stays a stroke', free.y0 < ruled.y0 - 100 + 30, `${free.y0.toFixed(1)}`);
+
+  // Along the ruler, not past its end.
+  const before = await inkBox();
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [[[flat.x + flat.w - 40, flat.y + flat.h + 6], [flat.x + flat.w + 120, flat.y + flat.h + 6]]]);
+  await page.waitForTimeout(150);
+  const after = await inkBox();
+  check('a line stops where the ruler does', after.x1 <= flat.x + flat.w + 3 && after.x1 >= before.x1 - 1, `${after.x1.toFixed(1)} vs ${(flat.x + flat.w).toFixed(1)}`);
+
+  // Move, turn, put away.
+  const grip = await (await page.$('[data-ruler-move]')).boundingBox();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2 + 120, { steps: 8 });
+  await page.mouse.up();
+  const moved = await rulerRect();
+  check('its grip moves it', Math.abs(moved.y - flat.y - 120) < 3 && Math.abs(moved.x - flat.x) < 3, `${(moved.y - flat.y).toFixed(1)}`);
+
+  const turn = await (await page.$('[data-ruler-turn]')).boundingBox();
+  const centre = { x: moved.x + moved.w / 2, y: moved.y + moved.h / 2 };
+  await page.mouse.move(turn.x + turn.width / 2, turn.y + turn.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(centre.x, centre.y + 200, { steps: 10 });
+  await page.mouse.up();
+  const turned = await rulerRect();
+  check('its other end turns it, to a quarter turn when taken straight down', turned.angle === 90, `${turned.angle}°`);
+  check('and it stands up', turned.h > turned.w);
+
+  await page.click('[data-ruler-close]');
+  check('its cross puts it away', (await page.$('[data-ruler]')) === null);
+  await openFromMenu('[data-insert-ruler]');
+  await page.waitForSelector('[data-ruler]');
+  await openFromMenu('[data-insert-ruler]');
+  check('the menu puts it away too', (await page.$('[data-ruler]')) === null);
+
+  // The protractor.
+  await openFromMenu('[data-insert-protractor]');
+  await page.waitForSelector('[data-protractor]', { timeout: 3_000 });
+  const pr = () => page.$eval('[data-protractor]', (el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+  const p0 = await pr();
+  check('the protractor comes out as a half disc, wider than tall', p0.w > p0.h * 1.5, `${Math.round(p0.w)}x${Math.round(p0.h)}`);
+  const pg = await (await page.$('[data-protractor-move]')).boundingBox();
+  await page.mouse.move(pg.x + pg.width / 2, pg.y + pg.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(pg.x + pg.width / 2 + 40, pg.y + pg.height / 2 - 60, { steps: 6 });
+  await page.mouse.up();
+  const p1 = await pr();
+  check('it moves by its grip', Math.abs(p1.x - p0.x - 40) < 3 && Math.abs(p1.y - p0.y + 60) < 3, JSON.stringify({ p0, p1 }));
+  const pt = await (await page.$('[data-protractor-turn]')).boundingBox();
+  const vertex = { x: p1.x + p1.w / 2, y: p1.y + (p1.w / 2) };
+  await page.mouse.move(pt.x + pt.width / 2, pt.y + pt.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(vertex.x + 200, vertex.y, { steps: 10 });
+  await page.mouse.up();
+  const p2 = await pr();
+  check('it turns by its handle, to stand on its side', p2.h > p2.w * 0.9 || p2.w < p1.w - 50, `${Math.round(p2.w)}x${Math.round(p2.h)}`);
+  await page.click('[data-protractor-close]');
+  check('and is put away by its cross', (await page.$('[data-protractor]')) === null);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Turning a selection: the round handle above the box, and the quarter-turn buttons.
  * A flat line is the easiest thing to see turn: it ends up standing.
  */
@@ -1811,6 +1917,7 @@ try {
   await checkRotate(browser);
   await checkArrange(browser);
   await checkGridSnap(browser);
+  await checkAids(browser);
   await checkTextToolbar(browser);
   await checkZoomAnchor(browser);
 } finally {

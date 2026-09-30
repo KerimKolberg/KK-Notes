@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react';
-import { Image as ImageIcon, StickyNote, Table, Type } from 'lucide-react';
+import { DraftingCompass, Image as ImageIcon, Ruler as RulerIcon, StickyNote, Table, Type } from 'lucide-react';
 import { Chip, Row } from '../../inking/palette/parts';
+import { useAidStore } from '../aids';
+import { useDocumentStore } from '../store';
 import { NoteShapeGlyph } from './MediaLayer';
 import {
   DEFAULT_TABLE_COLUMNS,
@@ -54,6 +56,13 @@ export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onInsert
   const [lineOpacity, setLineOpacity] = useState(DEFAULT_TABLE_LINE_OPACITY);
 
   const shown = hover ?? { rows, columns };
+
+  // The drawing aids go on the page in view, and are put away from the same place.
+  const activePage = useDocumentStore((s) => s.document.pages[s.document.activePageIndex]);
+  const rulerOut = useAidStore((s) => s.ruler !== null && s.ruler.pageId === activePage?.id);
+  const protractorOut = useAidStore((s) => s.protractor !== null && s.protractor.pageId === activePage?.id);
+  const toggleRuler = useAidStore((s) => s.toggleRuler);
+  const toggleProtractor = useAidStore((s) => s.toggleProtractor);
 
   const insertTable = useCallback(() => {
     onInsertTable({ rows, columns, lineWidth, lineOpacity });
@@ -123,6 +132,37 @@ export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onInsert
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="mt-1 flex flex-col gap-1 border-t border-zinc-200 pt-1 dark:border-zinc-700" role="group" aria-label="Drawing aids">
+        <button
+          type="button"
+          className={`${ENTRY} ${rulerOut ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300' : ''}`}
+          aria-pressed={rulerOut}
+          data-insert-ruler
+          disabled={!activePage}
+          onClick={() => {
+            if (activePage) toggleRuler(activePage);
+            onDone();
+          }}
+        >
+          <RulerIcon size={18} aria-hidden="true" />
+          {rulerOut ? 'Put the ruler away' : 'Ruler'}
+        </button>
+        <button
+          type="button"
+          className={`${ENTRY} ${protractorOut ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300' : ''}`}
+          aria-pressed={protractorOut}
+          data-insert-protractor
+          disabled={!activePage}
+          onClick={() => {
+            if (activePage) toggleProtractor(activePage);
+            onDone();
+          }}
+        >
+          <DraftingCompass size={18} aria-hidden="true" />
+          {protractorOut ? 'Put the protractor away' : 'Protractor'}
+        </button>
       </div>
 
       <div className="mt-1 border-t border-zinc-200 pt-1 dark:border-zinc-700">

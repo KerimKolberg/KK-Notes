@@ -636,6 +636,34 @@ export function drawLaserTrail(ctx: InkContext, runs: readonly LaserRun[]): void
 }
 
 /** Non-committed angle overlay: arcs plus haloed degree read-outs. */
+/**
+ * A reading beside the pen: a small dark label at `at`, the same size on screen at
+ * any zoom (`scale` is the zoom, so the text is drawn that much smaller in page units).
+ */
+export function drawMeasureLabel(ctx: InkContext, at: Point, text: string, scale = 1): void {
+  const px = 1 / Math.max(0.05, scale);
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+  ctx.font = `600 ${12 * px}px ${UI_FONT}`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  const padX = 7 * px;
+  const height = 20 * px;
+  const width = ctx.measureText(text).width + padX * 2;
+  // Up and to the right of the pen, so the hand does not cover it.
+  const x = at.x + 14 * px;
+  const y = at.y - 18 * px;
+  ctx.fillStyle = 'rgba(24, 24, 27, 0.9)';
+  ctx.beginPath();
+  ctx.roundRect(x, y - height / 2, width, height, 6 * px);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(text, x + padX, y);
+  ctx.restore();
+}
+
 export function drawAngleHud(ctx: InkContext, arcs: readonly AngleArc[]): void {
   if (arcs.length === 0) return;
   ctx.save();

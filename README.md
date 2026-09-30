@@ -2120,6 +2120,36 @@ the newest held one is put on the end when the stroke is built, so the stroke fi
 exactly where the pointer did. Fast strokes are untouched — their samples are already
 further apart than that — and so are dots.
 
+**Drawing aids** (`engine/ruler.ts`, `engine/protractor.ts`, `engine/grid.ts`, `document/aids.ts`,
+`components/AidsLayer.tsx`). Three things for drawing neatly, all reached from the Add menu or the
+shape tool's options:
+
+- **Ruler.** A translucent ruler lies on the page in view, true to size (a page unit is a CSS pixel,
+  1/96 inch, so a centimetre is 37.8 units at 100% zoom) with millimetre marks along both edges and
+  the centimetres numbered. Its grip moves it, the round handle on its right end turns it (sticky at
+  multiples of 45° within three degrees; Shift for steps of 15°), its left cross puts it away, and
+  it says its angle. **A pen or highlighter stroke that starts within 18 units of one of its long
+  edges — outside it or just inside — follows that edge**: the hand decides only how far, the line
+  stays on the edge and stops where the ruler does, and a label beside the pen reads the length in
+  centimetres as it goes. The middle of the body is left alone, so it can still be written on, and a
+  stroke that starts anywhere else is an ordinary stroke. The result is committed as a real line
+  (`GeometricStroke`, the same as the shape tool's) rather than a freehand stroke with collinear
+  points, so it is exact, cheap, and takes a dash pattern or arrowheads like any other line. The ruler
+  is furniture, not content: it is not saved, exported or undone (`useAidStore`), and lives on one
+  page at a time.
+- **Protractor.** A half disc with a mark at every degree — fives and tens longer, tens numbered —
+  and a second scale running the other way, so either end of the base can be zero. Move it by its
+  grip, turn it by the handle at the top of its arc, put it away by the cross. It is for reading
+  angles off, and does not change what is drawn (`readAngle`, the pure half, gives the degrees of any
+  point as the protractor would read it).
+- **Grid snap.** A *Grid* chip beside the 15° one in the shape tool's options puts both ends of a
+  line, curve or coordinate plane on the nearest crossing of the page's grid: the template's own
+  spacing where it draws one (grid, engineering, ruled), a fixed 24 units where it does not (blank,
+  a PDF). On the grid, 15° snapping would only pull the far end off it, so it stands down.
+
+Their controls are the only parts that take pointer input; the ruler's and protractor's bodies let
+it through to the page beneath, which is what lets a pen draw along them.
+
 **A long stroke is drawn a chunk at a time while the pen is down**
 (`engine/liveBake.ts`). Thinning bounds how many samples a stroke has; it does not
 change that the live layer used to be cleared and the *whole* stroke outlined and filled
@@ -2277,6 +2307,12 @@ hit-testing can answer:
   after undoing it; three bars line their left edges up and undo puts them back; after grouping two, a
   loop round one takes both; copying offers a Paste pill, pasting adds and selects the copies and undo
   takes them off in one step; Ctrl+V pastes and brings the lasso out; cut empties the selection.
+- **snap to grid**: with the Grid chip on, both ends of a line land on the page's grid.
+- **ruler and protractor**: neither exists until asked for; the ruler comes out level and its
+  upper edge makes a wandering stroke straight, at the edge and as long as the pen went; a stroke
+  that starts away from it stays a stroke; a line stops at the ruler's end; the grip moves it, the
+  handle turns it (straight down is a quarter turn), and the cross and the menu put it away; the
+  protractor comes out as a half disc, moves by its grip, turns by its handle and is put away.
 - **a long stroke**: while the pen is down a long stroke has a tail layer that cannot take
   the pen's events, the stretch behind it is on the live canvas and the tail is only the last
   stretch, both go when the pen lifts, and the whole stroke lands on the page.

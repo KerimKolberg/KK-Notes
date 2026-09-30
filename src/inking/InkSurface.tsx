@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from 'react';
 import { RenderProfiler } from '../debug/RenderProfiler';
 import { eraserCursor } from './engine/cursor';
+import type { Ruler } from './engine/ruler';
 import { drawStroke, get2dContext, replayStrokes } from './engine/renderer';
 import { useLatestRef } from './hooks/useLatestRef';
 import { usePageCanvas } from './hooks/usePageCanvas';
@@ -35,6 +36,8 @@ export interface InkSurfaceProps {
   eraserDiameterPx?: number | null;
   /** The page's grid cell, in page units, for the shape tool's grid snapping. */
   gridSpacing?: number;
+  /** The ruler lying on this page: a pen that starts at its edge draws along it. */
+  ruler?: Ruler | null;
   /** The pen's barrel button went down or came up, contact or not. */
   onBarrelButton?: (pressed: boolean) => void;
   /** The barrel gesture must be abandoned (pen out of range, gesture taken over). */
@@ -87,6 +90,7 @@ export const InkSurface = memo(function InkSurface({
   onLassoStart,
   onLassoComplete,
   gridSpacing,
+  ruler = null,
   hiddenStrokeIds = null,
   currentTool,
   interactive = true,
@@ -150,6 +154,7 @@ export const InkSurface = memo(function InkSurface({
     allowTouch,
     contentScaleRef: zoomRef,
     ...(gridSpacing !== undefined ? { gridSpacing } : {}),
+    ruler,
     ...(onInteractionStart ? { onInteractionStart } : {}),
     ...(onBarrelSelect ? { onBarrelSelect } : {}),
     ...(onBorrowSelectionTool ? { onBorrowSelectionTool } : {}),

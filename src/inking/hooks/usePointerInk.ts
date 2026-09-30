@@ -34,6 +34,7 @@ import {
 import {
   clearSurface,
   drawAngleHud,
+  drawMeasureLabel,
   drawEraserCursor,
   drawLaserTrail,
   drawLassoPreview,
@@ -44,6 +45,7 @@ import {
 import { recognizeShape } from '../engine/shapeRecognition';
 import { coordinatePlaneFromDrag, createGeometricStroke, curveFromDrag, lineFromDrag } from '../engine/shapes';
 import { DEFAULT_SNAP_GRID, snapToGrid } from '../engine/grid';
+import { edgeForStart, lengthCm, projectToEdge, type Edge, type Ruler } from '../engine/ruler';
 import { polylineLength } from '../engine/simplify';
 import { LiveBaker, canBakeLive } from '../engine/liveBake';
 import { StrokeBuilder } from '../engine/strokeBuilder';
@@ -87,6 +89,11 @@ export interface UsePointerInkOptions {
    * grid switch is on.
    */
   gridSpacing?: number;
+  /**
+   * The ruler lying on this page, if there is one: a pen or highlighter stroke that starts
+   * at one of its edges becomes a straight line along it.
+   */
+  ruler?: Ruler | null;
   /** Fired when an accepted pointer starts any session (used to activate a page). */
   onInteractionStart?: () => void;
   /** The pen's barrel button is mapped to select mode and was pressed on the surface. */
@@ -138,6 +145,10 @@ interface InkSession {
   readonly rect: DOMRect;
   readonly scale: number;
   readonly snap: SnapState | null;
+  /** Set when the stroke began at a ruler's edge: where it runs, where it started on it, where it has got to. */
+  readonly edge: Edge | null;
+  readonly edgeFrom: Point | null;
+  edgeTo: Point | null;
 }
 
 /** Click-and-drag primitive (line, coordinate plane). */
@@ -343,6 +354,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         session?.kind === 'ink' &&
         laserTrail.points.length === 0 &&
         !session.snap?.shape &&
+        !session.edge &&
         session.builder.tool !== 'eraser-pixel' &&
         canBakeLive(session.builder.style)
       ) {
@@ -395,6 +407,15 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         if (committed) drawLiveStroke(committed, builder.points, builder.style);
         const last = builder.last;
         if (last) drawEraserCursor(live, last.x, last.y, builder.style.size / 2);
+        return;
+      }
+
+      if (session.edge && session.edgeFrom && session.edgeTo) {
+        // Drawn along a ruler: a straight line from where it started to where it has got to,
+        // and how long that is, since a ruler is for measuring as much as for straightness.
+        drawShape(live, { type: 'line', from: session.edgeFrom, to: session.edgeTo }, builder.style);
+        const cm = lengthCm(session.edgeFrom, session.edgeTo);
+        if (cm >= 0.05) drawMeasureLabel(live, session.edgeTo, `${cm.toFixed(1)} cm`, session.scale);
         return;
       }
 
@@ -516,7 +537,21 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         clearSnapTimer(session.snap);
         const { builder } = session;
         const snapped = session.snap?.shape ?? null;
-        if (snapped && builder.tool !== 'eraser-pixel') {
+        const ruled =
+          session.edgeFrom && session.edgeTo && Math.hypot(session.edgeTo.x - session.edgeFrom.x, session.edgeTo.y - session.edgeFrom.y) >= 2
+            ? ({ type: 'line', from: session.edgeFrom, to: session.edgeTo } as const)
+            : null;
+        if (ruled && builder.tool !== 'eraser-pixel') {
+          opts.onCommitStroke(
+            createGeometricStroke({
+              tool: builder.tool,
+              shape: ruled,
+              style: builder.style,
+              pointerType: builder.pointerType,
+              createdAt: builder.createdAt,
+            }),
+          );
+        } else if (snapped && builder.tool !== 'eraser-pixel') {
           opts.onCommitStroke(
             createGeometricStroke({
               tool: builder.tool,
@@ -735,7 +770,11 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       } else {
         const builder = new StrokeBuilder(tool, styleForTool(tool, settings, pointerType), pointerType);
         builder.add(point);
-        const canSnap = settings.holdToSnap && tool !== 'eraser-pixel';
+        // A pen or highlighter that starts at a ruler's edge follows the edge, which leaves
+        // no room for the hold-to-snap guess at what shape was meant.
+        const edge = opts.ruler && (tool === 'pen' || tool === 'highlighter') ? edgeForStart(opts.ruler, point) : null;
+        const edgeStart = edge ? projectToEdge(edge, point).point : null;
+        const canSnap = settings.holdToSnap && tool !== 'eraser-pixel' && !edge;
         const session: InkSession = {
           kind: 'ink',
           pointerId: e.pointerId,
@@ -744,6 +783,9 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           rect,
           scale,
           snap: canSnap ? { ...beginDwell(point, now), timer: null } : null,
+          edge,
+          edgeFrom: edgeStart,
+          edgeTo: edgeStart,
         };
         sessionRef.current = session;
         armSnapTimer(session);
@@ -765,7 +807,12 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       // that is what the latency is measured against; the older coalesced
       // samples in the same batch are already history.
       if (profilingEnabled()) noteInput(samples[samples.length - 1]?.timeStamp ?? e.timeStamp);
-      if (session.kind === 'ink') {
+      if (session.kind === 'ink' && session.edge) {
+        // Along a ruler the hand only decides how far: the line stays on the edge and ends where
+        // the ruler does.
+        const newest = samples[samples.length - 1];
+        if (newest) session.edgeTo = projectToEdge(session.edge, toInkPoint(newest, session.rect, session.scale)).point;
+      } else if (session.kind === 'ink') {
         const now = performance.now();
         for (const sample of samples) {
           const point = toInkPoint(sample, session.rect, session.scale);
