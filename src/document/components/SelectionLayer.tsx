@@ -9,6 +9,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { RotateCcw, RotateCw } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   COLOR_PALETTE,
@@ -24,7 +25,9 @@ import { subscribeTouchGesture } from '../../inking/engine/gestureState';
 import {
   reshapeStrokes,
   restyleStrokes,
+  boundsCentre,
   boundsHandlePoint,
+  rotationFromPointer,
   scaleFromHandle,
   usableHandles,
   selectionBounds,
@@ -66,7 +69,7 @@ type Draft =
 type PointerLike = Pick<PointerEvent, 'pointerId' | 'clientX' | 'clientY' | 'shiftKey'>;
 
 interface Drag {
-  readonly mode: 'move' | 'scale';
+  readonly mode: 'move' | 'scale' | 'rotate';
   readonly handle?: ScaleHandle;
   readonly pointerId: number;
   readonly start: Point;
@@ -78,6 +81,9 @@ interface Drag {
    * much on the first move.
    */
   readonly grab?: Point;
+  /** `rotate`: the point it turns about, and where on the page the pen took hold. */
+  readonly pivot?: Point;
+  readonly from?: Point;
 }
 
 const HANDLE_CURSORS: Record<ScaleHandle, string> = {
@@ -94,8 +100,10 @@ const HANDLE_CURSORS: Record<ScaleHandle, string> = {
 /** Breathing room between the strokes' padded bounds and the dashed box, page units. */
 const BOX_MARGIN = 6;
 const TOOLBAR_GAP = 12;
-/** Approximate toolbar height, CSS px, used to decide above vs. below. */
+/** Toolbar height, CSS px, until it has been measured, used to decide above vs. below. */
 const TOOLBAR_HEIGHT = 40;
+/** How far the rotate handle stands off the box, CSS px. Clear of the edge handle's own hit area. */
+const ROTATE_OFFSET = 34;
 const SWATCHES = COLOR_PALETTE.slice(0, 6);
 
 /** On-screen rects of every mounted page, for deciding where a drag was dropped. */
@@ -111,7 +119,9 @@ function mountedPageRects(): PageRect[] {
 }
 
 function isIdentity(t: StrokeTransform): boolean {
-  return t.kind === 'translate' ? t.dx === 0 && t.dy === 0 : t.sx === 1 && t.sy === 1;
+  if (t.kind === 'translate') return t.dx === 0 && t.dy === 0;
+  if (t.kind === 'rotate') return t.angle === 0;
+  return t.sx === 1 && t.sy === 1;
 }
 
 function applyDraft(selected: readonly Stroke[], ids: ReadonlySet<string>, draft: Draft): Stroke[] {
@@ -233,6 +243,7 @@ export const SelectionLayer = memo(function SelectionLayer({
    * exactly what a drag onto the next page has to survive.
    */
   const moveDelta = draft?.kind === 'transform' && draft.transform.kind === 'translate' ? draft.transform : null;
+  const turning = draft?.kind === 'transform' && draft.transform.kind === 'rotate' ? draft.transform : null;
   const previewStrokes = useMemo(
     () => (draft === null ? null : moveDelta ? selected : applyDraft(selected, idSet, draft)),
     [draft, moveDelta, selected, idSet],
@@ -289,6 +300,7 @@ export const SelectionLayer = memo(function SelectionLayer({
         bounds,
         ...(handle ? { handle } : {}),
         ...(anchor ? { grab: { x: at.x - anchor.x, y: at.y - anchor.y } } : {}),
+        ...(mode === 'rotate' ? { pivot: boundsCentre(bounds), from: at } : {}),
       };
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -342,6 +354,14 @@ export const SelectionLayer = memo(function SelectionLayer({
       const dx = (move.clientX - drag.start.x) / zoom;
       const dy = (move.clientY - drag.start.y) / zoom;
       setDraft({ kind: 'transform', transform: { kind: 'translate', dx, dy } });
+    } else if (drag.mode === 'rotate') {
+      if (!drag.pivot || !drag.from) return;
+      // Turned by how far the pen has gone round the middle since it took hold, so the
+      // handle follows the pen wherever it was grabbed rather than jumping to it.
+      setDraft({
+        kind: 'transform',
+        transform: rotationFromPointer(drag.pivot, drag.from, pagePoint(move.clientX, move.clientY), move.shiftKey),
+      });
     } else if (drag.handle) {
       const at = pagePoint(move.clientX, move.clientY);
       // Where the handle's own point is being taken to, not where the pen is.
@@ -432,6 +452,13 @@ export const SelectionLayer = memo(function SelectionLayer({
   );
   // The toolbar is wider than a phone; centring it on the box is only a start.
   const { ref: toolbarRef, shift: toolbarShift } = useViewportShift<HTMLDivElement>(!dragging);
+  // How tall the toolbar really is: it wraps onto a second line once it has the curve
+  // controls too, and guessing one line put it half off the top of the page.
+  const [toolbarHeight, setToolbarHeight] = useState(TOOLBAR_HEIGHT);
+  useLayoutEffect(() => {
+    const measured = toolbarRef.current?.offsetHeight ?? 0;
+    if (measured > 0 && Math.abs(measured - toolbarHeight) > 1) setToolbarHeight(measured);
+  });
   const commitSize = useCallback(() => {
     const current = draftRef.current;
     if (current?.kind !== 'size') return;
@@ -488,8 +515,13 @@ export const SelectionLayer = memo(function SelectionLayer({
   // Toolbar above the box, or below it when that would leave the page. It is
   // centred on the box and then nudged by `toolbarShift`, measured against the
   // real viewport — a page edge says nothing about where the screen ends.
-  const toolbarBelow = box.top - (TOOLBAR_GAP + TOOLBAR_HEIGHT) / zoom < 0;
+  const toolbarBelow = box.top - (TOOLBAR_GAP + toolbarHeight + ROTATE_OFFSET) / zoom < 0;
   const toolbarX = box.left + box.width / 2;
+  // The rotate handle takes the side the toolbar is not on, nearest the box; the
+  // toolbar stands beyond it.
+  const rotateY = toolbarBelow ? box.top + box.height + ROTATE_OFFSET / zoom : box.top - ROTATE_OFFSET / zoom;
+  const quarterTurn = (angle: number): void =>
+    transformSelection(page.id, strokeIds, { kind: 'rotate', origin: boundsCentre(bounds), angle });
   /** Corners sit on their corner; an edge handle sits at the middle of it. */
   const handlePoint = (h: ScaleHandle): Point => ({
     x: h.includes('w') ? box.left : h.includes('e') ? box.left + box.width : box.left + box.width / 2,
@@ -593,6 +625,72 @@ export const SelectionLayer = memo(function SelectionLayer({
             <div style={handleMark} />
           </div>
         ))}
+        {/* Turn: a round handle on a stalk, clear of the box on the side the toolbar is not. */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: toolbarX - 0.75 / zoom,
+            top: Math.min(box.top, rotateY),
+            width: 1.5 / zoom,
+            height: Math.abs(rotateY - (toolbarBelow ? box.top + box.height : box.top)),
+            background: 'rgba(37, 99, 235, 0.9)',
+            pointerEvents: 'none',
+            visibility: dragging ? 'hidden' : 'visible',
+          }}
+        />
+        <div
+          role="presentation"
+          data-selection-rotate
+          title="Turn (Shift for steps of 15°)"
+          style={{
+            position: 'absolute',
+            left: toolbarX - handleHit / 2,
+            top: rotateY - handleHit / 2,
+            width: handleHit,
+            height: handleHit,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'grab',
+            touchAction: 'none',
+            pointerEvents: 'auto',
+            // Kept, hidden, for the same reason as the scale handles: it is where the pen is captured.
+            visibility: dragging ? 'hidden' : 'visible',
+          }}
+          onPointerDown={(e) => begin(e, 'rotate')}
+        >
+          <div
+            style={{
+              ...handleMark,
+              width: 18 / zoom,
+              height: 18 / zoom,
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#2563eb',
+            }}
+          >
+            <RotateCw size={11 / zoom} strokeWidth={2.5} aria-hidden="true" />
+          </div>
+        </div>
+        {turning && (
+          <div
+            data-selection-angle
+            aria-live="polite"
+            style={{
+              position: 'absolute',
+              left: turning.origin.x,
+              top: turning.origin.y,
+              transform: `translate(-50%, -50%) scale(${1 / zoom})`,
+              pointerEvents: 'none',
+            }}
+            className="rounded-md bg-zinc-900/90 px-2 py-0.5 text-xs font-medium tabular-nums text-white shadow"
+          >
+            {Math.round((turning.angle * 180) / Math.PI)}°
+          </div>
+        )}
         <div
           ref={toolbarRef}
           role="toolbar"
@@ -603,7 +701,9 @@ export const SelectionLayer = memo(function SelectionLayer({
           style={{
             position: 'absolute',
             left: toolbarX,
-            top: toolbarBelow ? box.top + box.height + TOOLBAR_GAP / zoom : box.top - TOOLBAR_GAP / zoom,
+            top: toolbarBelow
+              ? box.top + box.height + (TOOLBAR_GAP + ROTATE_OFFSET) / zoom
+              : box.top - (TOOLBAR_GAP + ROTATE_OFFSET) / zoom,
             // The inverse scale keeps the toolbar a constant size on screen, so
             // its own box is already in screen px — but the shift is applied
             // before it, in page units, hence dividing it back out.
@@ -624,6 +724,26 @@ export const SelectionLayer = memo(function SelectionLayer({
             aria-label="Duplicate selection"
           >
             Duplicate
+          </button>
+          <button
+            type="button"
+            className={`${toolbarButton} w-7 justify-center px-0`}
+            onClick={() => quarterTurn(-Math.PI / 2)}
+            title="Turn a quarter left"
+            aria-label="Turn a quarter left"
+            data-selection-turn="left"
+          >
+            <RotateCcw size={14} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`${toolbarButton} w-7 justify-center px-0`}
+            onClick={() => quarterTurn(Math.PI / 2)}
+            title="Turn a quarter right"
+            aria-label="Turn a quarter right"
+            data-selection-turn="right"
+          >
+            <RotateCw size={14} aria-hidden="true" />
           </button>
           <span className="mx-0.5 h-5 w-px bg-white/20" aria-hidden="true" />
           <div className="flex items-center gap-0.5" role="group" aria-label="Stroke colour">

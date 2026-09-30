@@ -1283,6 +1283,80 @@ async function checkLasso(browser) {
 }
 
 /**
+ * Turning a selection: the round handle above the box, and the quarter-turn buttons.
+ * A flat line is the easiest thing to see turn: it ends up standing.
+ */
+async function checkRotate(browser) {
+  console.log('rotating a selection, 1280x800:');
+  const { ctx, page, errors, cx, cy, around } = await openPenDocument(browser);
+  const box = () => page.$eval('[data-selection-box]', (el) => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; });
+
+  const line = Array.from({ length: 30 }, (_, i) => [cx - 100 + i * (200 / 29), cy + (i / 29) * 2]);
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [line]);
+  await page.click('[data-palette-tool="lasso"]');
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [around(140, 40)]);
+  await page.waitForSelector('[data-selection-box]', { timeout: 3_000 });
+  const flat = await box();
+  check('a selection is offered a rotate handle', (await page.$('[data-selection-rotate]')) !== null);
+  check('the line starts out flat', flat.w > flat.h * 3, `${Math.round(flat.w)}x${Math.round(flat.h)}`);
+
+  const handle = await page.$eval('[data-selection-rotate]', (el) => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  check('it stands above the box', handle.y < flat.y, `${Math.round(handle.y)} vs ${Math.round(flat.y)}`);
+  check('and is not on top of the stretch handle', await page.$eval('[data-selection-handle="e"]', (el, h) => { const r = el.getBoundingClientRect(); return Math.hypot(r.x + r.width / 2 - h.x, r.y + r.height / 2 - h.y) > 20; }, handle));
+
+  // A quarter of a circle round the middle of the box, from straight above to due east.
+  const centre = { x: flat.x + flat.w / 2, y: flat.y + flat.h / 2 };
+  const radius = centre.y - handle.y;
+  const arc = Array.from({ length: 19 }, (_, i) => {
+    const a = -Math.PI / 2 + (i / 18) * (Math.PI / 2);
+    return [centre.x + radius * Math.cos(a), centre.y + radius * Math.sin(a)];
+  });
+  const turning = page.evaluate(([pts]) => window.__pen.drag('[data-selection-rotate]', pts), [arc]);
+  let readout = '';
+  for (let i = 0; i < 10 && !/\d/.test(readout); i++) {
+    await page.waitForTimeout(30);
+    readout = (await page.$eval('[data-selection-angle]', (el) => el.textContent).catch(() => '')) ?? '';
+  }
+  await turning;
+  check('an angle is shown while it turns', /\d+°/.test(readout), readout);
+  await page.waitForSelector('[data-selection-box]');
+  const stood = await box();
+  check('a quarter turn clockwise stands the line up', stood.h > stood.w * 3, `${Math.round(stood.w)}x${Math.round(stood.h)}`);
+  check('about its middle, so it has not wandered off', Math.abs(stood.x + stood.w / 2 - centre.x) < 6 && Math.abs(stood.y + stood.h / 2 - centre.y) < 6, `${Math.round(stood.x + stood.w / 2 - centre.x)}, ${Math.round(stood.y + stood.h / 2 - centre.y)}`);
+  check('the angle readout goes away afterwards', (await page.$('[data-selection-angle]')) === null);
+
+  // One step undone, and it lies down again.
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(150);
+  await page.waitForSelector('[data-selection-box]', { timeout: 2_000 }).catch(() => {});
+  const back = await box().catch(() => null);
+  check('undo puts it back with one step', back !== null && back.w > back.h * 3, back ? `${Math.round(back.w)}x${Math.round(back.h)}` : 'selection gone');
+
+  // The buttons in the toolbar.
+  await page.click('[data-selection-turn="right"]');
+  const right = await box();
+  check('the quarter-turn button stands it up', right.h > right.w * 3, `${Math.round(right.w)}x${Math.round(right.h)}`);
+  await page.click('[data-selection-turn="left"]');
+  const left = await box();
+  check('and the other one lays it down again', left.w > left.h * 3, `${Math.round(left.w)}x${Math.round(left.h)}`);
+
+  // Near enough to level, it sticks; a little past, it does not.
+  const h2 = await page.$eval('[data-selection-rotate]', (el) => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  const c2 = { x: left.x + left.w / 2, y: left.y + left.h / 2 };
+  const r2 = c2.y - h2.y;
+  const near = (deg) => {
+    const a = -Math.PI / 2 + (deg * Math.PI) / 180;
+    return [[h2.x, h2.y], [c2.x + r2 * Math.cos(a), c2.y + r2 * Math.sin(a)]];
+  };
+  await page.evaluate(([pts]) => window.__pen.drag('[data-selection-rotate]', pts), [near(2)]);
+  const sticky = await box();
+  check('a turn of two degrees sticks at level', sticky.h < left.h + 2, `${Math.round(left.h)} -> ${Math.round(sticky.h)}`);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Zooming with the toolbar's buttons.
  *
  * Reported from a tablet: in the two-page view, zooming out kept sliding the pages to
@@ -1389,6 +1463,7 @@ try {
   await checkDocks(browser);
   await checkPenButtons(browser);
   await checkLasso(browser);
+  await checkRotate(browser);
   await checkZoomAnchor(browser);
 } finally {
   await browser.close();

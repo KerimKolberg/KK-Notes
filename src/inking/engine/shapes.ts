@@ -245,7 +245,13 @@ export function heartPoints(h: HeartShape, segments = 64): Point[] {
   const sy = h.height / (box.maxY - box.minY);
   const cx = (box.minX + box.maxX) / 2;
   const cy = (box.minY + box.maxY) / 2;
-  return raw.map((p) => ({ x: h.center.x + (p.x - cx) * sx, y: h.center.y + (p.y - cy) * sy }));
+  const cos = Math.cos(h.rotation ?? 0);
+  const sin = Math.sin(h.rotation ?? 0);
+  return raw.map((p) => {
+    const dx = (p.x - cx) * sx;
+    const dy = (p.y - cy) * sy;
+    return { x: h.center.x + dx * cos - dy * sin, y: h.center.y + dx * sin + dy * cos };
+  });
 }
 
 function closeRing(points: readonly Point[]): Point[] {
@@ -361,7 +367,29 @@ export function coordinatePlaneGeometry(shape: CoordinatePlaneShape): Coordinate
     { x: minX, y: maxY },
   ];
 
-  return { axes, arrows, ticks, grid, labels, frame, fontPx };
+  const turn = shape.rotation ?? 0;
+  if (turn === 0) return { axes, arrows, ticks, grid, labels, frame, fontPx };
+
+  // Laid out square to the page above, then turned about the origin as one piece.
+  // The labels' positions turn with it but their text stays upright, which is how
+  // a turned plane reads best.
+  const cos = Math.cos(turn);
+  const sin = Math.sin(turn);
+  const at = (p: Point): Point => {
+    const dx = p.x - o.x;
+    const dy = p.y - o.y;
+    return { x: o.x + dx * cos - dy * sin, y: o.y + dx * sin + dy * cos };
+  };
+  const segment = (s: Segment): Segment => ({ a: at(s.a), b: at(s.b) });
+  return {
+    axes: axes.map(segment),
+    arrows: arrows.map((a) => ({ tip: at(a.tip), angle: a.angle + turn })),
+    ticks: ticks.map(segment),
+    grid: grid.map(segment),
+    labels: labels.map((l) => ({ ...l, ...at(l) })),
+    frame: frame.map(at),
+    fontPx,
+  };
 }
 
 // ---------------------------------------------------------------------------

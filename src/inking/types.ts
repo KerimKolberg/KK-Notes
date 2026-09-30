@@ -217,6 +217,8 @@ export interface HeartShape {
   readonly center: Point;
   readonly width: number;
   readonly height: number;
+  /** Radians, clockwise, about the centre. Absent (0) on anything drawn before it could be turned. */
+  readonly rotation?: number;
 }
 
 /**
@@ -248,6 +250,8 @@ export interface CoordinatePlaneShape {
   /** Length of the positive y half-axis in px. */
   readonly extentY: number;
   readonly config: CoordinatePlaneConfig;
+  /** Radians, clockwise, about the origin. Absent (0) on anything drawn before it could be turned. */
+  readonly rotation?: number;
 }
 
 export type Shape =

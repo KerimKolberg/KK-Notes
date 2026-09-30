@@ -338,26 +338,53 @@ export function selectionBounds(strokes: readonly Stroke[]): BBox | null {
 
 export type StrokeTransform =
   | { readonly kind: 'translate'; readonly dx: number; readonly dy: number }
-  | { readonly kind: 'scale'; readonly origin: Point; readonly sx: number; readonly sy: number };
+  | { readonly kind: 'scale'; readonly origin: Point; readonly sx: number; readonly sy: number }
+  /** Turn about `origin` by `angle` radians, clockwise as seen on the page (y points down). */
+  | { readonly kind: 'rotate'; readonly origin: Point; readonly angle: number };
 
 export function transformPoint<P extends Point>(p: P, t: StrokeTransform): P {
   if (t.kind === 'translate') return { ...p, x: p.x + t.dx, y: p.y + t.dy };
+  if (t.kind === 'rotate') {
+    const cos = Math.cos(t.angle);
+    const sin = Math.sin(t.angle);
+    const dx = p.x - t.origin.x;
+    const dy = p.y - t.origin.y;
+    return { ...p, x: t.origin.x + dx * cos - dy * sin, y: t.origin.y + dx * sin + dy * cos };
+  }
   return { ...p, x: t.origin.x + (p.x - t.origin.x) * t.sx, y: t.origin.y + (p.y - t.origin.y) * t.sy };
 }
 
 export function transformBBox(box: BBox, t: StrokeTransform): BBox {
-  const a = transformPoint({ x: box.minX, y: box.minY }, t);
-  const b = transformPoint({ x: box.maxX, y: box.maxY }, t);
+  // A turn can carry any corner furthest, so all four are followed; the other two
+  // transforms are axis-aligned and two opposite corners say it all.
+  const corners: Point[] =
+    t.kind === 'rotate'
+      ? [
+          { x: box.minX, y: box.minY },
+          { x: box.maxX, y: box.minY },
+          { x: box.maxX, y: box.maxY },
+          { x: box.minX, y: box.maxY },
+        ]
+      : [
+          { x: box.minX, y: box.minY },
+          { x: box.maxX, y: box.maxY },
+        ];
+  const moved = corners.map((c) => transformPoint(c, t));
   return {
-    minX: Math.min(a.x, b.x),
-    minY: Math.min(a.y, b.y),
-    maxX: Math.max(a.x, b.x),
-    maxY: Math.max(a.y, b.y),
+    minX: Math.min(...moved.map((p) => p.x)),
+    minY: Math.min(...moved.map((p) => p.y)),
+    maxX: Math.max(...moved.map((p) => p.x)),
+    maxY: Math.max(...moved.map((p) => p.y)),
   };
 }
 
 function scaleFactors(t: StrokeTransform): { sx: number; sy: number } {
   return t.kind === 'scale' ? { sx: Math.abs(t.sx), sy: Math.abs(t.sy) } : { sx: 1, sy: 1 };
+}
+
+/** The turn a transform adds to a shape that has an orientation of its own. */
+function turnOf(t: StrokeTransform): number {
+  return t.kind === 'rotate' ? t.angle : 0;
 }
 
 function transformShape(shape: Shape, t: StrokeTransform): Shape {
@@ -369,11 +396,29 @@ function transformShape(shape: Shape, t: StrokeTransform): Shape {
     case 'polygon':
       return { ...shape, points: shape.points.map((p) => transformPoint(p, t)) };
     case 'rectangle':
-      return { ...shape, center: transformPoint(shape.center, t), width: shape.width * sx, height: shape.height * sy };
+      return {
+        ...shape,
+        center: transformPoint(shape.center, t),
+        width: shape.width * sx,
+        height: shape.height * sy,
+        rotation: shape.rotation + turnOf(t),
+      };
     case 'ellipse':
-      return { ...shape, center: transformPoint(shape.center, t), radiusX: shape.radiusX * sx, radiusY: shape.radiusY * sy };
+      return {
+        ...shape,
+        center: transformPoint(shape.center, t),
+        radiusX: shape.radiusX * sx,
+        radiusY: shape.radiusY * sy,
+        rotation: shape.rotation + turnOf(t),
+      };
     case 'heart':
-      return { ...shape, center: transformPoint(shape.center, t), width: shape.width * sx, height: shape.height * sy };
+      return {
+        ...shape,
+        center: transformPoint(shape.center, t),
+        width: shape.width * sx,
+        height: shape.height * sy,
+        ...(t.kind === 'rotate' ? { rotation: (shape.rotation ?? 0) + t.angle } : {}),
+      };
     case 'curve':
       // The amplitude is measured across the chord, so it follows whichever
       // axis the chord runs least along — the mean is the honest answer for a
@@ -385,7 +430,13 @@ function transformShape(shape: Shape, t: StrokeTransform): Shape {
         amplitude: shape.amplitude * ((sx + sy) / 2),
       };
     case 'coordinate-plane':
-      return { ...shape, origin: transformPoint(shape.origin, t), extentX: shape.extentX * sx, extentY: shape.extentY * sy };
+      return {
+        ...shape,
+        origin: transformPoint(shape.origin, t),
+        extentX: shape.extentX * sx,
+        extentY: shape.extentY * sy,
+        ...(t.kind === 'rotate' ? { rotation: (shape.rotation ?? 0) + t.angle } : {}),
+      };
   }
 }
 
@@ -604,4 +655,45 @@ export function scaleFromHandle(
 function maxScaleWithin(origin: number, extent: number, sign: 1 | -1, low: number, high: number): number {
   const room = sign === 1 ? high - origin : origin - low;
   return Math.max(1, room / extent);
+}
+
+// ---------------------------------------------------------------------------
+// Rotation
+// ---------------------------------------------------------------------------
+
+/** Where a selection turns about: the middle of its box. */
+export function boundsCentre(bounds: BBox): Point {
+  return { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+}
+
+/** An angle in radians as the equivalent one in (−π, π]. */
+export function normalizeAngle(angle: number): number {
+  const turn = Math.PI * 2;
+  let a = angle % turn;
+  if (a > Math.PI) a -= turn;
+  else if (a <= -Math.PI) a += turn;
+  return a;
+}
+
+/** Shift rotates in steps of this, as the rotate handle on an image does. */
+export const ROTATE_STEP = Math.PI / 12;
+/** Without Shift, a turn this close to a multiple of 45° is pulled onto it, so upright is easy to come back to. */
+export const ROTATE_STICKY = (3 * Math.PI) / 180;
+
+/** What a turn of `angle` radians comes to once the snapping is applied. */
+export function snapRotation(angle: number, stepped: boolean): number {
+  if (stepped) return Math.round(angle / ROTATE_STEP) * ROTATE_STEP;
+  const quarter = Math.PI / 4;
+  const nearest = Math.round(angle / quarter) * quarter;
+  return Math.abs(angle - nearest) <= ROTATE_STICKY ? nearest : angle;
+}
+
+/**
+ * The turn that follows a pointer going round `centre`: the angle it was grabbed
+ * at, `from`, against the one it is at now, `to`, both as points on the page.
+ */
+export function rotationFromPointer(centre: Point, from: Point, to: Point, stepped: boolean): StrokeTransform {
+  const a0 = Math.atan2(from.y - centre.y, from.x - centre.x);
+  const a1 = Math.atan2(to.y - centre.y, to.x - centre.x);
+  return { kind: 'rotate', origin: centre, angle: snapRotation(normalizeAngle(a1 - a0), stepped) };
 }

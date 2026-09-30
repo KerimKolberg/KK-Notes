@@ -660,6 +660,16 @@ into a second column when the window is not tall enough, the colour and
 thickness controls sit beside it in a narrow column of their own, and flyouts and
 tooltips open *away* from the edge, beside their button, instead of above it.
 
+**Which side is which.** On every dock the tools stand against the edge the bar is
+docked to and the colours on the side facing the page, so the right dock is the left
+in a mirror (the first column of tools outermost, wrapping *inwards*), and the bottom
+dock puts the colours above the tools as the top dock puts them below. Standing on
+end, the settings button is not the last of the tools but the head of the colour
+column: on a tablet where the tools wrap into a second column it used to land at the
+top of that one, with the colours in a third beside it, and the space under it empty.
+Now the bar is two columns, tools then settings-and-colours, whatever the height.
+`scripts/ui-check.mjs` (`checkDocks`) asserts the mirror on all four docks.
+
 The colour column is the same `ToolConfigRow` in a `compact` layout rather than a
 second component: one button wide, running down the height the tools beside it
 already take — the eight swatches in a single column, the pipette beneath them,
@@ -837,6 +847,22 @@ box on a z-25 layer between the ink and the form widgets:
   edge looked stuck there. `scaleFromHandle` takes the page as a limit and stops the
   factor where the far side meets it (never below 1, so a selection already past an
   edge is not forced to shrink to get back in);
+- **turn**: a round handle on a stalk beyond the box, on the side the toolbar is
+  not, or the two quarter-turn buttons in the toolbar. The handle turns the selection
+  about the middle of its box by how far the pen has gone round that point since it
+  took hold — measured from where it was grabbed, so nothing jumps — and an angle
+  reads out in the middle while it moves. It sticks to multiples of 45° within three
+  degrees, so getting back to upright is easy, and Shift goes in steps of 15°. The
+  turn is one more `StrokeTransform` (`rotate`, about a point), so it is one undo
+  step and works across the same store actions as a move or a stretch. A freehand
+  stroke turns point by point; a line, polygon or curve by its points (a curve keeps
+  its bow); a rectangle and an ellipse add the turn to the rotation they already had;
+  a heart and a coordinate plane gained an optional `rotation` (absent on anything
+  drawn before, which reads as 0) that the plane's layout applies to the whole
+  figure, its labels' positions with it and their text upright. The box round a turned
+  selection is the box round what is drawn, so it is wider than the content at 45°;
+  the next turn is about *its* middle. Images, notes and tables were already
+  turnable by their own handle;
 - **quick actions**: Duplicate (offset copies become the new selection),
   six colour swatches plus a colour picker, a width slider that previews
   live and commits on release, Delete, Deselect; Delete / Backspace and
@@ -2153,7 +2179,10 @@ hit-testing can answer:
   an edge it shows the dock target and docks there; docked left it stands on end,
   sits against the edge and fits the stage; a flyout opens beside its own button
   and stays on screen; the settings panel fits the window and scrolls; the
-  settings can dock it top and bottom; the dock survives a reload. Docked left it
+  settings can dock it top and bottom; the dock survives a reload. On each dock the
+  tools are against the edge and the colours on the page side (right mirrors left,
+  bottom mirrors top), and docked on end the settings button heads the colours.
+  Docked left it
   is a slim column and the colours, the laser's Rainbow button and the swatch
   editor stay inside it. Unpinned, it stays up while the pointer is on it or a
   flyout is open, hides after its idle delay, leaves a tab in the middle of its
@@ -2169,6 +2198,12 @@ hit-testing can answer:
 - **stretching a lasso selection**: a line offers only its two stretching handles, a
   pull far out keeps following the pen (the handle stays in the page), a grab off the
   handle's centre does not lurch the selection.
+- **turning a lasso selection**: the rotate handle stands above the box and clear of
+  the edge handle, an angle reads out while it turns, a quarter turn stands a flat line
+  up about its own middle, undo is one step, the quarter-turn buttons turn both ways,
+  and a turn of two degrees sticks at level. The toolbar's real height is measured
+  (it wraps to two lines with the curve controls), so it no longer slides half under the
+  top of the page.
 - **zoom steps in both view directions**: the page point at the centre of the view
   stays there through steps out and in, and a step out and back returns to where it
   began.
