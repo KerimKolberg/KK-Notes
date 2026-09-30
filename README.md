@@ -137,6 +137,23 @@ the page or hovering just above it is put off and looked at again every 750 ms
 when it changes: it used to be sent to the shell on every change to the document
 store, which includes turning a page and making a selection.
 
+**Fullscreen styles** (`desktop/borderless.ts`, `fileService.toggleFullscreen`).
+F11 does one of two things, chosen in *Settings → Fullscreen* and defaulting to the
+first. **Borderless window** takes the title bar off and fills the work area — the
+monitor less the taskbar, and one physical pixel short at the bottom so a window on a
+monitor with an auto-hidden taskbar (whose work area is the whole monitor) does not
+cover it either. To Windows that is an ordinary window, composited like a maximised
+one, which is the mode the ROG Flow Z13 was fine in. **Full screen** is the
+platform's own (tao's borderless fullscreen: resized to cover the monitor, the taskbar
+told to step aside, the same as Chromium's F11), which on that tablet made the mouse
+pointer lag and blink. Leaving puts back what was there — a maximised window
+maximised again, otherwise its size and position — and turns off whichever is on,
+whatever the setting says by then. A monitor that reports no usable geometry falls
+back to the platform fullscreen. The window commands it needs are in the
+capabilities (`set-decorations`, `set-position`, `set-size`, `current-monitor`,
+`outer-position`, `outer-size`). The performance overlay's `mode` row says
+`borderless`, `fullscreen` or `windowed`.
+
 **Stylus buttons.** `resolveEffectiveTool` maps hardware buttons per the
 *Stylus* settings in the palette. Two bits of `PointerEvent.buttons` are
 buttons: 2 is the **barrel** button and 32 is the **eraser** flag. A pen with a
@@ -810,9 +827,16 @@ box on a z-25 layer between the ink and the form widgets:
   to, and removing it on the first move (as the layer once did, to hide the handles)
   released the capture, so a stretch followed the pen only while it stayed inside the
   old box and stopped dead the moment it was pulled out of it — which is the whole
-  point of stretching. The drag is applied once per animation frame from the latest
-  pen report rather than on each of the four or so a frame, and a capture lost for any
-  other reason ends the drag where it is;
+  point of stretching. Because capture can be taken away for other reasons too, the
+  drag is *followed from the window* (`pointermove`, `pointerup` and `pointercancel`,
+  in the capture phase, for the pen that took hold) and the capture is only a
+  convenience. The drag is applied once per animation frame from the latest pen report
+  rather than on each of the four or so a frame. **The page is a wall for a stretch:**
+  the preview canvas is only as big as the page, so strokes stretched past its edge
+  were cut off on screen while the box went on growing, and a stretch that reached the
+  edge looked stuck there. `scaleFromHandle` takes the page as a limit and stops the
+  factor where the far side meets it (never below 1, so a selection already past an
+  edge is not forced to shrink to get back in);
 - **quick actions**: Duplicate (offset copies become the new selection),
   six colour swatches plus a colour picker, a width slider that previews
   live and commits on release, Delete, Deselect; Delete / Backspace and
@@ -1938,6 +1962,20 @@ about half a millisecond, so the cost is in the GPU after the JavaScript returns
 whether the fullscreen blink and the pointer that lags the pen there are the same
 thing is not established. Neither could be reproduced without the tablet.
 
+A later report narrowed it: in fullscreen the **pen** was fine — hovering, writing,
+long scribbles — while the **mouse and touchpad** lagged in all three, worst on the
+scribbles. The pointer image is the system's own and the app does no work on a mouse
+hover (its idle and hover layout, style and script counts are zero), so this is not
+JavaScript. What fits is Windows presenting a window that covers the whole monitor
+directly rather than compositing it: the pen's cursor is drawn by Windows Ink and is
+unaffected, but the mouse pointer, in that mode, can end up drawn into the frame at
+the *application's* frame rate — smooth while the app holds 60 fps and visibly late as
+soon as it drops, which a long stroke makes it do. That is an inference from the
+pattern, not something that could be measured here. It is met from two sides. The app
+no longer takes the native fullscreen by default (see **Fullscreen styles** in the
+desktop shell section), and a mouse stroke costs what a pen stroke does
+(`MIN_SAMPLE_SPACING`, in *How it works*).
+
 ## How it works
 
 **Two stacked canvases.** `committed` holds finished strokes and is only
@@ -1995,6 +2033,18 @@ finger stroke is in progress discards that stroke. Pressure is clamped to
 while touching, temporarily selects the stroke eraser. `getCoalescedEvents()`
 recovers the full 240 Hz sample stream, and pointer capture keeps strokes
 alive past the element edge.
+
+**Samples are thinned as they arrive** (`StrokeBuilder.add`, `MIN_SAMPLE_SPACING` =
+0.4 page units). A mouse reports up to a thousand times a second and a touchpad a few
+hundred, and a slow hand — or a resting cursor — piles up samples a fraction of a pixel
+apart. They add nothing a screen can show (a device pixel is half a page unit at twice
+the scale), but each is a vertex in an outline that is derived and filled again on every
+frame, so a long scribble made with a mouse cost several times what the same scribble
+made with a pen did and got dearer with every sample; it also made the saved file and
+each autosave bigger. A sample within the spacing of the last one kept is held back, and
+the newest held one is put on the end when the stroke is built, so the stroke finishes
+exactly where the pointer did. Fast strokes are untouched — their samples are already
+further apart than that — and so are dots.
 
 **Strokes.** `Stroke` is a union of `FreehandStroke` (raw samples) and
 `GeometricStroke` (a `Shape`: line, polyline, polygon, rectangle, ellipse,

@@ -4,6 +4,8 @@
  */
 import { downloadBytes, safeFilename } from '../pdf/download';
 import type { Document } from '../document/types';
+import type { FullscreenStyle } from '../preferences/types';
+import { borderlessFrame } from './borderless';
 import { NOTEX_EXTENSION, NOTEX_MIME, encodeNotex, parseNotex, type ParsedNotex } from './notex';
 import { isTauri, tauriDialog, tauriInvoke, tauriWindow } from './tauri';
 
@@ -252,13 +254,71 @@ export async function setWindowTitle(title: string): Promise<void> {
   }
 }
 
-/** Toggle fullscreen; resolves the new state, or `null` when unsupported. */
-export async function toggleFullscreen(): Promise<boolean | null> {
+/** What to put back when leaving the borderless window. */
+interface BorderlessRestore {
+  readonly wasMaximized: boolean;
+  readonly position: { readonly x: number; readonly y: number };
+  readonly size: { readonly width: number; readonly height: number };
+}
+
+let borderless: BorderlessRestore | null = null;
+
+async function enterBorderless(win: Awaited<ReturnType<typeof tauriWindow>>): Promise<BorderlessRestore | null> {
+  const { currentMonitor } = await import('@tauri-apps/api/window');
+  const monitor = await currentMonitor();
+  const frame = monitor ? borderlessFrame(monitor) : null;
+  if (!frame) return null;
+  const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
+  const [wasMaximized, position, size] = await Promise.all([win.isMaximized(), win.outerPosition(), win.outerSize()]);
+  // A maximised window ignores being placed, so it stops being one first.
+  if (wasMaximized) await win.unmaximize();
+  await win.setDecorations(false);
+  await win.setPosition(new PhysicalPosition(frame.x, frame.y));
+  await win.setSize(new PhysicalSize(frame.width, frame.height));
+  return { wasMaximized, position: { x: position.x, y: position.y }, size: { width: size.width, height: size.height } };
+}
+
+async function leaveBorderless(win: Awaited<ReturnType<typeof tauriWindow>>, restore: BorderlessRestore): Promise<void> {
+  const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
+  await win.setDecorations(true);
+  if (restore.wasMaximized) {
+    await win.maximize();
+    return;
+  }
+  await win.setSize(new PhysicalSize(restore.size.width, restore.size.height));
+  await win.setPosition(new PhysicalPosition(restore.position.x, restore.position.y));
+}
+
+/**
+ * Toggle fullscreen; resolves the new state, or `null` when unsupported.
+ *
+ * On the desktop the `style` decides how: `window` takes the title bar off and fills the
+ * work area (see `borderless.ts`), `screen` is the platform's fullscreen. Whichever is
+ * on is the one that is turned off, whatever the setting says by then.
+ */
+export async function toggleFullscreen(style: FullscreenStyle = 'window'): Promise<boolean | null> {
   if (isTauri()) {
     const win = await tauriWindow();
-    const next = !(await win.isFullscreen());
-    await win.setFullscreen(next);
-    return next;
+    if (borderless) {
+      const restore = borderless;
+      borderless = null;
+      await leaveBorderless(win, restore);
+      return false;
+    }
+    if (await win.isFullscreen()) {
+      await win.setFullscreen(false);
+      return false;
+    }
+    if (style === 'window') {
+      const restore = await enterBorderless(win);
+      if (restore) {
+        borderless = restore;
+        return true;
+      }
+      // A monitor that tells us nothing about itself: the platform's fullscreen it is.
+    }
+    await win.setFullscreen(true);
+    return true;
   }
   if (typeof document === 'undefined' || !document.fullscreenEnabled) return null;
   if (document.fullscreenElement) {

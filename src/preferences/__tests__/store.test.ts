@@ -6,6 +6,7 @@ import {
   isHexColor,
   normalize,
   normalizeDock,
+  normalizeFullscreenStyle,
   normalizeOrder,
   normalizeStylus,
   normalizeSwatches,
@@ -222,6 +223,29 @@ describe('pinning the toolbar', () => {
     usePreferencesStore.getState().setPalettePinned(false);
     usePreferencesStore.getState().resetPreferences();
     expect(usePreferencesStore.getState().palettePinned).toBe(true);
+  });
+});
+
+describe('the fullscreen style', () => {
+  it('starts as the borderless window, which behaves like a maximised one', () => {
+    expect(DEFAULT_PREFERENCES.fullscreenStyle).toBe('window');
+    expect(usePreferencesStore.getState().fullscreenStyle).toBe('window');
+  });
+
+  it('remembers the platform fullscreen if that is chosen', () => {
+    usePreferencesStore.getState().setFullscreenStyle('screen');
+    expect(usePreferencesStore.getState().fullscreenStyle).toBe('screen');
+  });
+
+  it('accepts the two styles and nothing else', () => {
+    for (const style of ['window', 'screen']) expect(normalizeFullscreenStyle(style)).toBe(style);
+    for (const junk of ['exclusive', '', null, 3, undefined, ['screen']]) expect(normalizeFullscreenStyle(junk)).toBe('window');
+  });
+
+  it('is back to the borderless window after a reset', () => {
+    usePreferencesStore.getState().setFullscreenStyle('screen');
+    usePreferencesStore.getState().resetPreferences();
+    expect(usePreferencesStore.getState().fullscreenStyle).toBe('window');
   });
 });
 

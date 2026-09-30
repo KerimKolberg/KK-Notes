@@ -62,6 +62,9 @@ type Draft =
   | { readonly kind: 'size'; readonly size: number }
   | { readonly kind: 'curve'; readonly edit: CurveEdit };
 
+/** What a drag needs from a pointer event: React's and the window's both have it. */
+type PointerLike = Pick<PointerEvent, 'pointerId' | 'clientX' | 'clientY' | 'shiftKey'>;
+
 interface Drag {
   readonly mode: 'move' | 'scale';
   readonly handle?: ScaleHandle;
@@ -201,16 +204,26 @@ export const SelectionLayer = memo(function SelectionLayer({
     if (selected.length === 0) clearLassoSelection();
   }, [selected.length, clearLassoSelection]);
 
+  // The drag listens on the window while it lasts (see `begin`); this drops those
+  // listeners, whichever way the drag ends.
+  const stopListeningRef = useRef<(() => void) | null>(null);
+  const stopListening = useCallback(() => {
+    stopListeningRef.current?.();
+    stopListeningRef.current = null;
+  }, []);
+  useEffect(() => stopListening, [stopListening]);
+
   // A two-finger gesture cancels whatever drag is in flight.
   useEffect(
     () =>
       subscribeTouchGesture((active) => {
         if (!active) return;
         dragRef.current = null;
+        stopListening();
         setDragging(false);
         setDraft(null);
       }),
-    [setDraft],
+    [setDraft, stopListening],
   );
 
   /**
@@ -265,6 +278,7 @@ export const SelectionLayer = memo(function SelectionLayer({
     (e: ReactPointerEvent<HTMLElement>, mode: Drag['mode'], handle?: ScaleHandle) => {
       if (e.button !== 0 || !bounds) return;
       e.preventDefault();
+      stopListening();
       const at = pagePoint(e.clientX, e.clientY);
       const anchor = handle ? boundsHandlePoint(bounds, handle) : null;
       latestMoveRef.current = null;
@@ -281,8 +295,30 @@ export const SelectionLayer = memo(function SelectionLayer({
       } catch {
         /* synthetic pointer */
       }
+      // The drag is followed from the window, not from the element the pen landed on.
+      // Capture is meant to make that the same thing, and it is, until something takes
+      // the capture away — the element being replaced or hidden, the platform
+      // cancelling it — and then a stretch pulled outwards (which leaves the old box
+      // at once, so nothing under the pen has a handler) simply stops following the
+      // pen. Listening on the window cannot be taken away.
+      const pointerId = e.pointerId;
+      const move = (ev: PointerEvent): void => onDragMoveRef.current(ev);
+      const up = (ev: PointerEvent): void => {
+        if (ev.pointerId === pointerId) onDragEndRef.current(ev, true);
+      };
+      const cancel = (ev: PointerEvent): void => {
+        if (ev.pointerId === pointerId) onDragEndRef.current(ev, false);
+      };
+      window.addEventListener('pointermove', move, true);
+      window.addEventListener('pointerup', up, true);
+      window.addEventListener('pointercancel', cancel, true);
+      stopListeningRef.current = () => {
+        window.removeEventListener('pointermove', move, true);
+        window.removeEventListener('pointerup', up, true);
+        window.removeEventListener('pointercancel', cancel, true);
+      };
     },
-    [bounds, pagePoint],
+    [bounds, pagePoint, stopListening],
   );
 
   /**
@@ -291,6 +327,10 @@ export const SelectionLayer = memo(function SelectionLayer({
    * preview — three or four times over for a frame that shows only the last. The
    * latest report is kept and the work done once, on the next animation frame.
    */
+  const pageRect = useMemo<BBox>(
+    () => ({ minX: 0, minY: 0, maxX: page.dimensions.width, maxY: page.dimensions.height }),
+    [page.dimensions.width, page.dimensions.height],
+  );
   const latestMoveRef = useRef<{ clientX: number; clientY: number; shiftKey: boolean } | null>(null);
   const frameRef = useRef<number | null>(null);
   const applyMove = useCallback(() => {
@@ -306,9 +346,15 @@ export const SelectionLayer = memo(function SelectionLayer({
       const at = pagePoint(move.clientX, move.clientY);
       // Where the handle's own point is being taken to, not where the pen is.
       const target = drag.grab ? { x: at.x - drag.grab.x, y: at.y - drag.grab.y } : at;
-      setDraft({ kind: 'transform', transform: scaleFromHandle(drag.bounds, drag.handle, target, move.shiftKey) });
+      // The page is a wall: the preview canvas is only as big as the page, so strokes
+      // stretched past its edge were cut off on screen while the box went on growing,
+      // and the stretch looked stuck at the edge. Stopped there, the box and the ink agree.
+      setDraft({
+        kind: 'transform',
+        transform: scaleFromHandle(drag.bounds, drag.handle, target, move.shiftKey, 8, pageRect),
+      });
     }
-  }, [zoom, pagePoint, setDraft]);
+  }, [zoom, pagePoint, setDraft, pageRect]);
   useEffect(
     () => () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
@@ -317,7 +363,7 @@ export const SelectionLayer = memo(function SelectionLayer({
   );
 
   const onDragMove = useCallback(
-    (e: ReactPointerEvent<HTMLElement>) => {
+    (e: PointerLike) => {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== e.pointerId) return;
       // Only a press that actually moves counts as a drag: a tap on the box
@@ -330,9 +376,10 @@ export const SelectionLayer = memo(function SelectionLayer({
   );
 
   const onDragEnd = useCallback(
-    (e: ReactPointerEvent<HTMLElement>, commit: boolean) => {
+    (e: PointerLike, commit: boolean) => {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== e.pointerId) return;
+      stopListening();
       // A move still waiting for its frame is the last thing the pen did: apply it now.
       if (frameRef.current !== null) {
         cancelAnimationFrame(frameRef.current);
@@ -362,8 +409,14 @@ export const SelectionLayer = memo(function SelectionLayer({
       }
       transformSelection(page.id, strokeIds, current.transform);
     },
-    [page.id, strokeIds, zoom, transformSelection, moveSelectionToPage, setDraft, applyMove],
+    [page.id, strokeIds, zoom, transformSelection, moveSelectionToPage, setDraft, applyMove, stopListening],
   );
+  // The window listeners are made once, at the start of a drag; they call through
+  // these so they always reach the current handlers.
+  const onDragMoveRef = useRef(onDragMove);
+  onDragMoveRef.current = onDragMove;
+  const onDragEndRef = useRef(onDragEnd);
+  onDragEndRef.current = onDragEnd;
 
   // Width slider: preview while dragging, one undo step on release.
   const [sizeValue, setSizeValue] = useState(() => dominantSize(selected));
@@ -442,14 +495,6 @@ export const SelectionLayer = memo(function SelectionLayer({
     x: h.includes('w') ? box.left : h.includes('e') ? box.left + box.width : box.left + box.width / 2,
     y: h.includes('n') ? box.top : h.includes('s') ? box.top + box.height : box.top + box.height / 2,
   });
-  const dragHandlers = {
-    onPointerMove: onDragMove,
-    onPointerUp: (e: ReactPointerEvent<HTMLElement>) => onDragEnd(e, true),
-    onPointerCancel: (e: ReactPointerEvent<HTMLElement>) => onDragEnd(e, false),
-    // If the capture is taken away for any reason the drag ends where it is instead
-    // of hanging: no pointerup will follow, because nothing is listening for it.
-    onLostPointerCapture: (e: ReactPointerEvent<HTMLElement>) => onDragEnd(e, true),
-  };
   // The hit area, transparent, with the drawn square inside it.
   const handleStyle = (h: ScaleHandle): CSSProperties => {
     const p = handlePoint(h);
@@ -535,7 +580,6 @@ export const SelectionLayer = memo(function SelectionLayer({
             pointerEvents: 'auto',
           }}
           onPointerDown={(e) => begin(e, 'move')}
-          {...dragHandlers}
           onContextMenu={(e) => e.preventDefault()}
         />
         {usableHandles(bounds, zoom).map((h) => (
@@ -545,8 +589,7 @@ export const SelectionLayer = memo(function SelectionLayer({
             data-selection-handle={h}
             style={handleStyle(h)}
             onPointerDown={(e) => begin(e, 'scale', h)}
-            {...dragHandlers}
-          >
+            >
             <div style={handleMark} />
           </div>
         ))}

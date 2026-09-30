@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useDesktopStore } from '../desktop/desktopStore';
+import { usePreferencesStore } from '../preferences/store';
 import {
   EMPTY_SNAPSHOT,
   resetProfiler,
@@ -53,6 +54,8 @@ function Line({ label, value, tone = '' }: { label: string; value: string; tone?
 export function DebugOverlay({ enabled }: DebugOverlayProps) {
   const [stats, setStats] = useState<ProfilerSnapshot>(EMPTY_SNAPSHOT);
   const fullscreen = useDesktopStore((s) => s.fullscreen);
+  const isDesktop = useDesktopStore((s) => s.isDesktop);
+  const fullscreenStyle = usePreferencesStore((s) => s.fullscreenStyle);
 
   useEffect(() => {
     setProfilingEnabled(enabled);
@@ -75,7 +78,8 @@ export function DebugOverlay({ enabled }: DebugOverlayProps) {
   // leave running behind a diagnostic.
   const dpr = Number(window.devicePixelRatio.toFixed(2));
   const view = `${window.innerWidth}×${window.innerHeight} @${dpr}×`;
-  const windowMode = fullscreen || document.fullscreenElement !== null ? 'fullscreen' : 'windowed';
+  const windowMode =
+    fullscreen || document.fullscreenElement !== null ? (fullscreenStyle === 'window' && isDesktop ? 'borderless' : 'fullscreen') : 'windowed';
 
   return (
     <div

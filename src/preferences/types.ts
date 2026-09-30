@@ -78,8 +78,19 @@ export type PaletteDock = 'bottom' | 'top' | 'left' | 'right' | 'free';
 
 export const PALETTE_DOCKS: readonly PaletteDock[] = ['bottom', 'top', 'left', 'right', 'free'];
 
+/**
+ * What F11 does on the desktop. `window` takes the title bar off and fills the space a
+ * maximised window would (the taskbar stays); `screen` is the platform's own fullscreen,
+ * covering the monitor. See `desktop/borderless.ts` for why there are two.
+ */
+export type FullscreenStyle = 'window' | 'screen';
+
+export const FULLSCREEN_STYLES: readonly FullscreenStyle[] = ['window', 'screen'];
+
 export interface Preferences {
   readonly paletteOrder: readonly PaletteSlot[];
+  /** How the desktop app goes fullscreen. */
+  readonly fullscreenStyle: FullscreenStyle;
   /** Where the toolbar is docked. */
   readonly paletteDock: PaletteDock;
   /**

@@ -554,7 +554,14 @@ export function usableHandles(bounds: BBox, zoom: number, thinBelow = 18): reado
  * box that is thin one way it lets the thin axis decide: a pen drifting two pixels
  * sideways while pulling a line out was a several-fold change in size.
  */
-export function scaleFromHandle(bounds: BBox, handle: ScaleHandle, pointer: Point, free: boolean, minSize = 8): StrokeTransform {
+export function scaleFromHandle(
+  bounds: BBox,
+  handle: ScaleHandle,
+  pointer: Point,
+  free: boolean,
+  minSize = 8,
+  limit?: BBox,
+): StrokeTransform {
   const origin = scaleAnchor(bounds, handle);
   const axes = handleAxes(handle);
   const width = bounds.maxX - bounds.minX;
@@ -573,5 +580,28 @@ export function scaleFromHandle(bounds: BBox, handle: ScaleHandle, pointer: Poin
     sx = uniform;
     sy = uniform;
   }
+  if (limit) {
+    // The most each axis can grow before the selection meets the wall, from the fixed side.
+    const maxX = axes.x && width > 0 ? maxScaleWithin(origin.x, width, signX, limit.minX, limit.maxX) : Number.POSITIVE_INFINITY;
+    const maxY = axes.y && height > 0 ? maxScaleWithin(origin.y, height, signY, limit.minY, limit.maxY) : Number.POSITIVE_INFINITY;
+    if (!free && axes.x && axes.y) {
+      const wall = Math.min(maxX, maxY);
+      sx = Math.min(sx, wall);
+      sy = Math.min(sy, wall);
+    } else {
+      sx = Math.min(sx, maxX);
+      sy = Math.min(sy, maxY);
+    }
+  }
   return { kind: 'scale', origin, sx, sy };
+}
+
+/**
+ * The biggest factor a selection can be scaled by, about the fixed side `origin`, before
+ * its far side passes the wall — never less than 1, so a selection that is already past
+ * a wall is not forced to shrink to get back in, only stopped from growing further.
+ */
+function maxScaleWithin(origin: number, extent: number, sign: 1 | -1, low: number, high: number): number {
+  const room = sign === 1 ? high - origin : origin - low;
+  return Math.max(1, room / extent);
 }

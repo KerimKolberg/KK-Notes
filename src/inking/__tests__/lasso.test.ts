@@ -454,6 +454,52 @@ describe('selection-box geometry', () => {
     expect(scaleFromHandle(bounds, 'n', { x: 60, y: 45 }, false)).toMatchObject({ origin: { x: 10, y: 70 }, sx: 1, sy: 0.5 });
   });
 
+  describe('against the edge of the page', () => {
+    const page = { minX: 0, minY: 0, maxX: 800, maxY: 1000 };
+    const box = { minX: 100, minY: 200, maxX: 300, maxY: 260 }; // 200 x 60
+
+    it('stops an east stretch where the selection meets the right edge', () => {
+      // Anchored on its left side at x = 100, 700 px of room for 200 px: 3.5x at the most.
+      const t = scaleFromHandle(box, 'e', { x: 5000, y: 230 }, false, 8, page);
+      expect(t).toMatchObject({ sx: 3.5, sy: 1 });
+    });
+
+    it('stops a west stretch at the left edge', () => {
+      const t = scaleFromHandle(box, 'w', { x: -5000, y: 230 }, false, 8, page);
+      // Anchored at x = 300: 300 px of room for 200 px.
+      expect(t).toMatchObject({ sx: 1.5, sy: 1 });
+    });
+
+    it('stops a south and a north stretch at the page\'s top and bottom', () => {
+      expect(scaleFromHandle(box, 's', { x: 200, y: 9999 }, false, 8, page)).toMatchObject({ sx: 1, sy: (1000 - 200) / 60 });
+      expect(scaleFromHandle(box, 'n', { x: 200, y: -9999 }, false, 8, page)).toMatchObject({ sx: 1, sy: 260 / 60 });
+    });
+
+    it('holds a uniform corner to whichever wall comes first', () => {
+      const t = scaleFromHandle(box, 'se', { x: 9999, y: 9999 }, false, 8, page);
+      // Right: 700/200 = 3.5. Bottom: 800/60 = 13.3. The right edge is nearer.
+      expect(t).toMatchObject({ sx: 3.5, sy: 3.5 });
+    });
+
+    it('lets a free corner meet each wall on its own', () => {
+      const t = scaleFromHandle(box, 'se', { x: 9999, y: 9999 }, true, 8, page);
+      expect(t).toMatchObject({ sx: 3.5 });
+      if (t.kind === 'scale') expect(t.sy).toBeCloseTo(800 / 60, 10);
+    });
+
+    it('does not touch a stretch that stays on the page', () => {
+      expect(scaleFromHandle(box, 'e', { x: 500, y: 230 }, false, 8, page)).toMatchObject({ sx: 2 });
+    });
+
+    it('does not force a selection already past the wall to shrink', () => {
+      const past = { minX: 700, minY: 0, maxX: 900, maxY: 60 };
+      const t = scaleFromHandle(past, 'e', { x: 950, y: 30 }, false, 8, page);
+      expect(t).toMatchObject({ sx: 1 });
+      // ... and shrinking still works.
+      expect(scaleFromHandle(past, 'e', { x: 800, y: 30 }, false, 8, page)).toMatchObject({ sx: 0.5 });
+    });
+  });
+
   it('never collapses an edge-scaled selection to nothing', () => {
     const squashed = scaleFromHandle(bounds, 'e', { x: -500, y: 45 }, false, 8);
     expect(squashed).toMatchObject({ sx: 0.08, sy: 1 });

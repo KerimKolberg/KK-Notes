@@ -25,6 +25,19 @@ export function freehandBBox(points: readonly Point[], style: StrokeStyle): BBox
 }
 
 /**
+ * Samples closer than this to the last one kept are not kept, in page units.
+ *
+ * A mouse reports up to a thousand times a second and a touchpad a few hundred, and a
+ * hand moving slowly (or a cursor resting) piles up samples a fraction of a pixel
+ * apart. They add nothing a screen can show — a device pixel is half a page unit at
+ * twice the scale — but each is a vertex in an outline that is derived and filled
+ * again on every frame, so a long scribble made with a mouse cost several times what
+ * the same scribble made with a pen did, and got dearer with every sample. Fast
+ * strokes are untouched: their samples are already further apart than this.
+ */
+export const MIN_SAMPLE_SPACING = 0.4;
+
+/**
  * Accumulates samples for the freehand stroke currently being drawn and
  * tracks its bounding box incrementally, so `build()` is O(1) apart from
  * freezing. Ephemeral tools (the laser pointer) never use it — nothing they
@@ -52,6 +65,8 @@ export class StrokeBuilder {
   private minY = Number.POSITIVE_INFINITY;
   private maxX = Number.NEGATIVE_INFINITY;
   private maxY = Number.NEGATIVE_INFINITY;
+  /** The newest sample that was too close to the last one kept; the stroke still ends on it. */
+  private held: InkPoint | null = null;
 
   constructor(
     readonly tool: PersistentFreehandTool,
@@ -67,10 +82,26 @@ export class StrokeBuilder {
     return this.samples[this.samples.length - 1];
   }
 
-  /** Append a sample; consecutive duplicates (same position) are dropped. */
+  /**
+   * Append a sample; one within `MIN_SAMPLE_SPACING` of the last kept is held back
+   * instead (which also drops exact duplicates). The held sample is put on the end
+   * when the stroke is built, so the stroke finishes exactly where the pen did.
+   */
   add(point: InkPoint): void {
     const prev = this.last;
-    if (prev && prev.x === point.x && prev.y === point.y) return;
+    if (prev) {
+      const dx = point.x - prev.x;
+      const dy = point.y - prev.y;
+      if (dx * dx + dy * dy < MIN_SAMPLE_SPACING * MIN_SAMPLE_SPACING) {
+        if (dx !== 0 || dy !== 0) this.held = point;
+        return;
+      }
+    }
+    this.held = null;
+    this.keep(point);
+  }
+
+  private keep(point: InkPoint): void {
     this.samples.push(point);
     if (point.x < this.minX) this.minX = point.x;
     if (point.y < this.minY) this.minY = point.y;
@@ -88,6 +119,12 @@ export class StrokeBuilder {
    * geometry without any of them re-deriving it.
    */
   build(): FreehandStroke {
+    // The pen's last position, if the last few samples were held back as too close.
+    if (this.held) {
+      const held = this.held;
+      this.held = null;
+      this.keep(held);
+    }
     const points = straightenTape(this.samples, this.style);
     const pad = freehandPadding(this.style);
     // Straightening drops points, so the bounds have to come from what is

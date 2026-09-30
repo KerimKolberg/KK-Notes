@@ -1195,6 +1195,17 @@ async function checkLasso(browser) {
   check('the handle stays on the page for the length of the drag', during.length === 2, `${during.length} handles`);
   check('its height is left alone by an edge handle', Math.abs(after.h - before.h) < 4, `${Math.round(before.h)} -> ${Math.round(after.h)}`);
 
+  // Pulled on past the edge of the page it stops there: the ink is cut off at the page
+  // edge on screen, and a box that kept growing beyond it read as the stretch being stuck.
+  const wall = await page.$eval('[data-page-index="0"]', (el) => el.getBoundingClientRect().right);
+  const nowBox = await box();
+  const farStart = { x: nowBox.x + nowBox.w + 4, y: nowBox.y + nowBox.h / 2 + 4 };
+  const farPull = Array.from({ length: 14 }, (_, i) => [farStart.x + i * 90, farStart.y]);
+  await page.evaluate(([pts]) => window.__pen.drag('[data-selection-handle="e"]', pts), [farPull]);
+  const stopped = await box();
+  check('pulled on past the edge of the page, the stretch stops at it', stopped.x + stopped.w <= wall + 14, `right edge ${Math.round(stopped.x + stopped.w)} against the page's ${Math.round(wall)}`);
+  check('and it did reach the edge, rather than stopping short', stopped.x + stopped.w >= wall - 40, `${Math.round(stopped.x + stopped.w)} of ${Math.round(wall)}`);
+
   // A selection with some size to it: every handle, and no lurch when it is grabbed.
   await page.keyboard.press('Escape');
   await page.waitForTimeout(100);
