@@ -30,11 +30,13 @@ const ReferencePane = lazy(() => import('./ReferencePane').then((m) => ({ defaul
 const ZoomWindow = lazy(() => import('./ZoomWindow').then((m) => ({ default: m.ZoomWindow })));
 /** The search panel, likewise, and for the same reason. */
 const VersionHistory = lazy(() => import('./VersionHistory').then((m) => ({ default: m.VersionHistory })));
+const BookmarksPanel = lazy(() => import('./BookmarksPanel').then((m) => ({ default: m.BookmarksPanel })));
 const SearchPanel = lazy(() => import('./SearchPanel').then((m) => ({ default: m.SearchPanel })));
 import { useDocumentStore } from '../store';
 import { useZoomWindowStore } from '../zoomWindow';
 import { useSearchStore } from '../../search/searchStore';
 import { useVersionsStore } from '../../desktop/versionsStore';
+import { useBookmarksStore } from '../bookmarksStore';
 import { useToolStore } from '../toolStore';
 import { DocumentViewer } from './DocumentViewer';
 import { PageArranger } from './PageArranger';
@@ -54,6 +56,18 @@ export function DocumentApp() {
   const zoomWindowOpen = useZoomWindowStore((s) => s.open);
   const searchOpen = useSearchStore((s) => s.open);
   const versionsOpen = useVersionsStore((s) => s.open);
+  const bookmarksOpen = useBookmarksStore((s) => s.open);
+  // The arranger is a drawer down the right-hand side, where the search and bookmark panels also sit, so
+  // each gives way to the other rather than one covering the other's controls.
+  const arrangerOpen = useDocumentStore((s) => s.arrangerOpen);
+  useEffect(() => {
+    if (!arrangerOpen) return;
+    useSearchStore.getState().close();
+    useBookmarksStore.getState().close();
+  }, [arrangerOpen]);
+  useEffect(() => {
+    if (searchOpen || bookmarksOpen) useDocumentStore.getState().setArrangerOpen(false);
+  }, [searchOpen, bookmarksOpen]);
 
   // Undo / redo live in the top bar now; the app only needs the page id for
   // the keyboard shortcuts and for clearing.
@@ -250,10 +264,21 @@ export function DocumentApp() {
       // otherwise open over the page.
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
         e.preventDefault();
+        useBookmarksStore.getState().close();
         useSearchStore.getState().show();
         return;
       }
       if (isEditableTarget(e.target)) return;
+      // Ctrl+D bookmarks the page in view, or takes its bookmark away.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        if (!useDocumentStore.getState().readOnly) {
+          const { document: doc, setPageBookmark } = useDocumentStore.getState();
+          const page = doc.pages[doc.activePageIndex];
+          if (page) setPageBookmark(page.id, page.bookmark === undefined ? '' : null);
+        }
+        return;
+      }
       // Copy, cut, paste and group, for a selection. Copying is allowed on a locked note
       // (it changes nothing), and the rest are not.
       if ((e.ctrlKey || e.metaKey) && !e.altKey) {
@@ -330,6 +355,11 @@ export function DocumentApp() {
           {searchOpen && (
             <Suspense fallback={null}>
               <SearchPanel />
+            </Suspense>
+          )}
+          {bookmarksOpen && (
+            <Suspense fallback={null}>
+              <BookmarksPanel />
             </Suspense>
           )}
           {versionsOpen && (

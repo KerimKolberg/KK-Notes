@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, ChevronRight, Cloud, FolderOpen, FolderPlus, Grid2x2, House, List, Plus, Search, ShieldCheck, X } from 'lucide-react';
+import { ArrowUp, ChevronRight, Cloud, FolderOpen, FolderPlus, Grid2x2, House, List, Plus, Search, ShieldCheck, Star, X } from 'lucide-react';
 import { openDocumentFromLibrary } from './openDocument';
 import { CloudSyncPanel } from './CloudSyncPanel';
 import { ConflictDialog } from './ConflictDialog';
 import { DocumentCard } from './DocumentCard';
 import { LibrarySearchResults } from './LibrarySearchResults';
 import { SecurityPanel } from './SecurityPanel';
+import { TagsDialog } from './TagsDialog';
+import { useAllNotes } from './useAllNotes';
+import { ALL_NOTES, favouriteCount, matchesFilter, tagCounts, useNoteMetaStore, type LibraryFilter } from './noteMeta';
+import { sortEntries } from './sorting';
 import { useLockStore } from '../lock/lockStore';
 import { useLibrarySearch } from './useLibrarySearch';
 import { revealText } from '../search/reveal';
@@ -97,6 +101,9 @@ export function LibraryView() {
   const setNotice = useDesktopStore((s) => s.setNotice);
   const generation = useRef(0);
   const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<LibraryFilter>(ALL_NOTES);
+  const [tagging, setTagging] = useState<{ path: string; name: string } | null>(null);
+  const meta = useNoteMetaStore((s) => s.map);
   /**
    * Whether a file is being dragged over the library.
    *
@@ -198,7 +205,10 @@ export function LibraryView() {
   const remove = useCallback(
     (path: string, name: string) => {
       if (!window.confirm(`Delete “${name}”? This cannot be undone.`)) return;
-      void guard(() => deleteEntry(path));
+      void guard(async () => {
+        await deleteEntry(path);
+        useNoteMetaStore.getState().removed(path);
+      });
     },
     [guard],
   );
@@ -311,6 +321,24 @@ export function LibraryView() {
   const entries = listing?.entries ?? [];
   const searching = query.trim().length > 0;
   const search = useLibrarySearch(query, listing);
+
+  // Favourites and tags are views across the whole library, not the folder you are standing in.
+  const tags = useMemo(() => tagCounts(meta), [meta]);
+  const favourites = useMemo(() => favouriteCount(meta), [meta]);
+  const filtering = filter.kind !== 'all' && !searching;
+  const everyNote = useAllNotes(filtering, listing);
+  const shown = useMemo(
+    () =>
+      filtering
+        ? sortEntries((everyNote ?? []).filter((e) => matchesFilter(meta[e.path], filter)), sort.key, sort.order)
+        : entries,
+    [filtering, everyNote, meta, filter, sort, entries],
+  );
+  // A tag that no note carries any more is not a view to be stuck in.
+  useEffect(() => {
+    if (filter.kind === 'tag' && !tags.some((t) => t.tag.toLowerCase() === filter.tag.toLowerCase())) setFilter(ALL_NOTES);
+    if (filter.kind === 'favourites' && favourites === 0) setFilter(ALL_NOTES);
+  }, [filter, tags, favourites]);
 
   /** A note picked from the search results, opened at the place the words were found. */
   const openFound = useCallback(
@@ -549,12 +577,54 @@ export function LibraryView() {
         </div>
       )}
 
+      {!searching && (favourites > 0 || tags.length > 0) && (
+        <div
+          className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-zinc-200 bg-white px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-900"
+          role="group"
+          aria-label="Show"
+          data-library-filters
+        >
+          {(
+            [
+              { id: 'all', label: 'All notes', filter: ALL_NOTES, icon: false },
+              ...(favourites > 0 ? [{ id: 'fav', label: `Favourites · ${favourites}`, filter: { kind: 'favourites' } as LibraryFilter, icon: true }] : []),
+              ...tags.map((t) => ({ id: `tag:${t.tag}`, label: `${t.tag} · ${t.count}`, filter: { kind: 'tag', tag: t.tag } as LibraryFilter, icon: false })),
+            ]
+          ).map((chip) => {
+            const active =
+              chip.filter.kind === filter.kind &&
+              (chip.filter.kind !== 'tag' || (filter.kind === 'tag' && filter.tag.toLowerCase() === chip.filter.tag.toLowerCase()));
+            return (
+              <button
+                key={chip.id}
+                type="button"
+                aria-pressed={active}
+                data-library-filter={chip.id}
+                onClick={() => setFilter(chip.filter)}
+                className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${
+                  active ? 'bg-blue-600 text-white' : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700'
+                }`}
+              >
+                {chip.icon && <Star size={11} fill="currentColor" aria-hidden="true" />}
+                {chip.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-auto p-3" style={{ paddingBottom: 'calc(0.75rem + var(--safe-bottom))' }}>
         {searching ? (
           <LibrarySearchResults search={search} query={query} onOpen={openFound} />
-        ) : entries.length === 0 ? (
+        ) : shown.length === 0 ? (
           <p className="py-16 text-center text-sm text-zinc-500 dark:text-zinc-400" data-library-empty>
-            {listing === null ? 'Opening your library…' : 'Nothing here yet. Start a new note.'}
+            {filtering
+              ? everyNote === null
+                ? 'Looking through your notes…'
+                : 'No notes here yet.'
+              : listing === null
+                ? 'Opening your library…'
+                : 'Nothing here yet. Start a new note.'}
           </p>
         ) : (
           <ul
@@ -563,9 +633,9 @@ export function LibraryView() {
                 ? 'grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-3'
                 : 'flex flex-col divide-y divide-zinc-200 dark:divide-zinc-800'
             }
-            data-library-entries={entries.length}
+            data-library-entries={shown.length}
           >
-            {entries.map((entry) => (
+            {shown.map((entry) => (
               <DocumentCard
                 key={entry.path}
                 entry={entry}
@@ -576,18 +646,31 @@ export function LibraryView() {
                   remove(entry.path, entry.name);
                 }}
                 {...(entry.isFolder
-                  ? { onDropEntry: (from: string) => void guard(() => moveEntry(from, entry.path)) }
-                  : {})}
+                  ? {
+                      onDropEntry: (from: string) =>
+                        void guard(async () => {
+                          const to = await moveEntry(from, entry.path);
+                          useNoteMetaStore.getState().moved(from, to);
+                        }),
+                    }
+                  : {
+                      favourite: meta[entry.path]?.favourite === true,
+                      tags: meta[entry.path]?.tags ?? [],
+                      onToggleFavourite: () => useNoteMetaStore.getState().toggleFavourite(entry.path),
+                      onEditTags: () => setTagging({ path: entry.path, name: entry.name }),
+                    })}
               />
             ))}
           </ul>
         )}
-        {!searching && entries.length > 0 && (
+        {!searching && shown.length > 0 && !filtering && (
           <p className="pt-4 text-center text-xs text-zinc-400 dark:text-zinc-500">
-            Drag a note onto a folder to file it. Right-click to delete.
+            Drag a note onto a folder to file it. Right-click to delete. The star and the tag on a note are for finding it again.
           </p>
         )}
       </div>
+
+      {tagging && <TagsDialog path={tagging.path} name={tagging.name} onClose={() => setTagging(null)} />}
 
       {showConflicts && status.conflicts.length > 0 && (
         <ConflictDialog conflicts={status.conflicts} onResolve={onResolve} onClose={() => setShowConflicts(false)} />

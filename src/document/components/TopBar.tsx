@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
+  Bookmark,
+  BookmarkCheck,
   ChevronLeft,
   ChevronRight,
   Columns3,
@@ -22,6 +24,7 @@ import {
 import { useRouteStore } from '../../library/routeStore';
 import { useDesktopStore } from '../../desktop/desktopStore';
 import { useSearchStore } from '../../search/searchStore';
+import { useBookmarksStore } from '../bookmarksStore';
 import { actionExportPdf } from '../../desktop/fileActions';
 import { FileMenu } from '../../desktop/FileMenu';
 import { IconButton } from '../../ui/IconButton';
@@ -51,7 +54,13 @@ const VIEW_MODES: readonly ViewModeDescriptor[] = [
 export function TopBar() {
   const backToLibrary = useRouteStore((s) => s.backToLibrary);
   const searchOpen = useSearchStore((s) => s.open);
-  const toggleSearch = useSearchStore((s) => s.toggle);
+  const toggleSearch = () => {
+    useBookmarksStore.getState().close();
+    useSearchStore.getState().toggle();
+  };
+  const bookmarksOpen = useBookmarksStore((s) => s.open);
+  const toggleBookmarks = useBookmarksStore((s) => s.toggle);
+  const pageBookmarked = useDocumentStore((s) => s.document.pages[s.document.activePageIndex]?.bookmark !== undefined);
   const { title, pageCount, activePageIndex, viewMode, zoom, arrangerOpen, exporting, readOnly, dirty, canUndo, canRedo, activePageId } =
     useDocumentStore(
       useShallow((s) => {
@@ -289,6 +298,15 @@ export function TopBar() {
           onClick={toggleSearch}
           tooltipSide="bottom"
           data-search-toggle
+        />
+        <IconButton
+          icon={pageBookmarked ? BookmarkCheck : Bookmark}
+          label="Bookmarks"
+          hint={pageBookmarked ? 'this page is bookmarked' : 'Ctrl+D'}
+          active={bookmarksOpen}
+          onClick={toggleBookmarks}
+          tooltipSide="bottom"
+          data-bookmarks-toggle
         />
         <IconButton
           icon={readOnly ? Lock : LockOpen}

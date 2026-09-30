@@ -187,6 +187,16 @@ export const PageFrame = memo(function PageFrame({
       ) : (
         <PageSnapshot page={page} cssWidth={layout.width} cssHeight={layout.height} />
       )}
+      {page.bookmark !== undefined && (
+        // A marker in the corner, seen and never touched: it must not take a pen stroke that starts near it.
+        <span
+          aria-hidden="true"
+          data-bookmark-ribbon
+          title={page.bookmark || `Bookmarked`}
+          className="pointer-events-none absolute right-4 top-0 z-[34] h-7 w-4 bg-blue-600/90 shadow-sm"
+          style={{ clipPath: 'polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%)' }}
+        />
+      )}
       {showPaste && (
         <button
           type="button"

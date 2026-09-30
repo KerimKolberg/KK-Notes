@@ -29,6 +29,7 @@ import type { CurveEdit } from '../inking/engine/shapes';
 import { keepStrokes, type EraseFilter } from '../inking/engine/eraseFilter';
 import type { Stroke } from '../inking/types';
 import { TEMPLATE_DEFAULT_SPACING, ZOOM_STEP } from './constants';
+import { withBookmark } from './bookmarks';
 import { useClipboardStore } from './clipboard';
 import { clampZoom } from './layout';
 import {
@@ -121,6 +122,8 @@ export interface DocumentStore {
   movePage: (from: number, to: number) => void;
   setPageTemplate: (target: PageTarget, template: PageTemplate, config?: Partial<TemplateConfig>) => void;
   setPageBackground: (target: PageTarget, color: string) => void;
+  /** Bookmark a page with a name ('' for none), or take its bookmark away (`null`). */
+  setPageBookmark: (pageId: string, label: string | null) => void;
   /** Patch the template's line spacing / colour / weight. */
   setTemplateConfig: (target: PageTarget, patch: Partial<TemplateConfig>) => void;
   /** Add, replace or (with `null`) remove the notebook cover. */
@@ -371,6 +374,9 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
         },
       })),
     }))),
+
+  setPageBookmark: (pageId, label) =>
+    set(edit((s) => ({ document: updatePageById(s.document, pageId, (page) => withBookmark(page, label)) }))),
 
   setPageBackground: (target, color) =>
     set(edit((s) => ({ document: updateTargets(s.document, target, (page) => ({ ...page, backgroundColor: color })) }))),

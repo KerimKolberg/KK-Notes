@@ -2164,6 +2164,174 @@ async function checkAppLock(browser) {
 }
 
 /**
+ * Bookmarks: marking the page in view, the list, naming, jumping, the ribbon on the page and on its
+ * thumbnail, Ctrl+D, and what happens to them when a note is saved and opened.
+ */
+async function checkBookmarks(browser) {
+  console.log('bookmarks, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  // Three pages, made from the arranger's own buttons.
+  await page.click('[data-arranger-toggle]');
+  await page.waitForSelector('[role="group"][aria-label="Page operations"] button');
+  const addAfter = page.locator('[role="group"][aria-label="Page operations"] button', { hasText: /after/i }).first();
+  await addAfter.click();
+  await addAfter.click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-thumbnail]').length === 3);
+  await page.click('[data-arranger-close]');
+  await page.waitForTimeout(200);
+
+  const goTo = async (n) => {
+    await page.click('[data-page-badge]');
+    await page.fill('input[aria-label="Jump to page"]', String(n));
+    await page.keyboard.press('Enter');
+    await page.waitForFunction((n) => new RegExp(`(^|\\D)${n}\\s*/\\s*3`).test(document.querySelector('[data-page-badge]')?.textContent ?? ''), n, { timeout: 5_000 });
+  };
+  await goTo(1);
+
+  check('there is no bookmark panel until asked for', (await page.$('[data-bookmarks-panel]')) === null);
+  check('and no ribbon on any page', (await page.$('[data-bookmark-ribbon]')) === null);
+  await page.click('[data-bookmarks-toggle]');
+  await page.waitForSelector('[data-bookmarks-panel]');
+  check('with none it says how to begin', (await page.$('[data-bookmarks-empty]')) !== null);
+  await page.click('[data-bookmark-toggle-here]');
+  await page.waitForSelector('[data-bookmark]');
+  check('the button bookmarks the page in view', (await page.$$('[data-bookmark]')).length === 1 && (await page.$eval('[data-bookmark]', (e) => e.getAttribute('data-bookmark'))) === '0');
+  check('the note is marked as changed', (await page.$('[data-dirty]')) !== null);
+  check('the page shows a ribbon', (await page.$('[data-bookmark-ribbon]')) !== null);
+  check('and the top bar button shows it is bookmarked', (await page.$('[data-bookmarks-toggle] svg.lucide-bookmark-check')) !== null);
+
+  // Name it.
+  await page.fill('[data-bookmark-name]', 'Start here');
+  check('it can be named', (await page.$eval('[data-bookmark-name]', (e) => e.value)) === 'Start here');
+
+  // A second, made on another page with Ctrl+D (after the panel has let go of the keys).
+  await goTo(3);
+  await page.mouse.click(40, 400);
+  await page.keyboard.press('Control+d');
+  await page.waitForFunction(() => document.querySelectorAll('[data-bookmark]').length === 2);
+  check('Ctrl+D bookmarks the page in view', (await page.$$eval('[data-bookmark]', (els) => els.map((e) => e.getAttribute('data-bookmark')))).join() === '0,2');
+  check('the list is in page order, the unnamed one reading as its page', (await page.$$eval('[data-bookmark-name]', (els) => els.map((e) => e.placeholder))).join() === 'Page 1,Page 3');
+
+  // Jump.
+  await page.click('[data-bookmark="0"] [data-bookmark-go]');
+  await page.waitForFunction(() => /(^|\D)1\s*\/\s*3/.test(document.querySelector('[data-page-badge]')?.textContent ?? ''), null, { timeout: 5_000 });
+  check('choosing a bookmark goes to its page', true);
+
+  // The thumbnails carry it. Opening the arranger puts the panel away, which shares its side of the screen.
+  await page.click('[data-arranger-toggle]');
+  await page.waitForFunction(() => document.querySelector('[data-bookmarks-panel]') === null);
+  check('opening the page arranger puts the bookmarks panel away', true);
+  await page.waitForSelector('[data-thumbnail-bookmark]');
+  check('the thumbnails of bookmarked pages carry a mark, and only those', (await page.$$('[data-thumbnail-bookmark]')).length === 2);
+  check('and a bookmark\'s name', (await page.$eval('[data-thumbnail-index="0"]', (e) => e.textContent ?? '')).includes('Start here'));
+  await page.click('[data-arranger-close]');
+
+  // Remove.
+  await page.click('[data-bookmarks-toggle]');
+  await page.waitForSelector('[data-bookmark="2"]');
+  await page.click('[data-bookmark="2"] [data-bookmark-remove]');
+  await page.waitForFunction(() => document.querySelectorAll('[data-bookmark]').length === 1);
+  check('a bookmark can be removed from the list', true);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(100);
+  check('Esc puts the panel away', (await page.$('[data-bookmarks-panel]')) === null);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
+ * Favourites and tags in the library: the star, the tag dialog, the chips, views across the library,
+ * they survive a reload, and go when a note does.
+ */
+async function checkLibraryOrganising(browser) {
+  console.log('favourites and tags, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('dialog', (d) => void d.accept());
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  for (let n = 0; n < 2; n++) {
+    await page.waitForSelector('[data-new-document]');
+    await page.click('[data-new-document]');
+    await page.waitForSelector('[data-back-to-library]', { timeout: 10_000 });
+    await page.click('[data-back-to-library]');
+    await page.waitForSelector('[data-library-view]');
+  }
+  await page.waitForFunction(() => document.querySelectorAll('[data-library-kind="document"]').length === 2);
+  const cards = page.locator('[data-library-kind="document"]');
+  const cardCount = async () => (await page.$$('[data-library-kind="document"]')).length;
+
+  check('with nothing starred or tagged there is no filter bar', (await page.$('[data-library-filters]')) === null);
+  check('but every note has a star and a tag button', (await page.$$('[data-card-favourite]')).length === 2 && (await page.$$('[data-card-tags-button]')).length === 2);
+
+  await cards.nth(0).locator('[data-card-favourite]').click();
+  await page.waitForSelector('[data-library-filters]');
+  check('starring a note does not open it', (await page.$('[data-library-view]')) !== null);
+  check('the star shows as set', (await cards.nth(0).locator('[data-card-favourite]').getAttribute('aria-pressed')) === 'true');
+  check('and the filter bar offers the favourites', (await page.$('[data-library-filter="fav"]')) !== null);
+
+  // Tags, through the dialog.
+  await cards.nth(0).locator('[data-card-tags-button]').click();
+  await page.waitForSelector('[data-tags-dialog]');
+  await page.fill('[data-tags-input]', 'school, Maths');
+  await page.click('[data-tags-save]');
+  await page.waitForSelector('[data-card-tags]');
+  check('tags appear on the card', (await cards.nth(0).locator('[data-card-tags]').textContent()).includes('school'));
+  check('and as filters, each with how many notes carry it', (await page.$('[data-library-filter="tag:school"]')) !== null && (await page.$('[data-library-filter="tag:Maths"]')) !== null);
+
+  // A tag already in use is a tap away on the other note.
+  await cards.nth(1).locator('[data-card-tags-button]').click();
+  await page.waitForSelector('[data-tag-suggestion="school"]');
+  await page.click('[data-tag-suggestion="school"]');
+  check('a tag in use is offered as a suggestion, and taking it fills it in', (await page.$eval('[data-tags-input]', (e) => e.value)) === 'school');
+  await page.click('[data-tags-save]');
+  await page.waitForFunction(() => (document.querySelector('[data-library-filter="tag:school"]')?.textContent ?? '').includes('2'));
+  check('now two notes carry it', true);
+
+  // The views.
+  await page.click('[data-library-filter="fav"]');
+  await page.waitForFunction(() => document.querySelectorAll('[data-library-kind="document"]').length === 1);
+  check('Favourites shows only the starred note', (await cardCount()) === 1);
+  await page.click('[data-library-filter="tag:school"]');
+  await page.waitForFunction(() => document.querySelectorAll('[data-library-kind="document"]').length === 2);
+  check('a tag shows the notes that have it', (await cardCount()) === 2);
+  await page.click('[data-library-filter="tag:Maths"]');
+  await page.waitForFunction(() => document.querySelectorAll('[data-library-kind="document"]').length === 1);
+  check('and only those', (await cardCount()) === 1);
+  check('the chip in use says so', (await page.getAttribute('[data-library-filter="tag:Maths"]', 'aria-pressed')) === 'true');
+  await page.click('[data-library-filter="all"]');
+  await page.waitForFunction(() => document.querySelectorAll('[data-library-kind="document"]').length === 2);
+
+  // Kept.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-library-filters]');
+  check('they are still there after a restart', (await page.$('[data-library-filter="fav"]')) !== null && (await page.$('[data-library-filter="tag:Maths"]')) !== null);
+
+  // Taking the last star away leaves the view it was in.
+  await page.click('[data-library-filter="fav"]');
+  await page.waitForFunction(() => document.querySelectorAll('[data-library-kind="document"]').length === 1);
+  await cards.nth(0).locator('[data-card-favourite]').click();
+  await page.waitForFunction(() => document.querySelector('[data-library-filter="fav"]') === null);
+  await page.waitForFunction(() => document.querySelectorAll('[data-library-kind="document"]').length === 2);
+  check('with no favourites left the view goes back to all the notes', (await cardCount()) === 2);
+
+  // Deleting a note takes its tags with it.
+  await cards.nth(0).click({ button: 'right' });
+  await page.waitForFunction(() => document.querySelectorAll('[data-library-kind="document"]').length === 1);
+  await page.waitForFunction(() => (document.querySelector('[data-library-filter="tag:school"]')?.textContent ?? '').includes('1'));
+  check('deleting a note takes its tags with it', true);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Turning a selection: the round handle above the box, and the quarter-turn buttons.
  * A flat line is the easiest thing to see turn: it ends up standing.
  */
@@ -2356,6 +2524,8 @@ try {
     checkLibrarySearch,
     checkVersionHistory,
     checkAppLock,
+    checkBookmarks,
+    checkLibraryOrganising,
     checkTextToolbar,
     checkZoomAnchor,
   ];

@@ -290,6 +290,22 @@ in-note search's own `searchSources`, so the two agree. A note is also found by 
 Handwriting is ink and cannot be searched, and the words of a PDF a note was made from are only searched
 inside that note.
 
+**Favourites and tags** (`noteMeta.ts`, `TagsDialog.tsx`). Every note card has a star and a tag button (over
+the corner of the picture in the grid, at the right in the list). A starred note, or one with tags, is
+found again through the chips under the toolbar — *All notes*, *Favourites*, and each tag with how many notes
+carry it — which switch the library to a view **across every folder** (the same walk the library search
+makes), sorted as the library is. Tags are typed separated by commas (up to eight, 24 characters each, `#`
+optional, the same tag in two spellings is one), with the tags already in use offered as suggestions. The
+chip bar appears once there is anything to show, so a library without them is not cluttered.
+
+- **Kept on this device**, in `localStorage` (`notes.library.meta.v1`) keyed by the note's path, not inside the
+  note. Putting a word in a notebook would mean rewriting (and re-syncing) the whole file, PDF and all; the cost
+  is that tags do not follow a note to another device. Moving a note or folder in the library moves its entries
+  (the path rewrite understands both `/` and Windows' `\`, and does not catch a folder whose name merely begins
+  the same), deleting one drops them; a note moved from outside leaves a harmless orphan.
+- A tag that no note carries any more, or the last favourite going, puts the view back to *All notes*
+  rather than leaving it empty.
+
 ### Version history (`notes-sync/src/history.rs`, `components/VersionHistory.tsx`)
 
 *File → Version history…* lists the earlier saves of the open note, each with when it was saved, how long
@@ -676,6 +692,20 @@ object, selects it (and switches to the select tool, which is the only one that 
 - **Cheap.** The panel reads the text objects' arrays only, which keep their identity until something on a
   page is edited, so a stroke committed every few seconds does not re-run the search. It is loaded only
   when first opened.
+
+### Bookmarks (`document/bookmarks.ts`, `components/BookmarksPanel.tsx`)
+
+The bookmark button in the top bar (or **Ctrl+D**) marks the page in view, and opens a panel listing the
+bookmarks: each reads as its page number until it is named (type in its row), jumps to its page, or is
+removed. A bookmarked page wears a small ribbon in its corner on screen (seen, never touched, so it cannot
+take a pen stroke) and on its thumbnail in the page arranger, with its name under the number.
+
+- **On the page itself** (`Page.bookmark`, the name, `''` for none), so a bookmark moves with its page when pages
+  are reordered, saves with the note and needs no separate list to keep in step. Old notes have none; saved
+  notes carry it only where set; a duplicated page is not bookmarked (two pages answering to one bookmark would
+  be a puzzle). It is not part of how a page looks, so toggling one does not repaint the page or touch its
+  undo history, and a locked note cannot be bookmarked. It is not written into an exported PDF.
+- The panel and the page arranger both sit down the right-hand side, so opening one puts the other away.
 
 ## Interface (`src/ui/`, `src/inking/palette/`)
 
@@ -2436,6 +2466,15 @@ hit-testing can answer:
   typed while locked never reach the app; the right one opens it and keys work again; Ctrl+Shift+L locks at
   once; three idle minutes do not lock a five-minute setting and six do; changing or turning it off needs the
   current passcode; turned off, the app starts open.
+- **bookmarks**: no panel or ribbon until asked for; the button bookmarks the page in view, marks the note as
+  changed, shows the ribbon and the filled icon; a bookmark can be named; Ctrl+D marks another page; the list
+  is in page order with unnamed ones reading as their page; choosing one goes to its page; the arranger's
+  thumbnails carry the mark and the name, only on bookmarked pages; opening the arranger puts the panel away;
+  a bookmark can be removed; Esc closes the panel.
+- **favourites and tags**: no filter bar until something is starred or tagged; starring does not open the
+  note; the tag dialog adds tags, which show on the card and as filter chips with counts; a tag in use is
+  offered as a suggestion; *Favourites* and each tag show just those notes across the library; all of it
+  survives a reload; the last favourite going returns to all notes; deleting a note takes its tags.
 - **a long stroke**: while the pen is down a long stroke has a tail layer that cannot take
   the pen's events, the stretch behind it is on the live canvas and the tail is only the last
   stretch, both go when the pen lifts, and the whole stroke lands on the page.

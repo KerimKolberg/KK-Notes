@@ -56,8 +56,19 @@ export const PageThumbnail = memo(function PageThumbnail({ page, index, selected
           style={{ aspectRatio: aspect, backgroundColor: page.backgroundColor }}
         >
           <canvas ref={canvasRef} className="absolute inset-0 block h-full w-full" aria-hidden="true" />
+          {page.bookmark !== undefined && (
+            <span
+              aria-hidden="true"
+              data-thumbnail-bookmark
+              className="absolute right-1.5 top-0 h-4 w-2.5 bg-blue-600"
+              style={{ clipPath: 'polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%)' }}
+            />
+          )}
         </div>
-        <span className="text-center text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-300">{page.pageNumber}</span>
+        <span className="truncate text-center text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-300">
+          {page.pageNumber}
+          {page.bookmark ? <span className="font-normal text-zinc-400"> · {page.bookmark}</span> : null}
+        </span>
       </button>
     </li>
   );

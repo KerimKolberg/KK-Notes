@@ -217,6 +217,11 @@ export interface Page {
   readonly formValues: FormValues;
   /** User-placed images, notes and tables, drawn between the background and the ink. */
   readonly media: readonly MediaObject[];
+  /**
+   * Present when the page is bookmarked; the text is what the bookmark is called ('' for none, which is
+   * then shown as the page's number). Not part of how the page looks, so not in {@link PageVisual}.
+   */
+  readonly bookmark?: string;
 }
 
 /**
@@ -281,6 +286,7 @@ export interface SerializedPage {
   readonly formFields?: readonly FormField[];
   readonly formValues?: FormValues;
   readonly media?: readonly MediaObject[];
+  readonly bookmark?: string;
   /** Files written before notes and tables existed; migrated to `media` on load. */
   readonly images?: readonly Omit<ImageLayer, 'kind'>[];
 }

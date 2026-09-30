@@ -83,6 +83,7 @@ export function toSerializablePage(page: Page): SerializedPage {
     ...(page.formFields.length > 0 ? { formFields: page.formFields } : {}),
     ...(Object.keys(page.formValues).length > 0 ? { formValues: page.formValues } : {}),
     ...(page.media.length > 0 ? { media: page.media } : {}),
+    ...(page.bookmark !== undefined ? { bookmark: page.bookmark } : {}),
   };
 }
 
@@ -141,6 +142,7 @@ export function fromSerializablePage(
     formFields: page.formFields ?? [],
     formValues: page.formValues ?? {},
     media: mediaOf(page),
+    ...(typeof page.bookmark === 'string' ? { bookmark: page.bookmark.slice(0, 200) } : {}),
   };
 }
 

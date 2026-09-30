@@ -125,8 +125,11 @@ export function cloneStroke(stroke: Stroke): Stroke {
 
 /** Duplicate a page: new id, cloned strokes / media / form values, shared PDF bytes, empty history. */
 export function clonePage(page: Page): Page {
+  // A copy is not bookmarked: two pages answering to one bookmark would be a puzzle in the list.
+  const { bookmark, ...rest } = page;
+  void bookmark;
   return {
-    ...page,
+    ...rest,
     id: createPageId(),
     dimensions: { ...page.dimensions },
     templateConfig: { ...page.templateConfig },

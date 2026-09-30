@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from 'react';
-import { FileText, Folder } from 'lucide-react';
+import { FileText, Folder, Star, Tag } from 'lucide-react';
 import { readThumbnailSource } from './libraryService';
 import { cardAspect, renderCardImage } from './thumbnail';
 import type { LibraryEntry, LibraryLayout } from './types';
@@ -11,6 +11,66 @@ export interface DocumentCardProps {
   onContextMenu: (event: React.MouseEvent) => void;
   /** Dropping a document onto a folder files it there. */
   onDropEntry?: (fromPath: string) => void;
+  /** Documents only: marked as a favourite, their tags, and the two ways to change them. */
+  favourite?: boolean;
+  tags?: readonly string[];
+  onToggleFavourite?: () => void;
+  onEditTags?: () => void;
+}
+
+/**
+ * A control inside a card. The card is itself a button, and a button cannot hold a button, so these
+ * are `role="button"` spans that keep the click (and Enter and Space) from opening the note.
+ */
+function CardAction({ label, pressed, onAct, children, className = '', ...rest }: {
+  label: string;
+  pressed?: boolean;
+  onAct: () => void;
+  children: React.ReactNode;
+  className?: string;
+} & Record<`data-${string}`, string | undefined>) {
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      title={label}
+      {...(pressed === undefined ? {} : { 'aria-pressed': pressed })}
+      className={`inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-blue-500 ${className}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        onAct();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.stopPropagation();
+          e.preventDefault();
+          onAct();
+        }
+      }}
+      onDragStart={(e) => e.preventDefault()}
+      {...rest}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** The tags under a note's name: the first few, and how many more there are. */
+function TagChips({ tags }: { tags: readonly string[] }) {
+  if (tags.length === 0) return null;
+  const shown = tags.slice(0, 3);
+  return (
+    <span className="mt-0.5 flex flex-wrap gap-1" data-card-tags>
+      {shown.map((tag) => (
+        <span key={tag} className="max-w-[7rem] truncate rounded-full bg-blue-50 px-1.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+          {tag}
+        </span>
+      ))}
+      {tags.length > shown.length && <span className="text-[10px] text-zinc-400">+{tags.length - shown.length}</span>}
+    </span>
+  );
 }
 
 function formatDate(ms: number): string {
@@ -31,7 +91,17 @@ const CARD =
  * gates the work, so opening a library of two hundred notebooks rasterises the
  * dozen you can see rather than all of them.
  */
-export const DocumentCard = memo(function DocumentCard({ entry, layout, onOpen, onContextMenu, onDropEntry }: DocumentCardProps) {
+export const DocumentCard = memo(function DocumentCard({
+  entry,
+  layout,
+  onOpen,
+  onContextMenu,
+  onDropEntry,
+  favourite = false,
+  tags = [],
+  onToggleFavourite,
+  onEditTags,
+}: DocumentCardProps) {
   const [node, setNode] = useState<HTMLElement | null>(null);
   const [visible, setVisible] = useState(false);
   const [image, setImage] = useState<string | null>(null);
@@ -140,7 +210,24 @@ export const DocumentCard = memo(function DocumentCard({ entry, layout, onOpen, 
               {entry.isFolder ? entry.name : title}
             </span>
             <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</span>
+            {!entry.isFolder && <TagChips tags={tags} />}
           </span>
+          {!entry.isFolder && onToggleFavourite && onEditTags && (
+            <>
+              <CardAction label="Edit tags" onAct={onEditTags} className="text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700" data-card-tags-button="">
+                <Tag size={15} aria-hidden="true" />
+              </CardAction>
+              <CardAction
+                label={favourite ? 'Remove from favourites' : 'Add to favourites'}
+                pressed={favourite}
+                onAct={onToggleFavourite}
+                className={favourite ? 'text-amber-500' : 'text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700'}
+                data-card-favourite=""
+              >
+                <Star size={16} fill={favourite ? 'currentColor' : 'none'} aria-hidden="true" />
+              </CardAction>
+            </>
+          )}
         </button>
       </li>
     );
@@ -166,6 +253,28 @@ export const DocumentCard = memo(function DocumentCard({ entry, layout, onOpen, 
             {image && <img src={image} alt="" className="h-full w-full object-cover object-top" />}
           </span>
         )}
+        {!entry.isFolder && onToggleFavourite && onEditTags && (
+          // Over the corner of the picture, on a disc so they read against any page.
+          <span className="absolute right-1.5 top-1.5 flex gap-1">
+            <CardAction
+              label="Edit tags"
+              onAct={onEditTags}
+              className="bg-white/90 text-zinc-500 shadow-sm hover:bg-white hover:text-zinc-800 dark:bg-zinc-900/90"
+              data-card-tags-button=""
+            >
+              <Tag size={14} aria-hidden="true" />
+            </CardAction>
+            <CardAction
+              label={favourite ? 'Remove from favourites' : 'Add to favourites'}
+              pressed={favourite}
+              onAct={onToggleFavourite}
+              className={`bg-white/90 shadow-sm hover:bg-white dark:bg-zinc-900/90 ${favourite ? 'text-amber-500' : 'text-zinc-500 hover:text-zinc-800'}`}
+              data-card-favourite=""
+            >
+              <Star size={15} fill={favourite ? 'currentColor' : 'none'} aria-hidden="true" />
+            </CardAction>
+          </span>
+        )}
         <span className="flex items-start gap-2 border-t border-zinc-200 px-2.5 py-2 dark:border-zinc-700">
           {!entry.isFolder && <FileText size={14} className="mt-0.5 shrink-0 text-zinc-400" aria-hidden="true" />}
           <span className="min-w-0">
@@ -173,6 +282,7 @@ export const DocumentCard = memo(function DocumentCard({ entry, layout, onOpen, 
               {entry.isFolder ? entry.name : title}
             </span>
             <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</span>
+            {!entry.isFolder && <TagChips tags={tags} />}
           </span>
         </span>
       </button>
