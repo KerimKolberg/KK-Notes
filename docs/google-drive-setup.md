@@ -118,7 +118,7 @@ with `invalid_request`.
 
 So give CI a fixed key, once:
 
-1. *Actions → **Android debug keystore** → Run workflow.* It needs nothing
+1. *Actions → **Android debug keystore** (workflow file `android-keystore.yml`) → Run workflow.* It needs nothing
    installed on your machine.
 2. Open the finished run's log. The **Print the SHA-1** step shows a line like
    `SHA1: A1:B2:C3:…`. Keep that window open — stage 4 needs it.

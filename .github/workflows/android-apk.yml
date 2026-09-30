@@ -83,7 +83,8 @@ jobs:
           # flow uses PKCE instead of a client secret — so it lives in a repo
           # variable rather than a secret, and an empty one simply builds an
           # APK whose Cloud Sync panel says it has no client id.
-          NOTEX_GOOGLE_CLIENT_ID: ${{ vars.NOTEX_GOOGLE_CLIENT_ID }}
+          # The repository variable wins if set; otherwise the project's Android client id.
+          NOTEX_GOOGLE_CLIENT_ID: ${{ vars.NOTEX_GOOGLE_CLIENT_ID || '712516787688-8cg6v8ijgs2nnlv7l2p3s28bs00keubd.apps.googleusercontent.com' }}
         run: ./build-android.sh --debug --abi aarch64
 
       # Printed every build, because it is the value Google needs and because a
