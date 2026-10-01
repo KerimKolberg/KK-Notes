@@ -1,3 +1,4 @@
+import { startAutoScroll, type AutoScroll } from '../document/autoScroll';
 import { viewportToPagePoint } from '../document/layout';
 import { useDocumentStore } from '../document/store';
 import { useTabStore } from '../document/tabStore';
@@ -15,7 +16,8 @@ export const TAB_DWELL_MS = 550;
  * With pointer events rather than the browser's drag-and-drop, so that a pen drags as well as a mouse, and so that
  * the page under the pointer can be lit up and a tab it rests on can be opened on the way — the snip is usually
  * cut in one tab and wanted in another. Dropping on a page puts the snip there, centred on the pointer; dropping
- * anywhere else does nothing, and the snip stays in the tray.
+ * anywhere else does nothing, and the snip stays in the tray. Held at the edge of the page area the pages scroll that
+ * way (down a column, along a row), so a snip can be carried to a page that is not on screen yet.
  */
 export function dragSnip(snip: Snip, start: PointerEvent): void {
   if (start.button !== 0) return;
@@ -23,6 +25,8 @@ export function dragSnip(snip: Snip, start: PointerEvent): void {
   let ghost: HTMLImageElement | null = null;
   let lit: HTMLElement | null = null;
   let hovered: { el: HTMLElement; id: string; timer: number } | null = null;
+  let scroller: AutoScroll | null = null;
+  let at = { x: start.clientX, y: start.clientY };
 
   const light = (el: HTMLElement | null, attr: string, current: HTMLElement | null): HTMLElement | null => {
     if (current === el) return current;
@@ -59,11 +63,18 @@ export function dragSnip(snip: Snip, start: PointerEvent): void {
       document.body.append(ghost);
     }
     e.preventDefault();
+    at = { x: e.clientX, y: e.clientY };
     if (ghost) {
       ghost.style.left = `${e.clientX - ghost.width / 2}px`;
       ghost.style.top = `${e.clientY - ghost.height / 2}px`;
     }
-    const under = document.elementFromPoint(e.clientX, e.clientY);
+    scroller ??= startAutoScroll(() => at, refresh);
+    refresh();
+  };
+
+  /** What is under the pointer: the page to light up, and a tab it rests on. Run again when the pages scroll beneath it. */
+  const refresh = (): void => {
+    const under = document.elementFromPoint(at.x, at.y);
     lit = light(under?.closest<HTMLElement>('[data-page-index]') ?? null, 'data-snip-target', lit);
 
     // Resting on a tab for a moment opens it, so the snip can be carried to the note it is for.
@@ -84,6 +95,8 @@ export function dragSnip(snip: Snip, start: PointerEvent): void {
     window.removeEventListener('pointermove', move, true);
     window.removeEventListener('pointerup', finish, true);
     window.removeEventListener('pointercancel', cancel, true);
+    scroller?.stop();
+    scroller = null;
     ghost?.remove();
     ghost = null;
     light(null, 'data-snip-target', lit);

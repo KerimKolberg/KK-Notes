@@ -1,4 +1,9 @@
+import { useEffect } from 'react';
 import { useDesktopStore } from '../../desktop/desktopStore';
+import { useTabStore } from '../tabStore';
+
+/** How long a notice that offers a choice stays before it goes by itself, in ms. */
+const CHOICE_LINGER_MS = 10_000;
 
 /**
  * A notice that carries a choice ("Add its pages to my note instead", "Discard"), and any notice on a window too narrow
@@ -10,6 +15,16 @@ import { useDesktopStore } from '../../desktop/desktopStore';
 export function NoticeToast() {
   const notice = useDesktopStore((s) => s.notice);
   const setNotice = useDesktopStore((s) => s.setNotice);
+  const splitId = useTabStore((s) => s.splitId);
+  // A choice that has been overtaken (the split it offered is already showing) or ignored for a while is not left on the page.
+  useEffect(() => {
+    if (!notice?.action) return;
+    const timer = window.setTimeout(() => setNotice(null), CHOICE_LINGER_MS);
+    return () => window.clearTimeout(timer);
+  }, [notice, setNotice]);
+  useEffect(() => {
+    if (splitId && useDesktopStore.getState().notice?.action?.label === 'Split screen') setNotice(null);
+  }, [splitId, setNotice]);
   if (!notice) return null;
   return (
     <div

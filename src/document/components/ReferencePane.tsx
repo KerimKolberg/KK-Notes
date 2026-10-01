@@ -104,7 +104,7 @@ export function ReferencePane(): React.JSX.Element | null {
   if (!tab) return null;
 
   return (
-    <div className={`flex min-w-0 flex-col bg-zinc-200/60 dark:bg-zinc-900 ${side === 'right' ? 'border-l' : 'border-r'} border-zinc-300 dark:border-zinc-700`} data-reference-pane data-reference-side={side}>
+    <div className={`flex min-w-0 flex-1 flex-col bg-zinc-200/60 dark:bg-zinc-900 ${side === 'right' ? 'border-l' : 'border-r'} border-zinc-300 dark:border-zinc-700`} data-reference-pane data-reference-side={side}>
       <header className="flex h-9 shrink-0 items-center gap-1 border-b border-zinc-300 px-2 dark:border-zinc-700">
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-700 dark:text-zinc-300" data-reference-title>
           {tab.title}

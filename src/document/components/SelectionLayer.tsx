@@ -49,6 +49,7 @@ import {
   type DistributeAxis,
 } from '../../inking/engine/arrange';
 import { subscribeTouchGesture } from '../../inking/engine/gestureState';
+import { startAutoScroll, viewerElement } from '../autoScroll';
 import {
   reshapeStrokes,
   restyleStrokes,
@@ -111,6 +112,8 @@ interface Drag {
   /** `rotate`: the point it turns about, and where on the page the pen took hold. */
   readonly pivot?: Point;
   readonly from?: Point;
+  /** Where the page area was scrolled to when the drag began, so a scroll during it can be added to the pen's movement. */
+  readonly scroll: { readonly left: number; readonly top: number };
 }
 
 const HANDLE_CURSORS: Record<ScaleHandle, string> = {
@@ -353,6 +356,7 @@ export const SelectionLayer = memo(function SelectionLayer({
         ...(handle ? { handle } : {}),
         ...(anchor ? { grab: { x: at.x - anchor.x, y: at.y - anchor.y } } : {}),
         ...(mode === 'rotate' ? { pivot: boundsCentre(bounds), from: at } : {}),
+        scroll: { left: viewerElement()?.scrollLeft ?? 0, top: viewerElement()?.scrollTop ?? 0 },
       };
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -376,10 +380,22 @@ export const SelectionLayer = memo(function SelectionLayer({
       window.addEventListener('pointermove', move, true);
       window.addEventListener('pointerup', up, true);
       window.addEventListener('pointercancel', cancel, true);
+      // Carrying a selection to the edge of what is on screen scrolls the pages: the pen has not moved, but they have.
+      // Only a move follows it; a stretch or a turn is measured on the page the pen is over.
+      const scroller =
+        mode === 'move'
+          ? startAutoScroll(
+              () => (latestMoveRef.current ? { x: latestMoveRef.current.clientX, y: latestMoveRef.current.clientY } : null),
+              () => {
+                if (frameRef.current === null) frameRef.current = requestAnimationFrame(applyMoveRef.current);
+              },
+            )
+          : null;
       stopListeningRef.current = () => {
         window.removeEventListener('pointermove', move, true);
         window.removeEventListener('pointerup', up, true);
         window.removeEventListener('pointercancel', cancel, true);
+        scroller?.stop();
       };
     },
     [bounds, pagePoint, stopListening],
@@ -397,14 +413,17 @@ export const SelectionLayer = memo(function SelectionLayer({
   );
   const latestMoveRef = useRef<{ clientX: number; clientY: number; shiftKey: boolean } | null>(null);
   const frameRef = useRef<number | null>(null);
+  const applyMoveRef = useRef<() => void>(() => {});
   const applyMove = useCallback(() => {
     frameRef.current = null;
     const drag = dragRef.current;
     const move = latestMoveRef.current;
     if (!drag || !move) return;
     if (drag.mode === 'move') {
-      const dx = (move.clientX - drag.start.x) / zoom;
-      const dy = (move.clientY - drag.start.y) / zoom;
+      // The pen's movement plus however far the pages have scrolled under it since it took hold.
+      const area = viewerElement();
+      const dx = (move.clientX - drag.start.x + (area ? area.scrollLeft - drag.scroll.left : 0)) / zoom;
+      const dy = (move.clientY - drag.start.y + (area ? area.scrollTop - drag.scroll.top : 0)) / zoom;
       setDraft({ kind: 'transform', transform: { kind: 'translate', dx, dy } });
     } else if (drag.mode === 'rotate') {
       if (!drag.pivot || !drag.from) return;
@@ -427,6 +446,7 @@ export const SelectionLayer = memo(function SelectionLayer({
       });
     }
   }, [zoom, pagePoint, setDraft, pageRect]);
+  applyMoveRef.current = applyMove;
   useEffect(
     () => () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);

@@ -531,6 +531,9 @@ The inking render loop never subscribes to the store; a surface only calls
 `commitStroke` / `eraseStrokes` when a gesture ends, so React updates cannot
 stall a frame.
 
+**Spacing.** Pages sit 7 px apart with 7 px around the column (`PAGE_GAP`, `VIEWER_PADDING`; they were 24), so a note
+is mostly page.
+
 **Pages.** `Page` carries A4 dimensions (794 × 1123 CSS px at 96 DPI), a
 template + `templateConfig`, background colour, the stroke list (the same
 `FreehandStroke | GeometricStroke` union as the engine) and snapshot
@@ -706,6 +709,8 @@ object, selects it (and switches to the select tool, which is the only one that 
   each string with a map back to the original, since folding can change a string's length; a query of
   several words finds the pieces of text where every word occurs; results are in document order and limited
   so a one-letter query in a long note is not every piece of text in it.
+- **Scrolls only its own list.** Keeping the chosen result in view moves the list itself: `scrollIntoView` scrolls every
+  ancestor that can scroll, hidden ones included, and could shift the whole app out of the window.
 - **Cheap.** The panel reads the text objects' arrays only, which keep their identity until something on a
   page is edited, so a stroke committed every few seconds does not re-run the search. It is loaded only
   when first opened.
@@ -723,6 +728,16 @@ take a pen stroke) and on its thumbnail in the page arranger, with its name unde
   be a puzzle). It is not part of how a page looks, so toggling one does not repaint the page or touch its
   undo history, and a locked note cannot be bookmarked. It is not written into an exported PDF.
 - The panel and the page arranger both sit down the right-hand side, so opening one puts the other away.
+
+### When a screen fails to draw (`ui/ErrorBoundary.tsx`)
+
+React takes down the *whole* tree when a component throws while rendering, and what is left is an empty window: a black
+screen with no hint of what went wrong and the impression that the work in it was lost. The note and the library are
+each wrapped in an error boundary that shows what happened instead (the message and where, selectable, to be read out),
+says the work is not lost (it lives in the stores and in the autosave draft, not in the components), and offers **Try
+again** and **Reload the app**, which brings the draft back. The search, bookmarks, version history and snip tray are
+wrapped on their own: a panel that fails is put away with a notice giving the reason, and the rest of the screen carries
+on. The browser check damages a note's table on purpose and checks the message is shown.
 
 ## Interface (`src/ui/`, `src/inking/palette/`)
 
@@ -917,6 +932,14 @@ broader and lighter, the way graphite spread over more paper does.
 
 ## Lasso selection and touch navigation
 
+
+**Carrying a selection to the edge scrolls the pages** (`document/autoScroll.ts`). Hold the pen against an edge of the
+page area while moving a selection (or dragging a snip out of the tray) and the pages scroll that way, faster the
+closer to the edge — 56 px zone, up to 900 px per *second*, in time and not per frame, since a 180 Hz display would
+otherwise scroll three times as fast as a 60 Hz one — in either axis: down a column of pages, along a row, or sideways
+over a page wider than the window. The pen has not moved but the pages have, so the move adds the scroll since the
+drag began to the pen's travel and the preview follows the pen; letting go on another page hands the strokes over
+exactly where the pen is. A stretch or a turn does not scroll: those are measured on the page the pen is over.
 **Lasso tool** (`src/inking/engine/lasso.ts`, `lassoFilter.ts`,
 `SelectionLayer.tsx`). The `lasso` tool mode draws a freehand loop on the
 live canvas (pen or mouse). A stroke's *sample points* are the raw samples of
@@ -1297,6 +1320,9 @@ edited cannot also be shown in the pane (that would render a stale session besid
 the live one), activating the pane's document **swaps** the two (the document that was
 being edited goes into the pane to be read, rather than the pane closing), and closing the
 pane's tab closes the pane.
+
+**Width.** The editor keeps its share (`flex: 0 0 60%`, dragged between 25 and 75 %) and the pane takes *all* the rest (`flex-1`): without it the pane was only as wide as its content and an empty strip was left
+beside it, which moved to the other side when the sides were swapped.
 
 **Choosing and swapping.** The split-screen button on any tab but the one being edited puts
 that tab in the pane; pressed on a different tab it changes what the pane shows while the
@@ -2566,6 +2592,11 @@ hit-testing can answer:
   nothing; the tray can be pulled aside; the top bar's scissors snip the page being written on without laying
   down ink; Esc stops; a finger drag makes a snip too and a second finger ends it; a snip held over a tab opens
   it and the snips are still there.
+- **dragging to the edge**: held at the bottom edge a selection scrolls the pages down and lands where the pen let go;
+  at the top edge it scrolls back; in a row of pages, held at the right edge, it scrolls along; a snip dragged from
+  the tray scrolls the pages too.
+- **a screen that fails to draw**: a note with a damaged table shows the message and its details, with a way to try
+  again, instead of a blank window.
 - **a long stroke**: while the pen is down a long stroke has a tail layer that cannot take
   the pen's events, the stretch behind it is on the live canvas and the tail is only the last
   stretch, both go when the pen lifts, and the whole stroke lands on the page.

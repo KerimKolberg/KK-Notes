@@ -229,7 +229,7 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
                 disabled={colorDisabled}
                 data-swatch={color}
                 data-swatch-index={index}
-                className={`h-6 w-6 rounded-full ring-1 ring-black/15 transition-transform disabled:opacity-30 dark:ring-white/25 ${
+                className={`h-[22px] w-[22px] rounded-full ring-1 ring-black/15 transition-transform disabled:opacity-30 dark:ring-white/25 ${
                   selected ? 'scale-110 outline-2 outline-offset-2 outline-blue-500' : 'hover:scale-105'
                 } ${editing === index ? 'outline-2 outline-offset-2 outline-amber-500' : ''}`}
                 style={{ background: color }}

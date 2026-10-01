@@ -80,7 +80,7 @@ describe('horizontal layout', () => {
   it('finds the page under a content point along x, gaps included', () => {
     const second = horizontal.items[1]!;
     expect(itemAtContent(horizontal.items, { x: second.left + 5, y: 0 }, 'x')?.index).toBe(1);
-    expect(itemAtContent(horizontal.items, { x: second.left - 6, y: 0 }, 'x')?.index).toBe(1);
+    expect(itemAtContent(horizontal.items, { x: second.left - 2, y: 0 }, 'x')?.index).toBe(1);
     expect(itemAtContent(horizontal.items, { x: -500, y: 0 }, 'x')?.index).toBe(0);
     expect(itemAtContent(horizontal.items, { x: 1e9, y: 0 }, 'x')?.index).toBe(2);
   });

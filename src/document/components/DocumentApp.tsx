@@ -38,7 +38,9 @@ import { useVersionsStore } from '../../desktop/versionsStore';
 import { useBookmarksStore } from '../bookmarksStore';
 import { performRedo, performUndo } from '../undo';
 import { NoticeToast } from './NoticeToast';
+import { ErrorBoundary } from '../../ui/ErrorBoundary';
 import { SnipTray } from '../../snip/SnipTray';
+import { useSnipStore } from '../../snip/snipStore';
 import { useSnipping } from '../../snip/useSnipping';
 import { useToolStore } from '../toolStore';
 import { DocumentViewer } from './DocumentViewer';
@@ -49,6 +51,17 @@ import { useTabStore } from '../tabStore';
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
+}
+
+/**
+ * A panel that failed to draw is put away and the reason given, instead of taking the screen with it. Deferred a tick:
+ * it is called while React is still rendering the failure.
+ */
+function panelFailed(name: string, error: Error, putAway: () => void): void {
+  queueMicrotask(() => {
+    putAway();
+    useDesktopStore.getState().setNotice({ text: `${name} ran into a problem and was closed: ${error.message}` });
+  });
 }
 
 /** Root of the multi-page notes UI: top bar, virtualised viewer, floating ink toolbar, arranger. */
@@ -346,21 +359,29 @@ export function DocumentApp() {
         >
             <DocumentViewer settingsRef={settingsRef} currentTool={settings.tool} />
           {searchOpen && (
-            <Suspense fallback={null}>
-              <SearchPanel />
-            </Suspense>
+            <ErrorBoundary what="the search" fallback={null} onError={(e) => panelFailed('The search', e, () => useSearchStore.getState().close())}>
+              <Suspense fallback={null}>
+                <SearchPanel />
+              </Suspense>
+            </ErrorBoundary>
           )}
           <NoticeToast />
-          <SnipTray />
+          <ErrorBoundary what="the snips" fallback={null} onError={(e) => panelFailed('The snip tray', e, () => useSnipStore.getState().setMode(false))}>
+            <SnipTray />
+          </ErrorBoundary>
           {bookmarksOpen && (
-            <Suspense fallback={null}>
-              <BookmarksPanel />
-            </Suspense>
+            <ErrorBoundary what="the bookmarks" fallback={null} onError={(e) => panelFailed('The bookmarks', e, () => useBookmarksStore.getState().close())}>
+              <Suspense fallback={null}>
+                <BookmarksPanel />
+              </Suspense>
+            </ErrorBoundary>
           )}
           {versionsOpen && (
-            <Suspense fallback={null}>
-              <VersionHistory />
-            </Suspense>
+            <ErrorBoundary what="the version history" fallback={null} onError={(e) => panelFailed('The version history', e, () => useVersionsStore.getState().close())}>
+              <Suspense fallback={null}>
+                <VersionHistory />
+              </Suspense>
+            </ErrorBoundary>
           )}
           {/* Above everything and inert, so it can never intercept a stroke. */}
           <DebugOverlay enabled={settings.debugMode} />

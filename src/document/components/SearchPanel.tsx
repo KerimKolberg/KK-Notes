@@ -98,10 +98,26 @@ export const SearchPanel = memo(function SearchPanel() {
   const [active, setActive] = useState(0);
   useEffect(() => setActive(0), [query]);
   const activeRef = useRef<HTMLLIElement>(null);
-  useEffect(() => activeRef.current?.scrollIntoView({ block: 'nearest' }), [active, hits]);
+  const listRef = useRef<HTMLUListElement>(null);
+  // Keep the chosen result in view by moving the list itself. `scrollIntoView` scrolls every ancestor that can scroll,
+  // including the ones that are hidden, which can shift the whole app out of the window.
+  useEffect(() => {
+    const list = listRef.current;
+    const item = activeRef.current;
+    if (!list || !item) return;
+    const top = item.offsetTop;
+    const bottom = top + item.offsetHeight;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+  }, [active, hits]);
 
   const go = useCallback((hit: SearchHit | undefined) => {
-    if (hit) revealText(hit.source);
+    if (!hit) return;
+    try {
+      revealText(hit.source);
+    } catch (error) {
+      console.error('KK-Notes: could not go to that search result', error);
+    }
   }, []);
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
@@ -163,7 +179,7 @@ export const SearchPanel = memo(function SearchPanel() {
       </div>
 
       {searching && hits.length > 0 && (
-        <ul className="min-h-0 flex-1 overflow-y-auto py-1" data-search-results>
+        <ul ref={listRef} className="relative min-h-0 flex-1 overflow-y-auto py-1" data-search-results>
           {hits.map((hit, i) => {
             const Icon = KIND_ICONS[hit.source.kind];
             const isActive = i === active;

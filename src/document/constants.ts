@@ -8,10 +8,10 @@ export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 3;
 export const ZOOM_STEP = 0.1;
 
-/** Gap between pages in continuous mode, CSS px. */
-export const PAGE_GAP = 24;
-/** Padding around the page column, CSS px. */
-export const VIEWER_PADDING = 24;
+/** Gap between pages in continuous mode, CSS px (it was 24; the pages sit close, as on a sheet of paper laid out in a column). */
+export const PAGE_GAP = 7;
+/** Padding around the page column, CSS px (likewise 24 before). */
+export const VIEWER_PADDING = 7;
 
 /** Pages within this distance of the viewport keep live canvases mounted. */
 export const ACTIVE_OVERSCAN_PX = 800;

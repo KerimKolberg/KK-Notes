@@ -108,7 +108,7 @@ function lineLabel(curve: ToolSettings['lineCurve']): string {
  */
 const DIVIDER = (
   <span
-    className="mx-0.5 h-8 w-px shrink-0 bg-zinc-200 group-data-[vertical=true]/palette:mx-0 group-data-[vertical=true]/palette:my-0.5 group-data-[vertical=true]/palette:h-px group-data-[vertical=true]/palette:w-8 dark:bg-zinc-700"
+    className="mx-0.5 h-6 w-px shrink-0 bg-zinc-200 group-data-[vertical=true]/palette:mx-0 group-data-[vertical=true]/palette:my-0.5 group-data-[vertical=true]/palette:h-px group-data-[vertical=true]/palette:w-6 dark:bg-zinc-700"
     aria-hidden="true"
   />
 );
@@ -268,11 +268,11 @@ export const ToolPalette = memo(function ToolPalette({
 
   const slots: Readonly<Record<PaletteSlot, ReactNode>> = {
     select: (
-      <IconButton icon={MousePointer2} label="Select" active={settings.tool === 'select'} onClick={() => pick('select')} data-palette-tool="select" />
+      <IconButton size="sm" icon={MousePointer2} label="Select" active={settings.tool === 'select'} onClick={() => pick('select')} data-palette-tool="select" />
     ),
     lasso: (
       <div className="relative">
-              <IconButton
+              <IconButton size="sm"
                 icon={Lasso}
                 label="Lasso select"
                 hint={lassoActive ? 'press again for layers and mode' : undefined}
@@ -290,11 +290,11 @@ export const ToolPalette = memo(function ToolPalette({
             </div>
     ),
     laser: (
-      <IconButton icon={Zap} label="Laser pointer" active={laser} onClick={() => pick('laser-pointer')} data-palette-tool="laser-pointer" />
+      <IconButton size="sm" icon={Zap} label="Laser pointer" active={laser} onClick={() => pick('laser-pointer')} data-palette-tool="laser-pointer" />
     ),
     insert: insertMenu && (
               <div className="relative">
-                <IconButton
+                <IconButton size="sm"
                   icon={Plus}
                   label="Add to the page"
                   hint="images, sticky notes and tables"
@@ -311,7 +311,7 @@ export const ToolPalette = memo(function ToolPalette({
             ),
     pen: (
       <div className="relative">
-              <IconButton
+              <IconButton size="sm"
                 icon={BrushIcon}
                 label={brushLabel(settings.brush)}
                 hint={penActive ? 'press again for brushes' : undefined}
@@ -328,7 +328,7 @@ export const ToolPalette = memo(function ToolPalette({
     ),
     highlighter: (
       <div className="relative">
-              <IconButton
+              <IconButton size="sm"
                 icon={Highlighter}
                 label="Highlighter"
                 hint={highlighterActive ? 'press again for width, ink and gradient' : undefined}
@@ -347,6 +347,7 @@ export const ToolPalette = memo(function ToolPalette({
     washi: (
       <div className="relative">
               <IconButton
+                size="sm"
                 icon={Ticket}
                 className="[&>svg]:-rotate-45"
                 label="Washi tape"
@@ -364,7 +365,7 @@ export const ToolPalette = memo(function ToolPalette({
     ),
     line: (
       <div className="relative">
-              <IconButton
+              <IconButton size="sm"
                 icon={Spline}
                 label={lineLabel(settings.lineCurve)}
                 hint={lineActive ? 'press again for paths and patterns' : undefined}
@@ -382,7 +383,7 @@ export const ToolPalette = memo(function ToolPalette({
     ),
     plane: (
       <div className="relative">
-              <IconButton
+              <IconButton size="sm"
                 icon={Axis3d}
                 label="Coordinate system"
                 hint={planeActive ? 'press again for options' : undefined}
@@ -399,7 +400,7 @@ export const ToolPalette = memo(function ToolPalette({
     ),
     stroke: (
       <div className="relative">
-              <IconButton
+              <IconButton size="sm"
                 icon={Ellipsis}
                 label="Line pattern and snapping"
                 active={flyout === 'stroke'}
@@ -415,7 +416,7 @@ export const ToolPalette = memo(function ToolPalette({
     ),
     eraser: (
       <div className="relative">
-              <IconButton
+              <IconButton size="sm"
                 icon={Eraser}
                 label={eraserIsArea ? 'Area eraser' : 'Stroke eraser'}
                 hint={eraserActive ? 'press again for eraser options' : undefined}
@@ -473,7 +474,7 @@ export const ToolPalette = memo(function ToolPalette({
   // column of colours instead.
   const settingsControl = (
     <div className="relative">
-      <IconButton
+      <IconButton size="sm"
         icon={Settings2}
         label="Input and page settings"
         active={flyout === 'settings'}
@@ -523,7 +524,7 @@ export const ToolPalette = memo(function ToolPalette({
           // on the side facing the page, so the right dock and the top dock are the
           // left and bottom docks seen in a mirror.
           dock === 'right' ? 'flex-row-reverse items-start' : vertical ? 'flex-row items-start' : dock === 'bottom' ? 'flex-col-reverse' : 'flex-col'
-        } gap-1 rounded-2xl border border-zinc-200/80 bg-white/95 p-1.5 shadow-2xl data-[dragging=true]:will-change-transform dark:border-zinc-700/80 dark:bg-zinc-900/95 ${
+        } gap-1 rounded-2xl border border-zinc-200/80 bg-white/95 p-1 shadow-2xl data-[dragging=true]:will-change-transform dark:border-zinc-700/80 dark:bg-zinc-900/95 ${
           away ? 'pointer-events-none opacity-0' : 'opacity-100'
         }`}
         style={{
@@ -554,7 +555,7 @@ export const ToolPalette = memo(function ToolPalette({
               type="button"
               aria-label="Move the palette"
               data-palette-handle
-              className="inline-flex h-11 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-200/70 active:cursor-grabbing group-data-[vertical=true]/palette:h-6 group-data-[vertical=true]/palette:w-11 dark:text-zinc-500 dark:hover:bg-zinc-700/70"
+              className="inline-flex h-9 w-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-200/70 active:cursor-grabbing group-data-[vertical=true]/palette:h-5 group-data-[vertical=true]/palette:w-9 dark:text-zinc-500 dark:hover:bg-zinc-700/70"
               onDoubleClick={reset}
               {...handleProps}
             >

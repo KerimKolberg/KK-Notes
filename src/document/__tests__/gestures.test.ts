@@ -80,7 +80,7 @@ describe('anchoring across a zoom change', () => {
   it('finds the page under a content point (or the nearest one in a gap)', () => {
     const second = items[1]!;
     expect(itemAtContent(items, { x: 0, y: second.top + 10 })?.index).toBe(1);
-    expect(itemAtContent(items, { x: 0, y: second.top - 5 })?.index).toBe(1); // in the gap, nearer to page 2
+    expect(itemAtContent(items, { x: 0, y: second.top - 2 })?.index).toBe(1); // in the gap, nearer to page 2
     expect(itemAtContent(items, { x: 0, y: -1000 })?.index).toBe(0);
     expect(itemAtContent(items, { x: 0, y: 1e9 })?.index).toBe(2);
     expect(itemAtContent([], { x: 0, y: 10 })).toBeUndefined();

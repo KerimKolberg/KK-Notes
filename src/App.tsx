@@ -7,6 +7,7 @@ import { useRouteStore } from './library/routeStore';
 import { useBoot } from './library/useBoot';
 import { useImportReportStore } from './goodnotes/reportStore';
 import { LockScreen } from './lock/LockScreen';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 import { useLockStore } from './lock/lockStore';
 import { useAutoLock } from './lock/useAutoLock';
 
@@ -48,7 +49,15 @@ export default function App() {
       {/* While locked the app stays mounted (so unlocking returns to exactly where it was) but cannot be
           reached by keyboard, pointer or screen reader, and the lock screen is opaque above it. */}
       <div style={{ position: 'absolute', inset: 0 }} inert={locked} aria-hidden={locked || undefined}>
-        {!ready ? null : view === 'library' ? <LibraryView /> : <DocumentApp />}
+        {!ready ? null : view === 'library' ? (
+          <ErrorBoundary what="your library">
+            <LibraryView />
+          </ErrorBoundary>
+        ) : (
+          <ErrorBoundary what="this note">
+            <DocumentApp />
+          </ErrorBoundary>
+        )}
         {ready && hasImportReport && (
           <Suspense fallback={null}>
             <ImportReportDialog />

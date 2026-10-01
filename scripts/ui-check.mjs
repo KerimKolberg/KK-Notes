@@ -2427,11 +2427,13 @@ async function checkReadingDrop(browser) {
   const editorBefore = await box('[data-page-stage]');
   const paneBefore = await box('[data-reference-pane]');
   check('the pane starts on the right', paneBefore.x > editorBefore.x);
+  check('and fills the rest of the window, with no empty strip beside it', Math.abs(paneBefore.x + paneBefore.w - DESKTOP.width) < 3, `ends at ${Math.round(paneBefore.x + paneBefore.w)} of ${DESKTOP.width}`);
   await page.click('[data-reference-swap-sides]');
   await page.waitForTimeout(150);
   const editorAfter = await box('[data-page-stage]');
   const paneAfter = await box('[data-reference-pane]');
   check('the swap button puts the pane on the left and the note on the right', paneAfter.x < editorAfter.x, `${Math.round(paneAfter.x)} vs ${Math.round(editorAfter.x)}`);
+  check('and on the left it fills to the edge as well', paneAfter.x < 3, `starts at ${Math.round(paneAfter.x)}`);
   check('each keeps its role: the note is still the editor', (await title()) === 'Lecture notes');
   // The divider drags the right way round on this side.
   const divider = await (await page.$('[data-split-divider]')).boundingBox();
@@ -2560,6 +2562,20 @@ async function checkSnipping(browser) {
   const placed = await (await images())[1].boundingBox();
   check('centred where it was dropped', Math.abs(placed.x + placed.width / 2 - dropX) < 14 && Math.abs(placed.y + placed.height / 2 - dropY) < 14, `${Math.round(placed.x + placed.width / 2 - dropX)}, ${Math.round(placed.y + placed.height / 2 - dropY)}`);
 
+  // Held at the bottom edge of the page area, the pages scroll under it.
+  const viewerBox = await (await page.$('[data-viewer]')).boundingBox();
+  const scrollBefore = await page.$eval('[data-viewer]', (e) => e.scrollTop);
+  await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(viewerBox.x + viewerBox.width / 2, viewerBox.y + viewerBox.height - 6, { steps: 8 });
+  await page.waitForTimeout(700);
+  const scrollAfter = await page.$eval('[data-viewer]', (e) => e.scrollTop);
+  check('a snip held at the bottom edge scrolls the pages down', scrollAfter > scrollBefore + 100, `${Math.round(scrollBefore)} -> ${Math.round(scrollAfter)}`);
+  await page.mouse.move(viewerBox.x + viewerBox.width / 2, 30, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  check('and letting go over the top bar adds nothing', (await images()).length === 2);
+
   // Dropped on nothing, it stays in the tray and nothing is added.
   await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2);
   await page.mouse.down();
@@ -2647,6 +2663,119 @@ async function checkSnipping(browser) {
   check('the snips are still there in the other tab', (await page.$$('[data-snip]')).length === 3);
 
   check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
+ * Carrying a selection to the edge of the page area scrolls the pages, down a column and along a row, and the selection
+ * follows the pen: it ends up where the pen let go, on whichever page is there.
+ */
+async function checkDragScroll(browser) {
+  console.log('dragging a selection to the edge, 1280x800:');
+  const { ctx, page, errors, cx, cy, around } = await openPenDocument(browser);
+  // Pages enough to scroll through.
+  await page.click('[data-arranger-toggle]');
+  await page.waitForSelector('[role="group"][aria-label="Page operations"] button');
+  const addAfter = page.locator('[role="group"][aria-label="Page operations"] button', { hasText: /after/i }).first();
+  for (let i = 0; i < 3; i++) await addAfter.click();
+  await page.click('[data-arranger-close]');
+  await page.waitForTimeout(250);
+  await page.click('[data-page-badge]');
+  await page.fill('input[aria-label="Jump to page"]', '1');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+
+  const scroll = () => page.$eval('[data-viewer]', (e) => ({ top: e.scrollTop, left: e.scrollLeft }));
+  const select = async (x = cx, y = cy) => {
+    const line = Array.from({ length: 20 }, (_, i) => [x - 60 + i * 6, y + (i % 2)]);
+    await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [line]);
+    await page.click('[data-palette-tool="lasso"]');
+    const ring = [[x - 90, y - 30], [x + 90, y - 30], [x + 90, y + 30], [x - 90, y + 30], [x - 90, y - 30]].flatMap(([a, b], i, all) => {
+      const n = all[i + 1];
+      return n ? Array.from({ length: 8 }, (_, k) => [a + ((n[0] - a) * k) / 8, b + ((n[1] - b) * k) / 8]) : [[a, b]];
+    });
+    await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [ring]);
+    await page.waitForSelector('[data-selection-box]', { timeout: 3_000 });
+  };
+  /** Drag the selection's body to (toX, toY), hold there, and let go. */
+  const carry = (toX, toY, hold) =>
+    page.evaluate(async ({ toX, toY, hold }) => {
+      const el = document.querySelector('[data-selection-box]');
+      const r = el.getBoundingClientRect();
+      const x = r.x + r.width / 2;
+      const y = r.y + r.height / 2;
+      const send = (type, px, py, buttons, button) =>
+        el.dispatchEvent(new PointerEvent(type, { pointerType: 'pen', pointerId: 9, isPrimary: true, bubbles: true, cancelable: true, clientX: px, clientY: py, buttons, button, pressure: buttons & 1 ? 0.5 : 0 }));
+      send('pointerdown', x, y, 1, 0);
+      for (let i = 1; i <= 10; i++) {
+        send('pointermove', x + ((toX - x) * i) / 10, y + ((toY - y) * i) / 10, 1, -1);
+        await new Promise((res) => setTimeout(res, 16));
+      }
+      await new Promise((res) => setTimeout(res, hold));
+      send('pointerup', toX, toY, 0, 0);
+    }, { toX, toY, hold });
+
+  await select();
+  const view = await (await page.$('[data-viewer]')).boundingBox();
+  const before = await scroll();
+  await carry(view.x + view.width / 2, view.y + view.height - 6, 900);
+  const after = await scroll();
+  check('held at the bottom edge, a selection scrolls the pages down', after.top > before.top + 150, `${Math.round(before.top)} -> ${Math.round(after.top)}`);
+  await page.waitForSelector('[data-selection-box]', { timeout: 3_000 });
+  const landed = await page.$eval('[data-selection-box]', (e) => { const r = e.getBoundingClientRect(); return r.y + r.height / 2; });
+  check('and it lands where the pen let go, not where it was picked up', Math.abs(landed - (view.y + view.height - 6)) < 80, `${Math.round(landed)} vs ${Math.round(view.y + view.height - 6)}`);
+
+  // And the other way, at the top edge.
+  const mid = await scroll();
+  await carry(view.x + view.width / 2, view.y + 6, 900);
+  const up = await scroll();
+  check('held at the top edge, it scrolls back up', up.top < mid.top - 100, `${Math.round(mid.top)} -> ${Math.round(up.top)}`);
+
+  // A row of pages: along it.
+  await page.click('[data-view-mode-toggle]');
+  await page.waitForFunction(() => document.querySelector('[data-view-mode-toggle]')?.getAttribute('data-view-mode') === 'horizontal-continuous');
+  await page.waitForTimeout(300);
+  await page.click('[data-page-badge]');
+  await page.fill('input[aria-label="Jump to page"]', '1');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+  const first = await (await page.$('[data-page-index="0"]')).boundingBox();
+  await page.click('[data-palette-tool="pen"]').catch(() => {});
+  await select(first.x + Math.min(first.width / 2, 300), first.y + 300);
+  const row = await (await page.$('[data-viewer]')).boundingBox();
+  const rowBefore = await scroll();
+  await carry(row.x + row.width - 6, row.y + row.height / 2, 900);
+  const rowAfter = await scroll();
+  check('in a row of pages, held at the right edge, it scrolls along', rowAfter.left > rowBefore.left + 150, `${Math.round(rowBefore.left)} -> ${Math.round(rowAfter.left)}`);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
+ * A screen that throws while drawing must say so, not leave a black window: a note whose table has no cells (damaged,
+ * or written by something else) makes the page fail to draw, and what shows is the message, with the work intact.
+ */
+async function checkErrorBoundary(browser) {
+  console.log('a screen that fails to draw, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  await openDocument(page);
+  await page.click('[data-back-to-library]');
+  await page.waitForSelector('[data-library-view]', { timeout: 10_000 });
+  await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) => k.startsWith('notes.library.doc.'));
+    const envelope = JSON.parse(localStorage.getItem(key));
+    envelope.document.pages[0].media = [{ id: 'broken', kind: 'table', x: 50, y: 50, width: 300, height: 100, rotation: 0, zIndex: 1, rows: 2, columns: 2 }];
+    localStorage.setItem(key, JSON.stringify(envelope));
+  });
+  await page.click('[data-library-kind="document"]');
+  await page.waitForSelector('[data-error-boundary]', { timeout: 10_000 });
+  check('the screen says something went wrong instead of going blank', (await page.textContent('[data-error-boundary]')).includes('Something went wrong showing this note'));
+  const details = await page.textContent('[data-error-details]');
+  check('and shows what went wrong, to be read out', /TypeError|Cannot read/i.test(details ?? ''), (details ?? '').slice(0, 80));
+  check('with a way to try again and to reload', (await page.$('[data-error-retry]')) !== null);
+  check('and the app around it is still there', (await page.$('#root')) !== null && (await page.$$('#root > div')).length === 1);
   await ctx.close();
 }
 
@@ -2847,6 +2976,8 @@ try {
     checkLibraryOrganising,
     checkReadingDrop,
     checkSnipping,
+    checkDragScroll,
+    checkErrorBoundary,
     checkTextToolbar,
     checkZoomAnchor,
   ];
