@@ -99,6 +99,7 @@ function Bar(): React.JSX.Element {
                 : 'border-transparent text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800'
             }`}
             data-tab
+            data-tab-id={tab.id}
             data-tab-active={active || undefined}
             // A parked tab is a normal tab that happens to be read back from
             // disk when tapped; surfaced only for the tests and the curious.

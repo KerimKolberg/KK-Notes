@@ -47,3 +47,20 @@ body {
     background: #09090b;
   }
 }
+
+/* Snipping: a crosshair over every page while it is on, the page a snip is being carried over, and the tab it rests on. */
+html[data-snipping] [data-page-index],
+html[data-snipping] [data-page-index] *,
+html[data-snipping] [data-reference-page-frame],
+html[data-snipping] [data-reference-page-frame] * {
+  cursor: crosshair !important;
+}
+[data-snip-target] {
+  outline: 3px solid #2563eb;
+  outline-offset: -3px;
+}
+[data-snip-hover] {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+  background-color: rgba(37, 99, 235, 0.12);
+}

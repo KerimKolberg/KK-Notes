@@ -36,6 +36,7 @@ export function captureSession(): TabSession {
     savedTitle: s.savedTitle,
     savedCover: s.savedCover,
     readOnly: s.readOnly,
+    history: { undo: s.structureUndo, redo: s.structureRedo },
   };
 }
 
@@ -48,6 +49,8 @@ export function restoreSession(session: TabSession): void {
     savedTitle: session.savedTitle,
     savedCover: session.savedCover,
     readOnly: session.readOnly,
+    structureUndo: session.history?.undo ?? [],
+    structureRedo: session.history?.redo ?? [],
     // Interaction state belongs to the moment, not the document: a selection
     // restored into a document the user has just come back to is a selection
     // they did not make.

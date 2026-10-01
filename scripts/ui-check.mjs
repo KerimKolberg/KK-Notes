@@ -2036,7 +2036,7 @@ async function checkVersionHistory(browser) {
   await page.waitForFunction(() => document.querySelector('[data-title]')?.value === 'Back from the past' || document.querySelector('[data-title]')?.textContent === 'Back from the past', null, { timeout: 5_000 }).catch(() => {});
   const title = await page.$eval('[data-title]', (el) => el.value ?? el.textContent);
   check('and the note on screen becomes that version', title === 'Back from the past', title);
-  check('with a notice saying so', (await page.$eval('[data-notice]', (el) => el.textContent ?? '').catch(() => '')).includes('Restored the version from'));
+  check('with a notice saying so', (await page.$eval('[data-notice], [data-notice-toast]', (el) => el.textContent ?? '').catch(() => '')).includes('Restored the version from'));
   check('the note is not left marked as changed', (await page.$('[data-dirty]')) === null);
 
   // With nothing kept yet.
@@ -2331,6 +2331,249 @@ async function checkLibraryOrganising(browser) {
   await ctx.close();
 }
 
+/** A small valid PDF of `count` pages, each with a line of text, as bytes. */
+function tinyPdf(count, label = 'Lecture') {
+  const objects = [];
+  const add = (body) => objects.push(body) && objects.length;
+  const catalog = add('');
+  const pagesRoot = add('');
+  const font = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const kids = [];
+  for (let i = 0; i < count; i++) {
+    const text = `BT /F1 36 Tf 60 700 Td (${label} page ${i + 1}) Tj ET`;
+    const content = add(`<< /Length ${text.length} >>\nstream\n${text}\nendstream`);
+    kids.push(add(`<< /Type /Page /Parent ${pagesRoot} 0 R /MediaBox [0 0 612 792] /Contents ${content} 0 R /Resources << /Font << /F1 ${font} 0 R >> >> >>`));
+  }
+  objects[catalog - 1] = `<< /Type /Catalog /Pages ${pagesRoot} 0 R >>`;
+  objects[pagesRoot - 1] = `<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(' ')}] /Count ${count} >>`;
+  let out = '%PDF-1.4\n';
+  const offsets = [];
+  objects.forEach((body, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) out += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  out += `trailer\n<< /Size ${objects.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Array.from(Buffer.from(out, 'latin1'));
+}
+
+/**
+ * A PDF dropped on an open note opens beside it for reading instead of adding its pages; the notice's button
+ * does add them; and Undo takes that import back (and Redo puts it there again).
+ */
+async function checkReadingDrop(browser) {
+  console.log('dropping a PDF on a note, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-insert-trigger]', { timeout: 10_000 });
+  // Not a blank note: a blank one is simply replaced by whatever is opened over it.
+  await page.fill('[data-title]', 'My summary');
+  await page.waitForTimeout(100);
+  const badge = () => page.$eval('[data-page-badge]', (e) => e.textContent.replace(/\s+/g, ' ').trim());
+  const pdfTransfer = (name, pages) =>
+    page.evaluateHandle(({ name, bytes }) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array(bytes)], name, { type: 'application/pdf' }));
+      return transfer;
+    }, { name, bytes: tinyPdf(pages) });
+
+  const drop = await pdfTransfer('Lecture 3.pdf', 2);
+  await page.dispatchEvent('[data-page-stage]', 'dragover', { dataTransfer: drop });
+  await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: drop });
+  await page.waitForSelector('[data-reference-pane]', { timeout: 15_000 });
+  check('the PDF opens in the pane beside the note', (await page.textContent('[data-reference-title]')).includes('Lecture'));
+  await page.waitForFunction(() => document.querySelectorAll('[data-reference-page-frame]').length >= 1, null, { timeout: 10_000 });
+  check('with its pages to read', true);
+  check('the note is still the one being written in, and has the pages it had', (await page.$eval('[data-title]', (e) => e.value)) === 'My summary' && (await badge()).endsWith('/ 1'), await badge());
+  check('the PDF is a tab of its own', (await page.$$('[data-tab]')).length === 2);
+  const notice = await page.$eval('[data-notice], [data-notice-toast]', (e) => e.textContent ?? '');
+  check('the notice says where it went and offers the other thing', notice.includes('beside your note') && notice.includes('Add its pages to my note instead'), notice);
+
+  // The other meaning: its pages into the note.
+  await page.click('[data-notice-toast] button:has-text("Add its pages")');
+  await page.waitForFunction(() => /\/ 3$/.test(document.querySelector('[data-page-badge]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''), null, { timeout: 15_000 });
+  check('adds them to the note after its own', (await badge()).endsWith('/ 3'), await badge());
+  check('and the reading tab and pane are gone', (await page.$('[data-reference-pane]')) === null && (await page.$$('[data-tab]')).length <= 1);
+
+  // Undo takes the import back.
+  check('Undo is available', await page.$eval('[data-undo]', (e) => !e.disabled));
+  await page.click('[data-undo]');
+  await page.waitForFunction(() => /\/ 1$/.test(document.querySelector('[data-page-badge]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''), null, { timeout: 5_000 });
+  check('Undo takes the imported pages out again', (await badge()).endsWith('/ 1'), await badge());
+  check('and says so', (await page.$eval('[data-notice], [data-notice-toast]', (e) => e.textContent ?? '')).includes('Undid adding 2 pages'));
+  check('Redo is then available', await page.$eval('[data-redo]', (e) => !e.disabled));
+  await page.click('[data-redo]');
+  await page.waitForFunction(() => /\/ 3$/.test(document.querySelector('[data-page-badge]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''), null, { timeout: 5_000 });
+  check('and Redo puts them back', (await badge()).endsWith('/ 3'), await badge());
+  await page.keyboard.press('Control+z');
+  await page.waitForFunction(() => /\/ 1$/.test(document.querySelector('[data-page-badge]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''), null, { timeout: 5_000 });
+  check('Ctrl+Z does the same as the button', (await badge()).endsWith('/ 1'), await badge());
+
+  // A second one replaces what the pane shows, and adds a tab.
+  const drop2 = await pdfTransfer('Exercises.pdf', 1);
+  await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: drop2 });
+  await page.waitForFunction(() => (document.querySelector('[data-reference-title]')?.textContent ?? '').includes('Exercises'), null, { timeout: 15_000 });
+  check('a second PDF takes over the pane', true);
+  check('and is a tab of its own, with the note still being written in', (await page.$$('[data-tab]')).length === 2 && (await page.$eval('[data-title]', (e) => e.value)) === 'My summary');
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
+ * The snipping tool: cut a piece out of a PDF in the reference pane, put it on the note (with the button and by
+ * dragging), take it off with Undo, snip in the editor itself without drawing, and carry one onto another tab.
+ */
+async function checkSnipping(browser) {
+  console.log('snipping, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-insert-trigger]', { timeout: 10_000 });
+  await page.fill('[data-title]', 'My summary');
+
+  const transfer = await page.evaluateHandle(({ bytes }) => {
+    const t = new DataTransfer();
+    t.items.add(new File([new Uint8Array(bytes)], 'Exercises.pdf', { type: 'application/pdf' }));
+    return t;
+  }, { bytes: tinyPdf(2, 'Exercise') });
+  await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: transfer });
+  await page.waitForSelector('[data-reference-page-frame] canvas[data-snapshot-ready="true"]', { timeout: 20_000 });
+  const images = () => page.$$('[data-page-index="0"] [data-media-kind="image"]');
+  const darkPixels = (selector) =>
+    page.$eval(selector, async (img) => {
+      await img.decode();
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i] < 100 && d[i + 3] > 200) n++;
+      return { n, w: c.width, h: c.height };
+    });
+
+  check('there is no tray until snipping is asked for', (await page.$('[data-snip-tray]')) === null);
+  await page.click('[data-reference-snip]');
+  await page.waitForSelector('[data-snip-hint]');
+  check('the scissors in the pane turn snipping on, and the tray says what to do', true);
+
+  // Cut round the first line of the PDF's text: it is drawn near the top left of the page.
+  const frame = await (await page.$('[data-reference-page-frame]')).boundingBox();
+  await page.mouse.move(frame.x + 10, frame.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(frame.x + 150, frame.y + 60, { steps: 6 });
+  check('a dashed rubber band follows the drag', (await page.$('[data-snip-marquee]')) !== null);
+  await page.mouse.move(frame.x + 260, frame.y + 90, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForSelector('[data-snip]', { timeout: 15_000 });
+  check('letting go makes a snip, in the tray', (await page.$$('[data-snip]')).length === 1 && (await page.$('[data-snip-marquee]')) === null);
+  const px = await darkPixels('[data-snip-image]');
+  check('which holds what was under the drag: the words, at a readable size', px.n > 100 && px.w > 400, `${px.n} dark pixels, ${px.w}x${px.h}`);
+  check('and cut from the page, nothing drawn on the note', (await images()).length === 0);
+
+  // A click without a drag is not a snip.
+  await page.mouse.click(frame.x + 100, frame.y + 300);
+  check('a click is not a snip', (await page.$$('[data-snip]')).length === 1);
+
+  // Done, then place with the button.
+  await page.click('[data-snip-done]');
+  check('Done turns snipping off and keeps the snips', (await page.$('[data-snip-hint]')) === null && (await page.$$('[data-snip]')).length === 1);
+  await page.click('[data-snip-place]');
+  await page.waitForSelector('[data-page-index="0"] [data-media-kind="image"]', { timeout: 5_000 });
+  check('Place puts it on the note\'s page in view, as a picture', (await images()).length === 1);
+  check('selected, so it can be moved at once', (await page.$('[data-media-toolbar]')) !== null);
+  check('Undo is offered, and takes it off', await page.$eval('[data-undo]', (e) => !e.disabled));
+  await page.click('[data-undo]');
+  await page.waitForFunction(() => document.querySelectorAll('[data-page-index="0"] [data-media-kind="image"]').length === 0);
+  check('the snip is gone from the page', true);
+  check('and still in the tray', (await page.$$('[data-snip]')).length === 1);
+  await page.click('[data-redo]');
+  await page.waitForSelector('[data-page-index="0"] [data-media-kind="image"]');
+  check('Redo puts it back', (await images()).length === 1);
+
+  // Drag it out of the tray to a place on the page.
+  const pageBox = await (await page.$('[data-page-index="0"]')).boundingBox();
+  const thumb = await (await page.$('[data-snip-image]')).boundingBox();
+  // Well above the toolbar, which floats over the lower part of the page.
+  const dropX = pageBox.x + pageBox.width * 0.55;
+  const dropY = pageBox.y + 260;
+  await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(thumb.x + thumb.width / 2 + 40, thumb.y + thumb.height / 2 + 40, { steps: 4 });
+  check('while dragging, a copy follows the pointer', (await page.$('[data-snip-ghost]')) !== null);
+  await page.mouse.move(dropX, dropY, { steps: 8 });
+  check('and the page it is over is lit', (await page.$('[data-page-index="0"][data-snip-target]')) !== null);
+  await page.mouse.up();
+  await page.waitForFunction(() => document.querySelectorAll('[data-page-index="0"] [data-media-kind="image"]').length === 2);
+  check('dropping puts it on the page', (await images()).length === 2 && (await page.$('[data-snip-ghost]')) === null && (await page.$('[data-snip-target]')) === null);
+  const placed = await (await images())[1].boundingBox();
+  check('centred where it was dropped', Math.abs(placed.x + placed.width / 2 - dropX) < 14 && Math.abs(placed.y + placed.height / 2 - dropY) < 14, `${Math.round(placed.x + placed.width / 2 - dropX)}, ${Math.round(placed.y + placed.height / 2 - dropY)}`);
+
+  // Dropped on nothing, it stays in the tray and nothing is added.
+  await page.mouse.move(thumb.x + thumb.width / 2, thumb.y + thumb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(thumb.x + 60, 30, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(150);
+  check('dropped on nothing it adds nothing', (await images()).length === 2 && (await page.$$('[data-snip]')).length === 1, `${(await images()).length} images, ${(await page.$$('[data-snip]')).length} snips`);
+
+  // Snipping in the editor itself, without drawing.
+  await page.click('[data-snip-toggle]');
+  await page.waitForSelector('[data-snip-hint]');
+  // The tray covers a corner of the page: it can be pulled out of the way by its title.
+  const grip = await (await page.$('[data-snip-grip]')).boundingBox();
+  await page.mouse.move(grip.x + 60, grip.y + grip.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(grip.x + 60 + 120, grip.y + 120, { steps: 5 });
+  await page.mouse.up();
+  const moved = await (await page.$('[data-snip-grip]')).boundingBox();
+  check('the tray can be pulled aside by its title', Math.abs(moved.x - grip.x - 120) < 4 && Math.abs(moved.y - grip.y - (120 - grip.height / 2)) < 4, `${Math.round(moved.x - grip.x)}, ${Math.round(moved.y - grip.y)}`);
+  await page.mouse.move(pageBox.x + 300, pageBox.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(pageBox.x + 480, pageBox.y + 160, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForFunction(() => document.querySelectorAll('[data-snip]').length === 2, null, { timeout: 15_000 }).catch(async () => {
+    console.log('   notice:', await page.$eval('[data-notice], [data-notice-toast]', (e) => e.textContent).catch(() => 'none'));
+  });
+  check('the top bar\'s scissors snip the page being written on', (await page.$$('[data-snip]')).length === 2);
+  const strokeCount = await page.$eval('[data-page-index="0"] [data-layer="committed"]', (c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+    return n;
+  }).catch(() => 0);
+  check('and no ink was laid down by the drag', strokeCount === 0, String(strokeCount));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('[data-snip-hint]') === null);
+  check('Esc stops snipping', true);
+
+  // Carry a snip to another tab: holding it over the tab opens it.
+  const other = page.locator('[data-tab]:not([data-tab-active])').first();
+  const tabBox = await other.boundingBox();
+  const first = await (await page.$('[data-snip-image]')).boundingBox();
+  await page.mouse.move(first.x + first.width / 2, first.y + first.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(first.x + first.width / 2 + 30, first.y + first.height / 2 + 30, { steps: 3 });
+  await page.mouse.move(tabBox.x + tabBox.width / 2, tabBox.y + tabBox.height / 2, { steps: 8 });
+  check('a snip held over a tab marks it', (await page.$('[data-tab][data-snip-hover]')) !== null);
+  await page.waitForFunction(() => /Exercises/.test(document.querySelector('[data-tab][data-tab-active]')?.textContent ?? ''), null, { timeout: 4_000 });
+  await page.mouse.up();
+  check('and after a moment opens that tab', true);
+  check('the snips are still there in the other tab', (await page.$$('[data-snip]')).length === 2);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
 /**
  * Turning a selection: the round handle above the box, and the quarter-turn buttons.
  * A flat line is the easiest thing to see turn: it ends up standing.
@@ -2526,6 +2769,8 @@ try {
     checkAppLock,
     checkBookmarks,
     checkLibraryOrganising,
+    checkReadingDrop,
+    checkSnipping,
     checkTextToolbar,
     checkZoomAnchor,
   ];

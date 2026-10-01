@@ -30,6 +30,7 @@
  * That makes the invariant `dirty → session !== null` hold at all times, and it
  * is what stops "optimising memory" from meaning "throwing away your work".
  */
+import type { RedoEntry, StructureEntry } from './structureHistory';
 import type { Cover, Document, Page } from './types';
 
 /**
@@ -46,6 +47,8 @@ export interface TabSession {
   readonly savedTitle: string | null;
   readonly savedCover: Cover | null | undefined;
   readonly readOnly: boolean;
+  /** What Undo and Redo can take back of the note's pages; absent for a document that has been opened fresh. */
+  readonly history?: { readonly undo: readonly StructureEntry[]; readonly redo: readonly RedoEntry[] };
 }
 
 export interface Tab {

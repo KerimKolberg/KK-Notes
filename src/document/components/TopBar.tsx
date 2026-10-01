@@ -14,6 +14,7 @@ import {
   LockOpen,
   Redo2,
   Rows3,
+  Scissors,
   Search,
   Square,
   Undo2,
@@ -25,11 +26,13 @@ import { useRouteStore } from '../../library/routeStore';
 import { useDesktopStore } from '../../desktop/desktopStore';
 import { useSearchStore } from '../../search/searchStore';
 import { useBookmarksStore } from '../bookmarksStore';
+import { useSnipStore } from '../../snip/snipStore';
 import { actionExportPdf } from '../../desktop/fileActions';
 import { FileMenu } from '../../desktop/FileMenu';
 import { IconButton } from '../../ui/IconButton';
 import { MAX_ZOOM, MIN_ZOOM } from '../constants';
 import { selectIsDirty, useDocumentStore } from '../store';
+import { performRedo, performUndo, selectCanRedo, selectCanUndo } from '../undo';
 import type { ViewMode } from '../types';
 
 interface ViewModeDescriptor {
@@ -58,13 +61,14 @@ export function TopBar() {
     useBookmarksStore.getState().close();
     useSearchStore.getState().toggle();
   };
+  const snipping = useSnipStore((s) => s.mode);
+  const toggleSnipping = useSnipStore((s) => s.toggleMode);
   const bookmarksOpen = useBookmarksStore((s) => s.open);
   const toggleBookmarks = useBookmarksStore((s) => s.toggle);
   const pageBookmarked = useDocumentStore((s) => s.document.pages[s.document.activePageIndex]?.bookmark !== undefined);
-  const { title, pageCount, activePageIndex, viewMode, zoom, arrangerOpen, exporting, readOnly, dirty, canUndo, canRedo, activePageId } =
+  const { title, pageCount, activePageIndex, viewMode, zoom, arrangerOpen, exporting, readOnly, dirty, canUndo, canRedo } =
     useDocumentStore(
       useShallow((s) => {
-        const page = s.document.pages[s.document.activePageIndex];
         return {
           title: s.document.title,
           pageCount: s.document.pages.length,
@@ -75,13 +79,12 @@ export function TopBar() {
           exporting: s.exporting,
           readOnly: s.readOnly,
           dirty: selectIsDirty(s),
-          canUndo: (page?.undoStack.length ?? 0) > 0,
-          canRedo: (page?.redoStack.length ?? 0) > 0,
-          activePageId: page?.id ?? '',
+          canUndo: selectCanUndo(s),
+          canRedo: selectCanRedo(s),
         };
       }),
     );
-  const { setTitle, jumpToPage, setViewMode, zoomBy, setZoom, setArrangerOpen, setImportDialogOpen, toggleReadOnly, undo, redo } =
+  const { setTitle, jumpToPage, setViewMode, zoomBy, setZoom, setArrangerOpen, setImportDialogOpen, toggleReadOnly } =
     useDocumentStore(
       useShallow((s) => ({
         setTitle: s.setTitle,
@@ -92,8 +95,6 @@ export function TopBar() {
         setArrangerOpen: s.setArrangerOpen,
         setImportDialogOpen: s.setImportDialogOpen,
         toggleReadOnly: s.toggleReadOnly,
-        undo: s.undo,
-        redo: s.redo,
       })),
     );
   const { notice, setNotice } = useDesktopStore(useShallow((s) => ({ notice: s.notice, setNotice: s.setNotice })));
@@ -160,7 +161,7 @@ export function TopBar() {
           label="Undo"
           hint="Ctrl+Z"
           disabled={!canUndo || readOnly}
-          onClick={() => undo(activePageId)}
+          onClick={performUndo}
           tooltipSide="bottom"
           data-undo
         />
@@ -169,7 +170,7 @@ export function TopBar() {
           label="Redo"
           hint="Ctrl+Shift+Z"
           disabled={!canRedo || readOnly}
-          onClick={() => redo(activePageId)}
+          onClick={performRedo}
           tooltipSide="bottom"
           data-redo
         />
@@ -242,18 +243,9 @@ export function TopBar() {
         />
       </div>
 
-      {notice && (
+      {notice && !notice.action && (
         <span className="hidden min-w-0 items-center gap-2 truncate text-xs text-zinc-600 xl:flex dark:text-zinc-300" role="status" data-notice>
           <span className="truncate">{notice.text}</span>
-          {notice.action && (
-            <button
-              type="button"
-              className="rounded px-1.5 py-0.5 font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950"
-              onClick={notice.action.run}
-            >
-              {notice.action.label}
-            </button>
-          )}
           <button
             type="button"
             className="rounded px-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
@@ -298,6 +290,15 @@ export function TopBar() {
           onClick={toggleSearch}
           tooltipSide="bottom"
           data-search-toggle
+        />
+        <IconButton
+          icon={Scissors}
+          label="Snip"
+          hint="cut a piece out of a page"
+          active={snipping}
+          onClick={toggleSnipping}
+          tooltipSide="bottom"
+          data-snip-toggle
         />
         <IconButton
           icon={pageBookmarked ? BookmarkCheck : Bookmark}

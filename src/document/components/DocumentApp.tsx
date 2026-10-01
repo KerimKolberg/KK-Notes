@@ -1,5 +1,4 @@
 import { Suspense, lazy, useCallback, useEffect, useRef } from 'react';
-import { useShallow } from 'zustand/react/shallow';
 import { Zap } from 'lucide-react';
 import { useLatestRef } from '../../inking/hooks/useLatestRef';
 import { useUndoRedoShortcuts } from '../../inking/hooks/useUndoRedoShortcuts';
@@ -37,6 +36,10 @@ import { useZoomWindowStore } from '../zoomWindow';
 import { useSearchStore } from '../../search/searchStore';
 import { useVersionsStore } from '../../desktop/versionsStore';
 import { useBookmarksStore } from '../bookmarksStore';
+import { performRedo, performUndo } from '../undo';
+import { NoticeToast } from './NoticeToast';
+import { SnipTray } from '../../snip/SnipTray';
+import { useSnipping } from '../../snip/useSnipping';
 import { useToolStore } from '../toolStore';
 import { DocumentViewer } from './DocumentViewer';
 import { PageArranger } from './PageArranger';
@@ -73,9 +76,7 @@ export function DocumentApp() {
   // the keyboard shortcuts and for clearing.
   const activePageId = useDocumentStore((s) => s.document.pages[s.document.activePageIndex]?.id ?? '');
   const readOnly = useDocumentStore((s) => s.readOnly);
-  const { undo, redo, clearPage } = useDocumentStore(
-    useShallow((s) => ({ undo: s.undo, redo: s.redo, clearPage: s.clearPage })),
-  );
+  const clearPage = useDocumentStore((s) => s.clearPage);
 
   /** Drop a new note or table on the page the reader is looking at. */
   const insertMedia = useCallback(
@@ -131,28 +132,23 @@ export function DocumentApp() {
     [settingsRef],
   );
 
-  const undoActive = useCallback(() => undo(activePageId), [undo, activePageId]);
-  const redoActive = useCallback(() => redo(activePageId), [redo, activePageId]);
   const clearActive = useCallback(() => clearPage(activePageId), [clearPage, activePageId]);
-  useUndoRedoShortcuts(undoActive, redoActive, !readOnly);
+  useUndoRedoShortcuts(performUndo, performRedo, !readOnly);
   useDesktopIntegration();
+  useSnipping();
   // New pages pick up whatever the user set as their default layout.
   usePageDefaultsSource();
 
   const importDialogOpen = useDocumentStore((s) => s.importDialogOpen);
 
-  // Dropped PDFs import all their pages at the end of the document.
   /**
    * A non-image file dropped on the page stage.
    *
-   * A PDF is *appended* to the document that is already open, which is the
-   * difference between dropping one here and opening one from the library: the
-   * gesture says "add these pages to what I am working on", and replacing the
-   * document with a fresh import would throw that work away.
+   * A PDF opens for *reading*: in a new tab, and beside the note when there is room (see `reading.ts`). The
+   * gesture is "let me look at this while I write", and adding its pages to the note is the notice's button
+   * (and Import PDF), both of which Undo takes back.
    *
-   * A note or a notebook cannot mean that — they are whole documents — so they
-   * replace what is open, after the same unsaved-work prompt every other way of
-   * leaving a document uses.
+   * A note or a notebook is a whole document, so it opens in a tab of its own.
    */
   const openDroppedFile = useCallback((file: File) => {
     const name = file.name.toLowerCase();
@@ -162,16 +158,10 @@ export function DocumentApp() {
     };
 
     if (file.type === 'application/pdf' || name.endsWith('.pdf')) {
-      if (useDocumentStore.getState().readOnly) {
-        setNotice({ text: 'This document is locked for presenting, so pages cannot be added to it.' });
-        return;
-      }
+      // Opens beside the note for reading; the pages-into-this-note behaviour is the notice's button.
       void (async () => {
-        const { loadPdfFile, buildPdfPages } = await import('../../pdf/import');
-        const loaded = await loadPdfFile(file);
-        const pages = await buildPdfPages(loaded, loaded.pages.map((p) => p.index), { sizeMode: 'preserve' });
-        useDocumentStore.getState().appendPages(pages);
-        setNotice({ text: `Added ${pages.length} page${pages.length === 1 ? '' : 's'} from ${file.name}.` });
+        const { openDroppedPdf } = await import('../reading');
+        await openDroppedPdf(file);
       })().catch(fail);
       return;
     }
@@ -357,6 +347,8 @@ export function DocumentApp() {
               <SearchPanel />
             </Suspense>
           )}
+          <NoticeToast />
+          <SnipTray />
           {bookmarksOpen && (
             <Suspense fallback={null}>
               <BookmarksPanel />

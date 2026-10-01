@@ -18,7 +18,8 @@
  * a 200-page PDF in here is 200 `<div>`s and a handful of textures.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Minus, Plus, X } from 'lucide-react';
+import { Minus, Plus, Scissors, X } from 'lucide-react';
+import { useSnipStore } from '../../snip/snipStore';
 import { PageSnapshot } from './PageSnapshot';
 import { useTabStore } from '../tabStore';
 import type { Page } from '../types';
@@ -33,6 +34,8 @@ export function ReferencePane(): React.JSX.Element | null {
   const splitId = useTabStore((s) => s.splitId);
   const tabs = useTabStore((s) => s.tabs);
   const closeSplit = useTabStore((s) => s.closeSplit);
+  const snipping = useSnipStore((s) => s.mode);
+  const toggleSnipping = useSnipStore((s) => s.toggleMode);
   const tab = useMemo(() => tabs.find((t) => t.id === splitId) ?? null, [tabs, splitId]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -108,6 +111,19 @@ export function ReferencePane(): React.JSX.Element | null {
         </span>
         <button
           type="button"
+          aria-label="Snip a piece of this document"
+          title="Snip a piece of this document"
+          aria-pressed={snipping}
+          data-reference-snip
+          className={`flex h-7 w-7 items-center justify-center rounded ${
+            snipping ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700'
+          }`}
+          onClick={toggleSnipping}
+        >
+          <Scissors size={13} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
           aria-label="Zoom out"
           className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700"
           onClick={() => setZoom((z) => Math.max(MIN_ZOOM, Math.round((z - 0.1) * 10) / 10))}
@@ -151,6 +167,7 @@ export function ReferencePane(): React.JSX.Element | null {
                 }}
                 className="overflow-hidden rounded bg-white shadow-sm dark:bg-zinc-100"
                 data-reference-page-frame
+                data-reference-page-id={box.page.id}
               >
                 <PageSnapshot page={box.page} cssWidth={box.cssWidth} cssHeight={box.cssHeight} />
               </div>

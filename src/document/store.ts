@@ -30,6 +30,15 @@ import { keepStrokes, type EraseFilter } from '../inking/engine/eraseFilter';
 import type { Stroke } from '../inking/types';
 import { TEMPLATE_DEFAULT_SPACING, ZOOM_STEP } from './constants';
 import { withBookmark } from './bookmarks';
+import {
+  canRedoStructure,
+  depthsOf,
+  pushEntry,
+  pushRedo,
+  undoesStructureFirst,
+  type RedoEntry,
+  type StructureEntry,
+} from './structureHistory';
 import { useClipboardStore } from './clipboard';
 import { clampZoom } from './layout';
 import {
@@ -99,6 +108,9 @@ export interface DocumentStore {
   savedPages: readonly Page[] | null;
   savedTitle: string | null;
   savedCover: Cover | null | undefined;
+  /** Changes to the pages (an import, a page added, moved or deleted) that Undo can take back; see `structureHistory.ts`. */
+  structureUndo: readonly StructureEntry[];
+  structureRedo: readonly RedoEntry[];
 
   // navigation / view
   setActivePage: (index: number) => void;
@@ -135,11 +147,20 @@ export interface DocumentStore {
   eraseStrokes: (pageId: string, ids: ReadonlySet<string>) => void;
   clearPage: (pageId: string) => void;
   undo: (pageId: string) => void;
+  /**
+   * Undo whatever was done last to the note: a change to its pages, or a stroke on the page in view,
+   * whichever is more recent. Resolves what the change was ("adding 12 pages"), or `null` for a stroke.
+   */
+  undoLast: () => string | null;
+  /** The same, for Redo. */
+  redoLast: () => string | null;
   redo: (pageId: string) => void;
 
   // forms & media
   setFormValue: (pageId: string, name: string, value: FormValue) => void;
   addMedia: (pageId: string, item: MediaObject) => void;
+  /** The same, as a change Undo can take back (see `structureHistory.ts`), named for the notice that says so. */
+  addMediaUndoable: (pageId: string, item: MediaObject, label: string) => void;
   updateMedia: (pageId: string, mediaId: string, patch: Partial<MediaObject>) => void;
   removeMedia: (pageId: string, mediaId: string) => void;
   bringMediaToFront: (pageId: string, mediaId: string) => void;
@@ -235,6 +256,21 @@ function updateTargets(doc: Document, target: PageTarget, fn: (page: Page) => Pa
   return { ...doc, pages };
 }
 
+/**
+ * A change to the pages, with what it replaced kept for Undo. Any new change ends what could have been redone.
+ */
+function structured(s: DocumentStore, label: string, document: Document): Pick<DocumentStore, 'document' | 'structureUndo' | 'structureRedo'> {
+  return {
+    document,
+    structureUndo: pushEntry(s.structureUndo, {
+      label,
+      before: { pages: s.document.pages, activePageIndex: s.document.activePageIndex },
+      depths: depthsOf(document.pages),
+    }),
+    structureRedo: [],
+  };
+}
+
 const initialDocument = createDocument(1);
 
 export const useDocumentStore = create<DocumentStore>()((set, get) => ({
@@ -250,6 +286,8 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
   savedPages: initialDocument.pages,
   savedTitle: initialDocument.title,
   savedCover: initialDocument.cover,
+  structureUndo: [],
+  structureRedo: [],
 
   setActivePage: (index) =>
     set((s) => {
@@ -295,7 +333,10 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       pages.forEach((page, i) => {
         next = insertPage(next, index + i, page);
       });
-      return { document: { ...doc, pages: next, activePageIndex: index }, scrollRequest: s.scrollRequest + 1 };
+      return {
+        ...structured(s, pages.length === 1 ? 'adding a page' : `adding ${pages.length} pages`, { ...doc, pages: next, activePageIndex: index }),
+        scrollRequest: s.scrollRequest + 1,
+      };
     })),
 
   addPage: (position, referenceIndex) =>
@@ -315,7 +356,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       );
       const at = position === 'before' ? ref : ref + 1;
       return {
-        document: { ...doc, pages: insertPage(doc.pages, at, page), activePageIndex: at },
+        ...structured(s, 'adding a page', { ...doc, pages: insertPage(doc.pages, at, page), activePageIndex: at }),
         scrollRequest: s.scrollRequest + 1,
       };
     })),
@@ -327,7 +368,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       const source = doc.pages[i];
       if (!source) return s;
       return {
-        document: { ...doc, pages: insertPage(doc.pages, i + 1, clonePage(source)), activePageIndex: i + 1 },
+        ...structured(s, 'duplicating a page', { ...doc, pages: insertPage(doc.pages, i + 1, clonePage(source)), activePageIndex: i + 1 }),
         scrollRequest: s.scrollRequest + 1,
       };
     })),
@@ -343,7 +384,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       const activePageIndex = i === doc.activePageIndex ? clampIndex(i, pages.length) : indexOfPage(pages, activeId, i);
       const deletedId = doc.pages[i]?.id;
       return {
-        document: { ...doc, pages, activePageIndex },
+        ...structured(s, 'deleting a page', { ...doc, pages, activePageIndex }),
         lassoSelection: s.lassoSelection?.pageId === deletedId ? null : s.lassoSelection,
         selectedMedia: s.selectedMedia?.pageId === deletedId ? null : s.selectedMedia,
       };
@@ -357,7 +398,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       if (pages.every((p, i) => p === doc.pages[i])) return s;
       // The viewer keeps following the page the reader was on.
       return {
-        document: { ...doc, pages, activePageIndex: indexOfPage(pages, activeId, doc.activePageIndex) },
+        ...structured(s, 'moving a page', { ...doc, pages, activePageIndex: indexOfPage(pages, activeId, doc.activePageIndex) }),
         scrollRequest: s.scrollRequest + 1,
       };
     })),
@@ -419,6 +460,61 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
 
   redo: (pageId) => set(edit((s) => ({ document: updatePageById(s.document, pageId, redoPage) }))),
 
+  undoLast: () => {
+    const s = get();
+    if (s.readOnly) return null;
+    const doc = s.document;
+    const page = doc.pages[doc.activePageIndex];
+    const top = s.structureUndo[s.structureUndo.length - 1];
+    if (top && undoesStructureFirst(top, page)) {
+      const { pages, activePageIndex } = top.before;
+      set({
+        document: { ...doc, pages, activePageIndex: clampIndex(activePageIndex, pages.length) },
+        structureUndo: s.structureUndo.slice(0, -1),
+        structureRedo: pushRedo(s.structureRedo, {
+          label: top.label,
+          after: { pages: doc.pages, activePageIndex: doc.activePageIndex },
+          restored: pages,
+          depths: top.depths,
+        }),
+        scrollRequest: s.scrollRequest + 1,
+        selectedMedia: null,
+        lassoSelection: null,
+      });
+      return top.label;
+    }
+    if (page) set({ document: updatePageById(doc, page.id, undoPage) });
+    return null;
+  },
+
+  redoLast: () => {
+    const s = get();
+    if (s.readOnly) return null;
+    const doc = s.document;
+    const page = doc.pages[doc.activePageIndex];
+    // A stroke undone on this page is the newer thing to put back.
+    if (page && page.redoStack.length > 0) {
+      set({ document: updatePageById(doc, page.id, redoPage) });
+      return null;
+    }
+    const top = s.structureRedo[s.structureRedo.length - 1];
+    if (!top || !canRedoStructure(top, doc.pages)) return null;
+    const { pages, activePageIndex } = top.after;
+    set({
+      document: { ...doc, pages, activePageIndex: clampIndex(activePageIndex, pages.length) },
+      structureRedo: s.structureRedo.slice(0, -1),
+      structureUndo: pushEntry(s.structureUndo, {
+        label: top.label,
+        before: { pages: doc.pages, activePageIndex: doc.activePageIndex },
+        depths: top.depths,
+      }),
+      scrollRequest: s.scrollRequest + 1,
+      selectedMedia: null,
+      lassoSelection: null,
+    });
+    return top.label;
+  },
+
   setFormValue: (pageId, name, value) =>
     set((s) => ({ document: updatePageById(s.document, pageId, (page) => withFormValue(page, name, value)) })),
 
@@ -427,6 +523,12 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       document: updatePageById(s.document, pageId, (page) => withMedia(page, addMediaToList(page.media, item))),
       selectedMedia: { pageId, mediaId: item.id },
     }))),
+
+  addMediaUndoable: (pageId, item, label) =>
+    set(edit((s) => {
+      const next = updatePageById(s.document, pageId, (page) => withMedia(page, addMediaToList(page.media, item)));
+      return next === s.document ? s : structured(s, label, next);
+    })),
 
   updateMedia: (pageId, mediaId, patch) =>
     set(edit((s) => ({
@@ -641,6 +743,8 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       savedPages: doc.pages,
       savedTitle: doc.title,
       savedCover: doc.cover,
+      structureUndo: [],
+      structureRedo: [],
     }),
 
   newDocument: () => {
@@ -654,6 +758,8 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       savedPages: doc.pages,
       savedTitle: doc.title,
       savedCover: doc.cover,
+      structureUndo: [],
+      structureRedo: [],
     });
   },
 

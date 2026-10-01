@@ -537,6 +537,24 @@ template + `templateConfig`, background colour, the stroke list (the same
 `undoStack` / `redoStack`. `serialization.ts` round-trips a document to JSON
 without history.
 
+**Undo for the pages themselves** (`structureHistory.ts`, `undo.ts`). Each page keeps its own
+stroke history, which is all Undo used to reach, so importing a PDF, adding, duplicating, deleting or
+moving a page, and placing a snip could not be taken back. Each now leaves an entry — the pages as they
+were before — and the top bar's Undo and Redo, **Ctrl+Z** and **Ctrl+Shift+Z / Ctrl+Y** act on the note
+as a whole, saying what they did ("Undid adding 12 pages"). Up to 30 changes are kept, with the tab in
+its session (so they survive switching tabs) and gone when the note is opened afresh.
+
+- **Which comes first** is settled by *when*, without a shared log. An entry remembers each page's
+  stroke-history depth at the moment of the change. Undo looks at the page in view: if its history is
+  deeper than the entry remembers, a stroke was drawn after the change and is undone first; if not, the
+  change is the most recent thing and is undone. So "import, then draw, then undo" removes the stroke,
+  and "import, go back to an older page, undo" removes the import, which is what each of them means.
+- **Redo** mirrors it: a page's own redo first (it is the newer), then a change that was undone, but only
+  while the pages are still what the undo left (compared by ink, objects and look), so a redo is never
+  applied to a note that has moved on. Any new change ends what could have been redone.
+- Going back to what was saved leaves the note saved: the entry holds the very pages array that was
+  saved, so the dirty check, which compares by identity, sees nothing changed.
+
 **Templates.** `templates.ts` generates the background lines once and feeds
 two renderers: an SVG data URL used as the live page's CSS background (a few
 KB, crisp at any zoom, no extra texture) and a canvas painter used by the
@@ -1282,6 +1300,39 @@ dragged with a finger or the pen, and the ratio is clamped to 0.25–0.75. The
 option only appears on windows at least 900 CSS px wide; two columns on a phone
 would be two unusable columns.
 
+### Snipping (`src/snip/`)
+
+The scissors in the top bar, and in the reference pane's header, turn snipping on: dragging a **pen or a
+mouse** over a page — in the editor or in the pane — cuts the rectangle out as a **snip** instead of
+drawing, with a dashed band following the drag. A finger still scrolls and pinches. Esc, or *Done* in the
+tray, turns it off; the snips stay.
+
+Snips collect in a **tray** in a corner of the editor: the newest twelve, as pictures, held in memory and
+belonging to no document, so a snip cut in the exercise sheet's tab is still there after switching to the
+notes. The tray can be pulled aside by its title (it sits over a corner of the page, which may be the part
+you want to snip), folded, and cleared.
+
+- **Getting a snip onto a page.** Drag it out of the tray onto a page: a copy follows the pointer, the page
+  under it is outlined, and letting go puts it there, centred on the pointer, at the size it had where it was
+  cut (shrunk to 90 % of the page if that is more). Or press the tick: it goes across the middle of the page
+  in view, near the top, a little further along for each thing already there. Either way it is a picture on
+  the page, selected so it can be moved and resized at once, and **Undo takes it off** (it is one change in
+  the page history above).
+- **Between tabs.** Holding a snip over a tab for half a second opens that tab, as a browser does, so one
+  cut in the lecture's tab can be carried to the notes' tab in a single movement. Dragging is done with
+  pointer events rather than the browser's drag-and-drop so a pen drags as well as a mouse, and so the page and
+  the tab under it can be lit.
+- **What is cut.** The page as it looks: the PDF's own page, the notes and ink on it. The rasteriser draws
+  whole pages, so the page is drawn at the sharpness the region wants (at least twice the page unit; more for a
+  small region, so one line of text stays crisp; up to four times, and never wider than 3 200 px) and the region
+  cropped from that, as a PNG.
+- **How it intercepts.** While snipping is on a window-level, capture-phase `pointerdown` takes pen and mouse
+  presses over a page before anything else sees them — so nothing is drawn or selected under the drag — and the
+  rubber band is one element moved directly, not through React. Only the page the drag began on is cut, and the
+  rectangle is held to it.
+- **Limits.** Snips are not saved with a note (the picture placed on a page is, like any picture), and there is
+  no snipping with a finger alone: on a device with no pen or mouse the finger has to keep scrolling.
+
 ### Four doors into the app
 
 A file can arrive four ways, and they all reach one decision so that a PDF
@@ -1292,7 +1343,7 @@ opened any of them becomes the same document:
 | File association / Android intent | `get_startup_file`, or `MainActivity`'s bridge | `classifyOpenWith` → `openRequested` |
 | The library's **Open** button | `tauriDialog` on the desktop, `<input type=file>` in a browser | `openRequested`, or `openBrowserFile` |
 | Dropped on the library | HTML5 drop → `planDrop` | `openBrowserFile` |
-| Dropped on a page | HTML5 drop → `useMediaInput` | images and text placed here; documents to a new tab |
+| Dropped on a page | HTML5 drop → `useMediaInput` | images and text placed here; a PDF opens beside the note (`reading.ts`); notes and notebooks to a new tab |
 
 **Dropping is two features, and the second is the one that matters.** A webview's
 default action for a file drop nothing handled is to *navigate to the file* — so
@@ -1305,10 +1356,21 @@ between folders with its own HTML5 drag carrying `text/notes-entry`, and a guard
 that swallowed that would break moving notes. Both directions are checked, in
 `fileDrop.test.ts` and again in a real browser by `npm run check:ui`.
 
-**Where a drop lands decides what it means.** A PDF dropped on a *page* is
-appended to the document already open — the gesture says "add these pages to what
-I am working on", and replacing the document with a fresh import would throw that
-work away. A PDF dropped on the *library* opens as a new document, the same as
+**Where a drop lands decides what it means.** A PDF dropped on a *page* opens **for
+reading**: as a document of its own in a new tab, and (on a window at least 900 px
+wide) in the reference pane beside the note, with the editor left on the note — a
+lecture or an exercise sheet dropped next to your notes means "let me look at this
+while I write", not "add its pages to my page list". `openForReading` does it by
+opening the PDF through the same loader every door uses, then switching back to the
+note and putting the new tab in the pane. A note that is still blank and untouched is
+simply replaced, as with any open, and a window too narrow for two columns gets the
+new tab without the pane. The notice says what happened and carries the other meaning
+as a button, **Add its pages to my note instead** (it closes the reading tab and
+imports the pages, as the Import PDF button does), and Undo takes that import back.
+A second PDF takes over the pane. (The notice is shown as a toast over the page
+whenever it carries a choice, because the top bar has no room for a sentence and a
+button, and on a window narrower than 1280 px it was not shown there at all.) A PDF
+dropped on the *library* opens as a new document, the same as
 picking it. A note or a notebook can only mean the second thing wherever it
 lands, so it opens in **its own tab** — nothing on screen is replaced, which is
 why no prompt is needed any more. A plain text file becomes a text box holding
@@ -2475,6 +2537,16 @@ hit-testing can answer:
   note; the tag dialog adds tags, which show on the card and as filter chips with counts; a tag in use is
   offered as a suggestion; *Favourites* and each tag show just those notes across the library; all of it
   survives a reload; the last favourite going returns to all notes; deleting a note takes its tags.
+- **dropping a PDF on a note**: it opens in the pane beside the note, as a tab of its own, with its pages
+  drawn; the note is still the one being written in; the notice says where it went and offers *Add its pages to
+  my note instead*; taking that adds them after the note's own pages; Undo takes them out (and says so), Redo
+  puts them back, Ctrl+Z does the same as the button; a second PDF takes over the pane.
+- **snipping**: no tray until asked for; the pane's scissors show a hint; a drag shows a dashed band and, let go,
+  makes a snip holding the words that were under it at a readable size; a click is not a snip; Done turns it
+  off and keeps the snips; the tick places it on the note as a selected picture, Undo takes it off and Redo
+  puts it back; dragging it out lights the page and drops it centred on the pointer; dropped on nothing it adds
+  nothing; the tray can be pulled aside; the top bar's scissors snip the page being written on without laying
+  down ink; Esc stops; a snip held over a tab opens it and the snips are still there.
 - **a long stroke**: while the pen is down a long stroke has a tail layer that cannot take
   the pen's events, the stretch behind it is on the live canvas and the tail is only the last
   stretch, both go when the pen lifts, and the whole stroke lands on the page.
