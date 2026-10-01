@@ -86,8 +86,10 @@ jobs:
         run: |
           cat > notes.md <<'EOF'
           Unsigned Windows installer (NSIS). Windows will say "Windows protected
-          your PC": click **More info**, then **Run anyway**. Signing needs a paid
-          certificate, which this build does not have.
+          your PC": click **More info**, then **Run anyway**. With Smart App Control
+          on there is no such button and the installer is refused; it has to be turned
+          off in Windows Security (App & browser control), or the installer signed.
+          Signing needs a paid certificate, which this build does not have.
 
           Registers KK-Notes for `.notex`, `.goodnotes` and `.pdf` under "Open
           with" and in Default apps. It does not take PDFs from your browser.

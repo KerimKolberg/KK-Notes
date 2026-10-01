@@ -69,6 +69,15 @@ the `NOTEX_GOOGLE_DESKTOP_CLIENT_ID` repository variable (the Android workflow's
 The installer is unsigned, so Windows shows "Windows protected your PC": *More
 info → Run anyway*.
 
+**Smart App Control.** Windows 11 can run with *Smart App Control* on (Windows Security →
+App & browser control). It has no *Run anyway*: it refuses an app that is unsigned and not
+already known to Microsoft, and this installer is both, so it cannot be installed while the
+control is on. Two ways round it, neither of them in this code: turn Smart App Control off
+(on some Windows 11 builds it cannot be turned back on without resetting Windows), or sign
+the installer with a certificate that chains to Microsoft's trusted roots — Azure Trusted
+Signing, or an OV/EV code-signing certificate — which needs an identity check and a fee, and
+a signing step in `windows-installer.yml` that this repository does not have yet.
+
 From a non-Windows host the Rust side can still be verified without the
 GTK/WebKit libraries: `npm run check:rust` runs `cargo check` for the
 `x86_64-pc-windows-msvc` target (add it with `rustup target add`).
@@ -145,7 +154,8 @@ like a maximised one. The platform's own fullscreen (tao's: resized to cover the
 taskbar told to step aside, the same as Chromium's F11) is **not offered**: on the ROG Flow Z13 it
 made the mouse pointer lag from the moment it was on, with any pointer, and worse on a long
 scribble, while the borderless window was smooth at both 60 and 180 Hz (confirmed there, with
-the overlay showing frames arriving in bursts in the platform mode). It was a setting while
+the overlay showing frames arriving in bursts in the platform mode). Measured again at 180 Hz,
+both modes ran well, the platform one no lower than 50–60 fps; it stays out because the lag was at 60 Hz. It was a setting while
 that was being found out; a saved choice of it is now ignored. Leaving puts back what was
 there — a maximised window maximised again, otherwise its size and position. Only a monitor
 that reports no usable geometry falls back to the platform fullscreen. The window commands it
