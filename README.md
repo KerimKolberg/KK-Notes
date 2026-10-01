@@ -1310,6 +1310,12 @@ animation frame of its own. An idle pane costs nothing per frame, so the editor'
 latency is untouched. Only pages near the viewport are handed to the rasteriser,
 so a 200-page PDF in there is 200 `<div>`s and a handful of textures.
 
+**Zoom.** The `+`/`−` in the pane's header scale the pages from 40% to 200% of the pane's width,
+around the middle of what is on screen. The column the pages sit in is as wide as the widest page
+(and its gutters), so a zoomed page is scrolled across, both ways, to every edge: centring a page
+with `left: 50%; translateX(−50%)` inside a column narrower than the page puts its left half at a
+negative offset, which a scroll area cannot reach (and the left of the page was lost that way).
+
 Two *editable* panes would be a different thing entirely: 94 places read the
 document store and every one would have to become pane-scoped, plus two pointer
 pipelines and two full layer stacks — two of everything that makes drawing fast.

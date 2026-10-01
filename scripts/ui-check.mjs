@@ -2458,6 +2458,31 @@ async function checkReadingDrop(browser) {
   await page.waitForFunction(() => /Lecture notes/.test(document.querySelector('[data-title]')?.value ?? ''), null, { timeout: 10_000 });
   check('clicking the tab in the pane swaps them back', /Sheet 2/.test(await page.textContent('[data-reference-title]')));
 
+  // Zoomed in, the pane scrolls both ways: no part of a page is out of reach on the left.
+  const reach = () =>
+    page.$eval('[data-reference-scroll]', (scroller) => {
+      const frame = scroller.querySelector('[data-reference-page-frame]');
+      const view = scroller.getBoundingClientRect();
+      scroller.scrollLeft = 0;
+      const atLeft = frame.getBoundingClientRect();
+      const leftClipped = Math.round(view.left - atLeft.left);
+      scroller.scrollLeft = scroller.scrollWidth;
+      const atRight = frame.getBoundingClientRect();
+      const rightClipped = Math.round(atRight.right - view.right);
+      return { leftClipped, rightClipped, scrollable: scroller.scrollWidth - scroller.clientWidth };
+    });
+  const before = await reach();
+  check('at the normal zoom the page fits the pane and there is nothing to scroll sideways', before.scrollable <= 1 && before.leftClipped <= 1, JSON.stringify(before));
+  for (let i = 0; i < 8; i += 1) await page.click('[data-reference-pane] [aria-label="Zoom in"]');
+  await page.waitForTimeout(150);
+  const middle = await page.$eval('[data-reference-scroll]', (e) => ({ left: e.scrollLeft, mid: (e.scrollWidth - e.clientWidth) / 2 }));
+  check('zooming in keeps the middle of the page in view, not its left edge', Math.abs(middle.left - middle.mid) < 4, JSON.stringify(middle));
+  const zoomed = await reach();
+  check('zoomed in, the pane scrolls sideways', zoomed.scrollable > 100, JSON.stringify(zoomed));
+  check('and the left edge of the page can be scrolled to', zoomed.leftClipped <= 1, `${zoomed.leftClipped}px of its left is out of reach`);
+  check('as can the right edge', zoomed.rightClipped <= 1, `${zoomed.rightClipped}px of its right is out of reach`);
+  for (let i = 0; i < 8; i += 1) await page.click('[data-reference-pane] [aria-label="Zoom out"]');
+
   check('no page errors', errors.length === 0, errors.join(' | '));
   await ctx.close();
 }

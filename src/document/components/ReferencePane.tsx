@@ -17,7 +17,7 @@
  * Only whole pages are drawn, top to bottom, and only the ones near the viewport:
  * a 200-page PDF in here is 200 `<div>`s and a handful of textures.
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeftRight, Minus, PenLine, Plus, Scissors, X } from 'lucide-react';
 import { useSnipStore } from '../../snip/snipStore';
 import { PageSnapshot } from './PageSnapshot';
@@ -29,6 +29,9 @@ const OVERSCAN = 2;
 
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2;
+
+/** Space kept clear on each side of the pages, so a page is not flush against the divider. */
+const GUTTER = 16;
 
 export function ReferencePane(): React.JSX.Element | null {
   const splitId = useTabStore((s) => s.splitId);
@@ -46,6 +49,8 @@ export function ReferencePane(): React.JSX.Element | null {
   const [zoom, setZoom] = useState(1);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  /** Where the middle of the view was, as fractions of the content, when the zoom last changed. */
+  const anchor = useRef<{ readonly x: number; readonly y: number } | null>(null);
 
   // Width drives the page size, so it is measured rather than assumed: the
   // divider can be dragged at any moment.
@@ -71,8 +76,7 @@ export function ReferencePane(): React.JSX.Element | null {
 
   /** Page boxes at the current width, and where each one sits in the column. */
   const layout = useMemo(() => {
-    // 16px of gutter each side, so a page is not flush against the divider.
-    const available = Math.max(80, width - 32);
+    const available = Math.max(80, width - GUTTER * 2);
     let top = 8;
     return pages.map((page) => {
       const scale = (available / page.dimensions.width) * zoom;
@@ -85,6 +89,31 @@ export function ReferencePane(): React.JSX.Element | null {
   }, [pages, width, zoom]);
 
   const totalHeight = layout.length === 0 ? 0 : (layout[layout.length - 1]!.top ?? 0) + (layout[layout.length - 1]!.cssHeight ?? 0) + 8;
+  // The column is as wide as the widest page and its gutters, and never narrower than the pane. A page
+  // centred in a column that is narrower than itself would overflow to the left of it, where no scrolling
+  // reaches; here the overflow is on the right, which scrolling does.
+  const totalWidth = Math.max(width, layout.reduce((widest, box) => Math.max(widest, box.cssWidth), 0) + GUTTER * 2);
+
+  /** Zoom around the middle of what is on screen, not the top left of the document. */
+  const changeZoom = useCallback((next: (zoom: number) => number) => {
+    const element = scrollRef.current;
+    if (element && element.scrollWidth > 0 && element.scrollHeight > 0) {
+      anchor.current = {
+        x: (element.scrollLeft + element.clientWidth / 2) / element.scrollWidth,
+        y: (element.scrollTop + element.clientHeight / 2) / element.scrollHeight,
+      };
+    }
+    setZoom(next);
+  }, []);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    const at = anchor.current;
+    anchor.current = null;
+    if (!element || !at) return;
+    element.scrollLeft = Math.max(0, at.x * element.scrollWidth - element.clientWidth / 2);
+    element.scrollTop = Math.max(0, at.y * element.scrollHeight - element.clientHeight / 2);
+  }, [zoom]);
 
   /** Only the pages near the viewport are handed to the rasteriser. */
   const visible = useMemo(() => {
@@ -149,7 +178,7 @@ export function ReferencePane(): React.JSX.Element | null {
           type="button"
           aria-label="Zoom out"
           className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700"
-          onClick={() => setZoom((z) => Math.max(MIN_ZOOM, Math.round((z - 0.1) * 10) / 10))}
+          onClick={() => changeZoom((z) => Math.max(MIN_ZOOM, Math.round((z - 0.1) * 10) / 10))}
         >
           <Minus size={13} aria-hidden="true" />
         </button>
@@ -157,7 +186,7 @@ export function ReferencePane(): React.JSX.Element | null {
           type="button"
           aria-label="Zoom in"
           className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700"
-          onClick={() => setZoom((z) => Math.min(MAX_ZOOM, Math.round((z + 0.1) * 10) / 10))}
+          onClick={() => changeZoom((z) => Math.min(MAX_ZOOM, Math.round((z + 0.1) * 10) / 10))}
         >
           <Plus size={13} aria-hidden="true" />
         </button>
@@ -172,11 +201,11 @@ export function ReferencePane(): React.JSX.Element | null {
         </button>
       </header>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto" onScroll={onScroll}>
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto" data-reference-scroll onScroll={onScroll}>
         {pages.length === 0 ? (
           <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">This document has no pages.</p>
         ) : (
-          <div style={{ position: 'relative', height: totalHeight }}>
+          <div style={{ position: 'relative', height: totalHeight, width: totalWidth }}>
             {visible.map((box) => (
               <div
                 key={box.page.id}
