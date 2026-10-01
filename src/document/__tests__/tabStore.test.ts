@@ -54,7 +54,7 @@ vi.mock('../../pdf/pdfRenderer', () => ({
 
 beforeEach(() => {
   released.length = 0;
-  useTabStore.setState({ tabs: [], activeId: null, clock: 1, splitId: null, splitRatio: 0.6 });
+  useTabStore.setState({ tabs: [], activeId: null, clock: 1, splitId: null, splitRatio: 0.6, splitSide: 'right' });
   useDocumentStore.getState().newDocument();
   // `newDocument` deliberately keeps the presenting lock, so a test that set it
   // would otherwise leave every later test unable to edit anything.
@@ -381,11 +381,56 @@ describe('the reference pane', () => {
     expect(useTabStore.getState().splitId).toBeNull();
   });
 
-  it('closes the pane when its document becomes the one being edited', async () => {
-    const { first } = twoSaved();
+  it('swaps the two when the pane\'s document becomes the one being edited', async () => {
+    const { first, second } = twoSaved();
     await useTabStore.getState().showInSplit(first);
     await useTabStore.getState().activate(first);
+    // The document that was being edited is now the one being read, rather than the pane closing.
+    expect(useTabStore.getState().splitId).toBe(second);
+    expect(useTabStore.getState().activeId).toBe(first);
+    expect(useDocumentStore.getState().document.title).toBe('Exercises');
+    expect(useTabStore.getState().tabs.find((t) => t.id === second)!.session!.document.title).toBe('Answers');
+  });
+
+  it('swaps the roles with one call, keeping unsaved work in what goes to the pane', async () => {
+    const { first, second } = twoSaved();
+    await useTabStore.getState().showInSplit(first);
+    useDocumentStore.getState().setTitle('Answers, edited');
+    await useTabStore.getState().swapRoles();
+    expect(useTabStore.getState().splitId).toBe(second);
+    const pane = useTabStore.getState().tabs.find((t) => t.id === second)!;
+    expect(pane.session!.document.title).toBe('Answers, edited');
+    expect(pane.dirty).toBe(true);
+    // And back again.
+    await useTabStore.getState().swapRoles();
+    expect(useTabStore.getState().activeId).toBe(second);
+    expect(useTabStore.getState().splitId).toBe(first);
+    expect(useDocumentStore.getState().document.title).toBe('Answers, edited');
+  });
+
+  it('does nothing to swap when there is no pane', async () => {
+    const { second } = twoSaved();
+    await useTabStore.getState().swapRoles();
+    expect(useTabStore.getState().activeId).toBe(second);
     expect(useTabStore.getState().splitId).toBeNull();
+  });
+
+  it('changes what the pane shows without touching the editor, when another tab is put in it', async () => {
+    const { first, second } = twoSaved();
+    const third = useTabStore.getState().openTab(sessionFor('Lecture', '/Lecture.notex'));
+    await useTabStore.getState().showInSplit(first);
+    await useTabStore.getState().showInSplit(second);
+    expect(useTabStore.getState().splitId).toBe(second);
+    expect(useTabStore.getState().activeId).toBe(third);
+    expect(useDocumentStore.getState().document.title).toBe('Lecture');
+  });
+
+  it('puts the pane on the other side and back', () => {
+    expect(useTabStore.getState().splitSide).toBe('right');
+    useTabStore.getState().swapSides();
+    expect(useTabStore.getState().splitSide).toBe('left');
+    useTabStore.getState().swapSides();
+    expect(useTabStore.getState().splitSide).toBe('right');
   });
 
   it('closes the pane when its document is closed', async () => {

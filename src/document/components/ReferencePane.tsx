@@ -18,7 +18,7 @@
  * a 200-page PDF in here is 200 `<div>`s and a handful of textures.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Minus, Plus, Scissors, X } from 'lucide-react';
+import { ArrowLeftRight, Minus, PenLine, Plus, Scissors, X } from 'lucide-react';
 import { useSnipStore } from '../../snip/snipStore';
 import { PageSnapshot } from './PageSnapshot';
 import { useTabStore } from '../tabStore';
@@ -34,6 +34,9 @@ export function ReferencePane(): React.JSX.Element | null {
   const splitId = useTabStore((s) => s.splitId);
   const tabs = useTabStore((s) => s.tabs);
   const closeSplit = useTabStore((s) => s.closeSplit);
+  const swapSides = useTabStore((s) => s.swapSides);
+  const swapRoles = useTabStore((s) => s.swapRoles);
+  const side = useTabStore((s) => s.splitSide);
   const snipping = useSnipStore((s) => s.mode);
   const toggleSnipping = useSnipStore((s) => s.toggleMode);
   const tab = useMemo(() => tabs.find((t) => t.id === splitId) ?? null, [tabs, splitId]);
@@ -101,7 +104,7 @@ export function ReferencePane(): React.JSX.Element | null {
   if (!tab) return null;
 
   return (
-    <div className="flex min-w-0 flex-col border-l border-zinc-300 bg-zinc-200/60 dark:border-zinc-700 dark:bg-zinc-900" data-reference-pane>
+    <div className={`flex min-w-0 flex-col bg-zinc-200/60 dark:bg-zinc-900 ${side === 'right' ? 'border-l' : 'border-r'} border-zinc-300 dark:border-zinc-700`} data-reference-pane data-reference-side={side}>
       <header className="flex h-9 shrink-0 items-center gap-1 border-b border-zinc-300 px-2 dark:border-zinc-700">
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-700 dark:text-zinc-300" data-reference-title>
           {tab.title}
@@ -109,6 +112,26 @@ export function ReferencePane(): React.JSX.Element | null {
         <span className="shrink-0 tabular-nums text-[10px] text-zinc-500 dark:text-zinc-400" data-reference-page>
           {pages.length === 0 ? '—' : `${currentPage} / ${pages.length}`}
         </span>
+        <button
+          type="button"
+          aria-label="Edit this one instead; the note you were writing in goes here to be read"
+          title="Edit this one instead — what you were writing in comes here to be read"
+          data-reference-swap-roles
+          className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700"
+          onClick={() => void swapRoles()}
+        >
+          <PenLine size={13} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Swap the two sides"
+          title="Swap sides — this pane to the other side of the screen"
+          data-reference-swap-sides
+          className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700"
+          onClick={swapSides}
+        >
+          <ArrowLeftRight size={13} aria-hidden="true" />
+        </button>
         <button
           type="button"
           aria-label="Snip a piece of this document"

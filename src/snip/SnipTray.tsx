@@ -102,7 +102,7 @@ export const SnipTray = memo(function SnipTray() {
 
       {mode && (
         <p className="px-2.5 py-1.5 text-[11px] leading-snug text-blue-700 dark:text-blue-300" data-snip-hint>
-          Drag over a page to cut a piece out of it. Esc stops.
+          Drag over a page to cut a piece out of it, with a pen, mouse or finger. Esc stops.
         </p>
       )}
 

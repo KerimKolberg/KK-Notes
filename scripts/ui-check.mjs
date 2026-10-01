@@ -2360,66 +2360,101 @@ function tinyPdf(count, label = 'Lecture') {
 }
 
 /**
- * A PDF dropped on an open note opens beside it for reading instead of adding its pages; the notice's button
- * does add them; and Undo takes that import back (and Redo puts it there again).
+ * A PDF dropped where nothing is open becomes the document to write on; one dropped on a note with work in it is
+ * another tab, not split until asked; the split button on a tab shows it beside the note (and on another tab changes
+ * what the pane shows while the note stays the editor); the two sides can swap places, and so can reading and
+ * writing; and Undo takes back pages added with Import.
  */
 async function checkReadingDrop(browser) {
-  console.log('dropping a PDF on a note, 1280x800:');
+  console.log('dropping PDFs, tabs and the split screen, 1280x800:');
   const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await openDocument(page);
   await page.waitForSelector('[data-insert-trigger]', { timeout: 10_000 });
-  // Not a blank note: a blank one is simply replaced by whatever is opened over it.
-  await page.fill('[data-title]', 'My summary');
-  await page.waitForTimeout(100);
   const badge = () => page.$eval('[data-page-badge]', (e) => e.textContent.replace(/\s+/g, ' ').trim());
+  const title = () => page.$eval('[data-title]', (e) => e.value);
   const pdfTransfer = (name, pages) =>
     page.evaluateHandle(({ name, bytes }) => {
       const transfer = new DataTransfer();
       transfer.items.add(new File([new Uint8Array(bytes)], name, { type: 'application/pdf' }));
       return transfer;
-    }, { name, bytes: tinyPdf(pages) });
+    }, { name, bytes: tinyPdf(pages, name.replace(/\.pdf$/, '')) });
+  const dropPdf = async (name, pages) => {
+    const t = await pdfTransfer(name, pages);
+    await page.dispatchEvent('[data-page-stage]', 'dragover', { dataTransfer: t });
+    await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: t });
+  };
+  const tabText = () => page.$$eval('[data-tab]', (els) => els.map((e) => e.textContent.trim()));
+  const activeTab = () => page.$eval('[data-tab][data-tab-active]', (e) => e.textContent.trim());
 
-  const drop = await pdfTransfer('Lecture 3.pdf', 2);
-  await page.dispatchEvent('[data-page-stage]', 'dragover', { dataTransfer: drop });
-  await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: drop });
-  await page.waitForSelector('[data-reference-pane]', { timeout: 15_000 });
-  check('the PDF opens in the pane beside the note', (await page.textContent('[data-reference-title]')).includes('Lecture'));
-  await page.waitForFunction(() => document.querySelectorAll('[data-reference-page-frame]').length >= 1, null, { timeout: 10_000 });
-  check('with its pages to read', true);
-  check('the note is still the one being written in, and has the pages it had', (await page.$eval('[data-title]', (e) => e.value)) === 'My summary' && (await badge()).endsWith('/ 1'), await badge());
-  check('the PDF is a tab of its own', (await page.$$('[data-tab]')).length === 2);
+  // Nothing but a blank new note: the PDF is the thing to write on.
+  await dropPdf('Lecture 3.pdf', 2);
+  await page.waitForFunction(() => /Lecture/.test(document.querySelector('[data-title]')?.value ?? ''), null, { timeout: 15_000 });
+  check('on a blank note, a dropped PDF is the document to write on', (await page.$$('[data-tab]')).length === 0 && (await badge()).endsWith('/ 2'), `${await title()} ${await badge()}`);
+  check('it is that note, now with unsaved pages, not a second one', (await page.$('[data-dirty]')) !== null);
+  check('with no pane and no extra tab', (await page.$('[data-reference-pane]')) === null);
+
+  // A second PDF, with work already in the first: another tab, not split.
+  await page.fill('[data-title]', 'Lecture notes');
+  await dropPdf('Exercises.pdf', 1);
+  await page.waitForFunction(() => document.querySelectorAll('[data-tab]').length === 2, null, { timeout: 15_000 });
+  check('a second PDF is another tab', (await tabText()).length === 2);
+  check('and the first is still the one being written in', (await title()) === 'Lecture notes' && /Lecture notes/.test(await activeTab()));
+  check('it is not split', (await page.$('[data-reference-pane]')) === null);
   const notice = await page.$eval('[data-notice], [data-notice-toast]', (e) => e.textContent ?? '');
-  check('the notice says where it went and offers the other thing', notice.includes('beside your note') && notice.includes('Add its pages to my note instead'), notice);
+  check('the notice says so and offers the split', notice.includes('in a new tab') && notice.includes('Split screen'), notice);
+  check('the other tab has the split-screen button', (await page.$$('[data-tab-split]')).length === 1);
 
-  // The other meaning: its pages into the note.
-  await page.click('[data-notice-toast] button:has-text("Add its pages")');
-  await page.waitForFunction(() => /\/ 3$/.test(document.querySelector('[data-page-badge]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''), null, { timeout: 15_000 });
-  check('adds them to the note after its own', (await badge()).endsWith('/ 3'), await badge());
-  check('and the reading tab and pane are gone', (await page.$('[data-reference-pane]')) === null && (await page.$$('[data-tab]')).length <= 1);
+  // The button on its tab splits the screen.
+  await page.click('[data-tab-split]');
+  await page.waitForSelector('[data-reference-pane]', { timeout: 10_000 });
+  check('the split-screen button shows it beside the note', (await page.textContent('[data-reference-title]')).includes('Exercises'));
+  check('with the note still the editor', (await title()) === 'Lecture notes');
 
-  // Undo takes the import back.
-  check('Undo is available', await page.$eval('[data-undo]', (e) => !e.disabled));
-  await page.click('[data-undo]');
-  await page.waitForFunction(() => /\/ 1$/.test(document.querySelector('[data-page-badge]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''), null, { timeout: 5_000 });
-  check('Undo takes the imported pages out again', (await badge()).endsWith('/ 1'), await badge());
-  check('and says so', (await page.$eval('[data-notice], [data-notice-toast]', (e) => e.textContent ?? '')).includes('Undid adding 2 pages'));
-  check('Redo is then available', await page.$eval('[data-redo]', (e) => !e.disabled));
-  await page.click('[data-redo]');
-  await page.waitForFunction(() => /\/ 3$/.test(document.querySelector('[data-page-badge]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''), null, { timeout: 5_000 });
-  check('and Redo puts them back', (await badge()).endsWith('/ 3'), await badge());
-  await page.keyboard.press('Control+z');
-  await page.waitForFunction(() => /\/ 1$/.test(document.querySelector('[data-page-badge]')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''), null, { timeout: 5_000 });
-  check('Ctrl+Z does the same as the button', (await badge()).endsWith('/ 1'), await badge());
+  // A third PDF: another tab, and the pane keeps what it had until a different tab's button is pressed.
+  await dropPdf('Sheet 2.pdf', 1);
+  await page.waitForFunction(() => document.querySelectorAll('[data-tab]').length === 3, null, { timeout: 15_000 });
+  check('a third PDF is a third tab and leaves the pane as it was', (await page.textContent('[data-reference-title]')).includes('Exercises') && (await title()) === 'Lecture notes');
+  await page.click('[data-tab]:has-text("Sheet 2") [data-tab-split]');
+  await page.waitForFunction(() => /Sheet 2/.test(document.querySelector('[data-reference-title]')?.textContent ?? ''), null, { timeout: 10_000 });
+  check('the split button on another tab changes what the pane shows', true);
+  check('while the note stays the one being written in', (await title()) === 'Lecture notes' && /Lecture notes/.test(await activeTab()));
 
-  // A second one replaces what the pane shows, and adds a tab.
-  const drop2 = await pdfTransfer('Exercises.pdf', 1);
-  await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: drop2 });
-  await page.waitForFunction(() => (document.querySelector('[data-reference-title]')?.textContent ?? '').includes('Exercises'), null, { timeout: 15_000 });
-  check('a second PDF takes over the pane', true);
-  check('and is a tab of its own, with the note still being written in', (await page.$$('[data-tab]')).length === 2 && (await page.$eval('[data-title]', (e) => e.value)) === 'My summary');
+  // Sides.
+  const box = (sel) => page.$eval(sel, (e) => { const r = e.getBoundingClientRect(); return { x: r.x, w: r.width }; });
+  const editorBefore = await box('[data-page-stage]');
+  const paneBefore = await box('[data-reference-pane]');
+  check('the pane starts on the right', paneBefore.x > editorBefore.x);
+  await page.click('[data-reference-swap-sides]');
+  await page.waitForTimeout(150);
+  const editorAfter = await box('[data-page-stage]');
+  const paneAfter = await box('[data-reference-pane]');
+  check('the swap button puts the pane on the left and the note on the right', paneAfter.x < editorAfter.x, `${Math.round(paneAfter.x)} vs ${Math.round(editorAfter.x)}`);
+  check('each keeps its role: the note is still the editor', (await title()) === 'Lecture notes');
+  // The divider drags the right way round on this side.
+  const divider = await (await page.$('[data-split-divider]')).boundingBox();
+  const stageBefore = await box('[data-page-stage]');
+  await page.mouse.move(divider.x + divider.width / 2, divider.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(divider.x + divider.width / 2 + 120, divider.y + 200, { steps: 6 });
+  await page.mouse.up();
+  const stageAfter = await box('[data-page-stage]');
+  check('dragging the divider towards the pane makes the editor wider, whichever side it is on', stageAfter.w < stageBefore.w, `${Math.round(stageBefore.w)} -> ${Math.round(stageAfter.w)}`);
+  await page.click('[data-reference-swap-sides]');
+  await page.waitForTimeout(150);
+  check('and back', (await box('[data-reference-pane]')).x > (await box('[data-page-stage]')).x);
+
+  // Roles: read the note, write on the PDF.
+  await page.click('[data-reference-swap-roles]');
+  await page.waitForFunction(() => /Sheet 2/.test(document.querySelector('[data-title]')?.value ?? ''), null, { timeout: 10_000 });
+  check('the swap-roles button makes the pane\'s document the one being written in', (await title()).includes('Sheet 2'));
+  check('and the note goes into the pane to be read, unsaved changes and all', /Lecture notes/.test(await page.textContent('[data-reference-title]')));
+  // Clicking the tab that is in the pane does the same.
+  await page.click('[data-tab]:has-text("Lecture notes") button[role="tab"]');
+  await page.waitForFunction(() => /Lecture notes/.test(document.querySelector('[data-title]')?.value ?? ''), null, { timeout: 10_000 });
+  check('clicking the tab in the pane swaps them back', /Sheet 2/.test(await page.textContent('[data-reference-title]')));
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await ctx.close();
@@ -2438,6 +2473,10 @@ async function checkSnipping(browser) {
   await openDocument(page);
   await page.waitForSelector('[data-insert-trigger]', { timeout: 10_000 });
   await page.fill('[data-title]', 'My summary');
+  // Some work on the note, so a PDF dropped on it is another tab and not the note's own pages.
+  await page.click('[data-insert-trigger]');
+  await page.click('[data-insert-text]');
+  await page.waitForSelector('[data-text-content]');
 
   const transfer = await page.evaluateHandle(({ bytes }) => {
     const t = new DataTransfer();
@@ -2445,6 +2484,9 @@ async function checkSnipping(browser) {
     return t;
   }, { bytes: tinyPdf(2, 'Exercise') });
   await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: transfer });
+  // Another tab, not split: the split screen is asked for with the button on its tab.
+  await page.waitForSelector('[data-tab-split]', { timeout: 15_000 });
+  await page.click('[data-tab-split]');
   await page.waitForSelector('[data-reference-page-frame] canvas[data-snapshot-ready="true"]', { timeout: 20_000 });
   const images = () => page.$$('[data-page-index="0"] [data-media-kind="image"]');
   const darkPixels = (selector) =>
@@ -2556,6 +2598,40 @@ async function checkSnipping(browser) {
   await page.waitForFunction(() => document.querySelector('[data-snip-hint]') === null);
   check('Esc stops snipping', true);
 
+  // A finger drags out a snip as well: pointer events of a touch, over the pane's page.
+  await page.click('[data-reference-snip]');
+  await page.waitForSelector('[data-snip-hint]');
+  check('while snipping, a finger cannot scroll the page it is dragged over', await page.$eval('[data-reference-page-frame] canvas', (c) => getComputedStyle(c).touchAction === 'none'));
+  const fingerFrame = await (await page.$('[data-reference-page-frame]')).boundingBox();
+  const snipsBefore = (await page.$$('[data-snip]')).length;
+  await page.evaluate(({ x, y, x2, y2 }) => {
+    const el = document.elementFromPoint(x, y);
+    const fire = (type, cx, cy) =>
+      el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerType: 'touch', pointerId: 11, isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: cx, clientY: cy }));
+    fire('pointerdown', x, y);
+    fire('pointermove', (x + x2) / 2, (y + y2) / 2);
+    fire('pointermove', x2, y2);
+    fire('pointerup', x2, y2);
+  }, { x: fingerFrame.x + 10, y: fingerFrame.y + 20, x2: fingerFrame.x + 230, y2: fingerFrame.y + 90 });
+  await page.waitForFunction((n) => document.querySelectorAll('[data-snip]').length === n + 1, snipsBefore, { timeout: 15_000 });
+  check('a finger drag over a page makes a snip', true);
+  // A second finger landing in the middle of one ends it, rather than snipping something odd.
+  const snipsMid = (await page.$$('[data-snip]')).length;
+  await page.evaluate(({ x, y, x2, y2 }) => {
+    const el = document.elementFromPoint(x, y);
+    const fire = (type, id, cx, cy) =>
+      el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerType: 'touch', pointerId: id, isPrimary: id === 21, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: cx, clientY: cy }));
+    fire('pointerdown', 21, x, y);
+    fire('pointermove', 21, x + 40, y + 20);
+    fire('pointerdown', 22, x2, y2);
+    fire('pointermove', 21, x + 150, y + 80);
+    fire('pointerup', 21, x + 150, y + 80);
+    fire('pointerup', 22, x2, y2);
+  }, { x: fingerFrame.x + 10, y: fingerFrame.y + 120, x2: fingerFrame.x + 200, y2: fingerFrame.y + 200 });
+  await page.waitForTimeout(400);
+  check('a second finger ends the snip instead of making one', (await page.$$('[data-snip]')).length === snipsMid && (await page.$('[data-snip-marquee]')) === null);
+  await page.click('[data-snip-done]');
+
   // Carry a snip to another tab: holding it over the tab opens it.
   const other = page.locator('[data-tab]:not([data-tab-active])').first();
   const tabBox = await other.boundingBox();
@@ -2568,7 +2644,7 @@ async function checkSnipping(browser) {
   await page.waitForFunction(() => /Exercises/.test(document.querySelector('[data-tab][data-tab-active]')?.textContent ?? ''), null, { timeout: 4_000 });
   await page.mouse.up();
   check('and after a moment opens that tab', true);
-  check('the snips are still there in the other tab', (await page.$$('[data-snip]')).length === 2);
+  check('the snips are still there in the other tab', (await page.$$('[data-snip]')).length === 3);
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await ctx.close();

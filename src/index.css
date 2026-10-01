@@ -54,6 +54,8 @@ html[data-snipping] [data-page-index] *,
 html[data-snipping] [data-reference-page-frame],
 html[data-snipping] [data-reference-page-frame] * {
   cursor: crosshair !important;
+  /* So a finger dragging over a page is a snip and not the start of a scroll, which would cancel it. */
+  touch-action: none !important;
 }
 [data-snip-target] {
   outline: 3px solid #2563eb;

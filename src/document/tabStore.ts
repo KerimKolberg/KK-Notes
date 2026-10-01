@@ -89,6 +89,8 @@ export interface TabStore {
   splitId: string | null;
   /** Fraction of the stage the editor keeps, 0.25–0.75. */
   splitRatio: number;
+  /** Which side the reference pane is on. */
+  splitSide: 'right' | 'left';
 
   /**
    * Open a document in a tab and make it live.
@@ -124,6 +126,14 @@ export interface TabStore {
   showInSplit: (id: string) => Promise<void>;
   closeSplit: () => void;
   setSplitRatio: (ratio: number) => void;
+  /** Put the reference pane on the other side, which puts the editor on the other side too. */
+  swapSides: () => void;
+  /**
+   * Swap what each half is for: the document in the pane becomes the one being edited, and the one that was being
+   * edited goes into the pane to be read. Neither has to be saved first — the pane renders a captured session, and
+   * both stay in memory while they are on screen.
+   */
+  swapRoles: () => Promise<void>;
 }
 
 function nextId(): string {
@@ -136,6 +146,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   clock: 1,
   splitId: null,
   splitRatio: 0.6,
+  splitSide: 'right',
 
   openTab: (session) => {
     const { tabs, activeId, clock } = get();
@@ -218,11 +229,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   activate: async (id) => {
     const { tabs, activeId, clock } = get();
     if (id === activeId) return;
-    // Editing what the reference pane is showing: the pane closes rather than
-    // displaying a session that is about to go stale beside the live document.
-    if (get().splitId === id) set({ splitId: null });
     const target = tabs.find((tab) => tab.id === id);
     if (!target) return;
+    // Editing what the reference pane is showing: the document that was being edited takes its place in the pane,
+    // so the two swap rather than one being shown beside itself (or the pane being lost).
+    const takesOverPane = get().splitId === id;
 
     // Captured with its label, so the record is right without anything watching.
     const outgoing = tabs.find((tab) => tab.id === activeId) ?? null;
@@ -268,6 +279,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       }),
       activeId: id,
       clock: now,
+      ...(takesOverPane ? { splitId: outgoing?.id ?? null } : {}),
     });
     restoreSession(session);
     void get().park();
@@ -444,6 +456,13 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   },
 
   setSplitRatio: (ratio) => set({ splitRatio: Math.min(0.75, Math.max(0.25, ratio)) }),
+
+  swapSides: () => set({ splitSide: get().splitSide === 'right' ? 'left' : 'right' }),
+
+  swapRoles: async () => {
+    const { splitId } = get();
+    if (splitId) await get().activate(splitId);
+  },
 
   /**
    * Park what the budget says to, releasing each one's PDFs.

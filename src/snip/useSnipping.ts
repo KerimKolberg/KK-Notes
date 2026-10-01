@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useDesktopStore } from '../desktop/desktopStore';
+import { isPenNearby, notePenPresence } from '../inking/engine/gestureState';
 import { useDocumentStore } from '../document/store';
 import { useTabStore } from '../document/tabStore';
 import type { Page } from '../document/types';
@@ -29,8 +30,10 @@ function asRect(r: DOMRect): Rect {
 }
 
 /**
- * Snipping: while it is on, dragging a pen or a mouse over a page — in the editor or the reference pane — cuts the
- * rectangle out as a snip instead of drawing. A finger still scrolls and pinches, as always.
+ * Snipping: while it is on, dragging a pen, a mouse or a finger over a page — in the editor or the reference pane —
+ * cuts the rectangle out as a snip instead of drawing or scrolling. A second finger landing during a drag ends it and
+ * is left to the page's own gestures, and a finger that lands while a pen is near is a palm and is ignored, as it
+ * is for drawing.
  *
  * It listens in the capture phase on the window, so the drag never reaches the page's own handlers and nothing is
  * drawn or selected under it; and it draws its rubber band as one element it moves directly, not through React.
@@ -56,7 +59,14 @@ export function useSnipping(): void {
     };
 
     const onDown = (e: PointerEvent): void => {
-      if (drag || e.pointerType === 'touch' || e.button !== 0) return;
+      if (e.pointerType === 'pen') notePenPresence();
+      if (drag) {
+        // A second finger: not a snip any more, and for the page to make of what it will (a pinch).
+        if (e.pointerType === 'touch') end();
+        return;
+      }
+      if (e.button !== 0) return;
+      if (e.pointerType === 'touch' && isPenNearby()) return;
       const frame = e.target instanceof Element ? e.target.closest<HTMLElement>(FRAME) : null;
       if (!frame) return;
       e.preventDefault();

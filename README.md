@@ -1294,8 +1294,20 @@ editor.
 
 Three rules keep the two halves from contradicting each other: the document being
 edited cannot also be shown in the pane (that would render a stale session beside
-the live one), activating the pane's document closes the pane, and closing its tab
-closes the pane. The divider is a grab strip rather than a hairline, since it is
+the live one), activating the pane's document **swaps** the two (the document that was
+being edited goes into the pane to be read, rather than the pane closing), and closing the
+pane's tab closes the pane.
+
+**Choosing and swapping.** The split-screen button on any tab but the one being edited puts
+that tab in the pane; pressed on a different tab it changes what the pane shows while the
+editor stays on the note, and pressed on the tab in the pane it closes it. The pane's header has two
+more buttons. **Swap sides** puts the pane on the other side of the screen (the stage goes
+`flex-row-reverse`, and the divider measures the editor's share from whichever edge it is
+against), each half keeping its role. **Edit this one instead** (the same as clicking the
+tab that is in the pane) swaps the *roles*: the document in the pane becomes the one written
+in, and the one that was being written in goes into the pane to be read. Neither has to be
+saved first — the pane renders a captured session, both stay in memory while on screen, and
+unsaved changes travel with the document (`swapRoles` is `activate` of the pane's tab). The divider is a grab strip rather than a hairline, since it is
 dragged with a finger or the pen, and the ratio is clamped to 0.25–0.75. The
 option only appears on windows at least 900 CSS px wide; two columns on a phone
 would be two unusable columns.
@@ -1330,8 +1342,12 @@ you want to snip), folded, and cleared.
   presses over a page before anything else sees them — so nothing is drawn or selected under the drag — and the
   rubber band is one element moved directly, not through React. Only the page the drag began on is cut, and the
   rectangle is held to it.
-- **Limits.** Snips are not saved with a note (the picture placed on a page is, like any picture), and there is
-  no snipping with a finger alone: on a device with no pen or mouse the finger has to keep scrolling.
+- **Fingers.** While snipping is on, a finger dragged over a page snips: the pages take `touch-action: none` so
+  the drag is not turned into a scroll (which would cancel it), and a finger that lands while a pen is near is a
+  palm and is ignored, as it is for drawing. A second finger landing mid-drag ends the snip and is left to the
+  page's own gestures. The cost is that a finger no longer scrolls over a page while snipping is on: use the
+  page arrows, the wheel or the scroll bar, or press *Done*.
+- **Limits.** Snips are not saved with a note (the picture placed on a page is, like any picture).
 
 ### Four doors into the app
 
@@ -1356,20 +1372,19 @@ between folders with its own HTML5 drag carrying `text/notes-entry`, and a guard
 that swallowed that would break moving notes. Both directions are checked, in
 `fileDrop.test.ts` and again in a real browser by `npm run check:ui`.
 
-**Where a drop lands decides what it means.** A PDF dropped on a *page* opens **for
-reading**: as a document of its own in a new tab, and (on a window at least 900 px
-wide) in the reference pane beside the note, with the editor left on the note — a
-lecture or an exercise sheet dropped next to your notes means "let me look at this
-while I write", not "add its pages to my page list". `openForReading` does it by
-opening the PDF through the same loader every door uses, then switching back to the
-note and putting the new tab in the pane. A note that is still blank and untouched is
-simply replaced, as with any open, and a window too narrow for two columns gets the
-new tab without the pane. The notice says what happened and carries the other meaning
-as a button, **Add its pages to my note instead** (it closes the reading tab and
-imports the pages, as the Import PDF button does), and Undo takes that import back.
-A second PDF takes over the pane. (The notice is shown as a toast over the page
-whenever it carries a choice, because the top bar has no room for a sentence and a
-button, and on a window narrower than 1280 px it was not shown there at all.) A PDF
+**Where a drop lands decides what it means.** A PDF dropped on the page of a note that
+has *nothing in it yet* is the document to write on: a note still unsaved and untouched is
+simply replaced, and a blank note made in the library (which is a file from the moment it is
+made) takes the PDF's pages as its own — same file, same place, the name it was given if it
+was given one, shown as unsaved until Save writes the pages into it (`fillBlankNote`), so no
+empty note is left behind. A PDF dropped on a note that has *work in it* is **another tab**
+and nothing more, behind the one being written in: the pen stays where it was, and putting
+the PDF beside the note is the split-screen button on its tab (the notice offers it as a
+button too, **Split screen**, or **Open it** on a window too narrow for two columns).
+Showing it at once would decide the layout for someone who may only have wanted it to hand.
+Adding a PDF's pages to the note is the Import PDF button, and Undo takes that back. (The
+notice is shown as a toast over the page whenever it carries a choice, because the top bar
+has no room for a sentence and a button, and below 1280 px it was not shown there at all.) A PDF
 dropped on the *library* opens as a new document, the same as
 picking it. A note or a notebook can only mean the second thing wherever it
 lands, so it opens in **its own tab** — nothing on screen is replaced, which is
@@ -2537,16 +2552,20 @@ hit-testing can answer:
   note; the tag dialog adds tags, which show on the card and as filter chips with counts; a tag in use is
   offered as a suggestion; *Favourites* and each tag show just those notes across the library; all of it
   survives a reload; the last favourite going returns to all notes; deleting a note takes its tags.
-- **dropping a PDF on a note**: it opens in the pane beside the note, as a tab of its own, with its pages
-  drawn; the note is still the one being written in; the notice says where it went and offers *Add its pages to
-  my note instead*; taking that adds them after the note's own pages; Undo takes them out (and says so), Redo
-  puts them back, Ctrl+Z does the same as the button; a second PDF takes over the pane.
+- **dropping PDFs, tabs and the split screen**: on a blank note a dropped PDF is that note's own pages, shown as
+  unsaved, with no second tab; a second PDF dropped on a note with work in it is another tab, not split, with
+  the first still the one written in, and a notice offering *Split screen*; the button on its tab splits the
+  screen with the note still the editor; a third PDF is a third tab and leaves the pane alone, and the button on
+  another tab changes the pane while the note stays the editor; the pane starts on the right, *Swap sides* puts it
+  on the left and the divider still drags the right way; *Edit this one instead* makes the pane's document the one
+  written in and puts the note (unsaved changes and all) in the pane, and clicking the tab in the pane swaps back.
 - **snipping**: no tray until asked for; the pane's scissors show a hint; a drag shows a dashed band and, let go,
   makes a snip holding the words that were under it at a readable size; a click is not a snip; Done turns it
   off and keeps the snips; the tick places it on the note as a selected picture, Undo takes it off and Redo
   puts it back; dragging it out lights the page and drops it centred on the pointer; dropped on nothing it adds
   nothing; the tray can be pulled aside; the top bar's scissors snip the page being written on without laying
-  down ink; Esc stops; a snip held over a tab opens it and the snips are still there.
+  down ink; Esc stops; a finger drag makes a snip too and a second finger ends it; a snip held over a tab opens
+  it and the snips are still there.
 - **a long stroke**: while the pen is down a long stroke has a tail layer that cannot take
   the pen's events, the stretch behind it is on the live canvas and the tail is only the last
   stretch, both go when the pen lifts, and the whole stroke lands on the page.

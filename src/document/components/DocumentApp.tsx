@@ -204,6 +204,7 @@ export function DocumentApp() {
   const tabCount = useTabStore((s) => s.tabs.length);
   const splitId = useTabStore((s) => s.splitId);
   const splitRatio = useTabStore((s) => s.splitRatio);
+  const splitSide = useTabStore((s) => s.splitSide);
   /** Dragging the divider, as a fraction of the stage the editor keeps. */
   const dragDivider = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const stage = stageRef.current;
@@ -211,7 +212,9 @@ export function DocumentApp() {
     event.preventDefault();
     const rect = stage.getBoundingClientRect();
     const move = (e: PointerEvent): void => {
-      useTabStore.getState().setSplitRatio((e.clientX - rect.left) / Math.max(1, rect.width));
+      // The editor's share, measured from whichever edge it is against.
+      const fromEdge = useTabStore.getState().splitSide === 'right' ? e.clientX - rect.left : rect.right - e.clientX;
+      useTabStore.getState().setSplitRatio(fromEdge / Math.max(1, rect.width));
     };
     const up = (): void => {
       window.removeEventListener('pointermove', move);
@@ -333,7 +336,7 @@ export function DocumentApp() {
           <TabStrip />
         </Suspense>
       )}
-      <div ref={stageRef} className="flex min-h-0 flex-1">
+      <div ref={stageRef} className={`flex min-h-0 flex-1 ${splitId && splitSide === 'left' ? 'flex-row-reverse' : ''}`}>
         <div
           className="relative min-h-0 min-w-0 flex-1"
           data-page-stage
