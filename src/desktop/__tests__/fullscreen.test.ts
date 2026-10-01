@@ -62,7 +62,7 @@ describe('fullscreen on the desktop', () => {
   it('takes the title bar off and fills the work area, from a maximised window', async () => {
     current = fakeWindow({ maximized: true, fullscreen: false });
     const { toggleFullscreen } = await service();
-    expect(await toggleFullscreen('window')).toBe(true);
+    expect(await toggleFullscreen()).toBe(true);
     // A maximised window ignores being placed, so it lets go of that first.
     expect(current.calls).toEqual(['unmaximize', 'decorations false', 'position 0,0', 'size 2560x1551']);
   });
@@ -70,45 +70,26 @@ describe('fullscreen on the desktop', () => {
   it('puts a maximised window back maximised, with its title bar', async () => {
     current = fakeWindow({ maximized: true, fullscreen: false });
     const { toggleFullscreen } = await service();
-    await toggleFullscreen('window');
+    await toggleFullscreen();
     current.calls.length = 0;
-    expect(await toggleFullscreen('window')).toBe(false);
+    expect(await toggleFullscreen()).toBe(false);
     expect(current.calls).toEqual(['decorations true', 'maximize']);
   });
 
   it('puts a window that was not maximised back where it was, and as big', async () => {
     current = fakeWindow({ maximized: false, fullscreen: false });
     const { toggleFullscreen } = await service();
-    await toggleFullscreen('window');
+    await toggleFullscreen();
     current.calls.length = 0;
-    await toggleFullscreen('window');
+    await toggleFullscreen();
     expect(current.calls).toEqual(['decorations true', 'size 1400x900', 'position 120,80']);
-  });
-
-  it('is the platform fullscreen when that is the style', async () => {
-    current = fakeWindow({ maximized: true, fullscreen: false });
-    const { toggleFullscreen } = await service();
-    expect(await toggleFullscreen('screen')).toBe(true);
-    expect(current.calls).toEqual(['fullscreen true']);
-    expect(await toggleFullscreen('screen')).toBe(false);
-    expect(current.calls).toEqual(['fullscreen true', 'fullscreen false']);
-  });
-
-  it('turns off whichever is on, whatever the style says by then', async () => {
-    current = fakeWindow({ maximized: true, fullscreen: false });
-    const { toggleFullscreen } = await service();
-    await toggleFullscreen('window');
-    current.calls.length = 0;
-    // The setting was changed while the borderless window was up.
-    expect(await toggleFullscreen('screen')).toBe(false);
-    expect(current.calls).toEqual(['decorations true', 'maximize']);
   });
 
   it('falls back to the platform fullscreen when the monitor says nothing usable', async () => {
     monitor = null;
     current = fakeWindow({ maximized: true, fullscreen: false });
     const { toggleFullscreen } = await service();
-    expect(await toggleFullscreen('window')).toBe(true);
+    expect(await toggleFullscreen()).toBe(true);
     expect(current.calls).toEqual(['fullscreen true']);
   });
 });

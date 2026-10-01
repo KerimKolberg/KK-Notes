@@ -3,7 +3,6 @@
  * keyboard shortcuts and startup logic share one implementation.
  */
 import { selectIsDirty, useDocumentStore } from '../document/store';
-import { usePreferencesStore } from '../preferences/store';
 import { useDesktopStore } from './desktopStore';
 import {
   addRecent,
@@ -165,7 +164,7 @@ export async function actionExportPdf(): Promise<void> {
 
 export async function actionToggleFullscreen(): Promise<void> {
   try {
-    const state = await toggleFullscreen(usePreferencesStore.getState().fullscreenStyle);
+    const state = await toggleFullscreen();
     if (state !== null) useDesktopStore.getState().setFullscreen(state);
   } catch {
     /* unsupported */

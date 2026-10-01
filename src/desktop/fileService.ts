@@ -4,7 +4,6 @@
  */
 import { downloadBytes, safeFilename } from '../pdf/download';
 import type { Document } from '../document/types';
-import type { FullscreenStyle } from '../preferences/types';
 import { borderlessFrame } from './borderless';
 import { NOTEX_EXTENSION, NOTEX_MIME, encodeNotex, parseNotex, type ParsedNotex } from './notex';
 import { isTauri, tauriDialog, tauriInvoke, tauriWindow } from './tauri';
@@ -292,11 +291,12 @@ async function leaveBorderless(win: Awaited<ReturnType<typeof tauriWindow>>, res
 /**
  * Toggle fullscreen; resolves the new state, or `null` when unsupported.
  *
- * On the desktop the `style` decides how: `window` takes the title bar off and fills the
- * work area (see `borderless.ts`), `screen` is the platform's fullscreen. Whichever is
- * on is the one that is turned off, whatever the setting says by then.
+ * On the desktop this takes the title bar off and fills the work area (see `borderless.ts`),
+ * not the platform's fullscreen, which makes the mouse pointer lag on some PCs. The platform's
+ * is the fallback only for a monitor that reports nothing about itself, and whichever is on is
+ * the one that is turned off.
  */
-export async function toggleFullscreen(style: FullscreenStyle = 'window'): Promise<boolean | null> {
+export async function toggleFullscreen(): Promise<boolean | null> {
   if (isTauri()) {
     const win = await tauriWindow();
     if (borderless) {
@@ -309,14 +309,12 @@ export async function toggleFullscreen(style: FullscreenStyle = 'window'): Promi
       await win.setFullscreen(false);
       return false;
     }
-    if (style === 'window') {
-      const restore = await enterBorderless(win);
-      if (restore) {
-        borderless = restore;
-        return true;
-      }
-      // A monitor that tells us nothing about itself: the platform's fullscreen it is.
+    const restore = await enterBorderless(win);
+    if (restore) {
+      borderless = restore;
+      return true;
     }
+    // A monitor that tells us nothing about itself: the platform's fullscreen it is.
     await win.setFullscreen(true);
     return true;
   }

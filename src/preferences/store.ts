@@ -27,12 +27,10 @@ import { setLowLatencyCanvas } from '../inking/engine/canvasMode';
 import type { StylusSettings, ToolType } from '../inking/types';
 import {
   DEFAULT_PALETTE_ORDER,
-  FULLSCREEN_STYLES,
   MAX_SWATCHES,
   MIN_SWATCHES,
   PALETTE_DOCKS,
   type PageDefaults,
-  type FullscreenStyle,
   POINTER_STYLES,
   type PaletteDock,
   type PaletteSlot,
@@ -46,7 +44,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
   paletteOrder: DEFAULT_PALETTE_ORDER,
   paletteDock: 'bottom',
   palettePinned: true,
-  fullscreenStyle: 'window',
   pointerStyle: 'cross',
   stylus: DEFAULT_STYLUS_SETTINGS,
   lowLatencyInk: false,
@@ -80,12 +77,6 @@ export function normalizeStylus(stored: unknown): StylusSettings {
     holdTool: stylusTool(record.holdTool, DEFAULT_STYLUS_SETTINGS.holdTool),
     eraserEnd: stylusTool(record.eraserEnd, DEFAULT_STYLUS_SETTINGS.eraserEnd),
   };
-}
-
-export function normalizeFullscreenStyle(stored: unknown): FullscreenStyle {
-  return typeof stored === 'string' && (FULLSCREEN_STYLES as readonly string[]).includes(stored)
-    ? (stored as FullscreenStyle)
-    : DEFAULT_PREFERENCES.fullscreenStyle;
 }
 
 export function normalizePointerStyle(stored: unknown): PointerStyle {
@@ -180,7 +171,6 @@ export function normalize(stored: unknown): Preferences {
     // Pinned unless it was explicitly unpinned: a mangled value must not make the
     // toolbar start disappearing on someone.
     palettePinned: record.palettePinned !== false,
-    fullscreenStyle: normalizeFullscreenStyle(record.fullscreenStyle),
     pointerStyle: normalizePointerStyle(record.pointerStyle),
     stylus: normalizeStylus(record.stylus),
     // Strictly `true`: anything else, including a stale or mangled value, is off.
@@ -228,7 +218,6 @@ export interface PreferencesStore extends Preferences {
   setPageDefaults: (defaults: PageDefaults | null) => void;
   setPaletteDock: (dock: PaletteDock) => void;
   setPalettePinned: (pinned: boolean) => void;
-  setFullscreenStyle: (style: FullscreenStyle) => void;
   setPointerStyle: (style: PointerStyle) => void;
   setStylus: (stylus: StylusSettings) => void;
   setLowLatencyInk: (enabled: boolean) => void;
@@ -243,7 +232,6 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
       paletteOrder: patch.paletteOrder ?? current.paletteOrder,
       paletteDock: patch.paletteDock ?? current.paletteDock,
       palettePinned: patch.palettePinned ?? current.palettePinned,
-      fullscreenStyle: patch.fullscreenStyle ?? current.fullscreenStyle,
       pointerStyle: patch.pointerStyle ?? current.pointerStyle,
       stylus: patch.stylus ?? current.stylus,
       lowLatencyInk: patch.lowLatencyInk ?? current.lowLatencyInk,
@@ -300,7 +288,6 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
     setPageDefaults: (defaults) => save({ pageDefaults: defaults }),
     setPaletteDock: (dock) => save({ paletteDock: normalizeDock(dock) }),
     setPalettePinned: (pinned) => save({ palettePinned: pinned !== false }),
-    setFullscreenStyle: (style) => save({ fullscreenStyle: normalizeFullscreenStyle(style) }),
     setPointerStyle: (style) => save({ pointerStyle: normalizePointerStyle(style) }),
     setStylus: (stylus) => save({ stylus: normalizeStylus(stylus) }),
     setLowLatencyInk: (enabled) => save({ lowLatencyInk: enabled === true }),

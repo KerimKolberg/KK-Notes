@@ -137,22 +137,21 @@ the page or hovering just above it is put off and looked at again every 750 ms
 when it changes: it used to be sent to the shell on every change to the document
 store, which includes turning a page and making a selection.
 
-**Fullscreen styles** (`desktop/borderless.ts`, `fileService.toggleFullscreen`).
-F11 does one of two things, chosen in *Settings → Fullscreen* and defaulting to the
-first. **Borderless window** takes the title bar off and fills the work area — the
-monitor less the taskbar, and one physical pixel short at the bottom so a window on a
-monitor with an auto-hidden taskbar (whose work area is the whole monitor) does not
-cover it either. To Windows that is an ordinary window, composited like a maximised
-one, which is the mode the ROG Flow Z13 was fine in. **Full screen** is the
-platform's own (tao's borderless fullscreen: resized to cover the monitor, the taskbar
-told to step aside, the same as Chromium's F11), which on that tablet made the mouse
-pointer lag and blink. Leaving puts back what was there — a maximised window
-maximised again, otherwise its size and position — and turns off whichever is on,
-whatever the setting says by then. A monitor that reports no usable geometry falls
-back to the platform fullscreen. The window commands it needs are in the
-capabilities (`set-decorations`, `set-position`, `set-size`, `current-monitor`,
-`outer-position`, `outer-size`). The performance overlay's `mode` row says
-`borderless`, `fullscreen` or `windowed`.
+**Fullscreen** (`desktop/borderless.ts`, `fileService.toggleFullscreen`). F11 takes the
+title bar off and fills the work area — the monitor less the taskbar, and one physical pixel
+short at the bottom so a window on a monitor with an auto-hidden taskbar (whose work area is
+the whole monitor) does not cover it either. To Windows that is an ordinary window, composited
+like a maximised one. The platform's own fullscreen (tao's: resized to cover the monitor, the
+taskbar told to step aside, the same as Chromium's F11) is **not offered**: on the ROG Flow Z13 it
+made the mouse pointer lag from the moment it was on, with any pointer, and worse on a long
+scribble, while the borderless window was smooth at both 60 and 180 Hz (confirmed there, with
+the overlay showing frames arriving in bursts in the platform mode). It was a setting while
+that was being found out; a saved choice of it is now ignored. Leaving puts back what was
+there — a maximised window maximised again, otherwise its size and position. Only a monitor
+that reports no usable geometry falls back to the platform fullscreen. The window commands it
+needs are in the capabilities (`set-decorations`, `set-position`, `set-size`,
+`current-monitor`, `outer-position`, `outer-size`). The performance overlay's `mode` row
+says `borderless` or `windowed`.
 
 **Stylus buttons.** `resolveEffectiveTool` maps hardware buttons per the
 *Stylus* settings in the palette. Two bits of `PointerEvent.buttons` are
@@ -2148,8 +2147,9 @@ unaffected, but the mouse pointer, in that mode, can end up drawn into the frame
 the *application's* frame rate — smooth while the app holds 60 fps and visibly late as
 soon as it drops, which a long stroke makes it do. That is an inference from the
 pattern, not something that could be measured here. It is met from two sides. The app
-no longer takes the native fullscreen by default (see **Fullscreen styles** in the
-desktop shell section), and a mouse stroke costs what a pen stroke does
+no longer takes the native fullscreen at all (see **Fullscreen** in the
+desktop shell section; confirmed on the tablet: the borderless window is smooth, the
+platform fullscreen lags with every pointer), and a mouse stroke costs what a pen stroke does
 (`MIN_SAMPLE_SPACING`, in *How it works*).
 
 ## How it works

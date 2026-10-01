@@ -1280,8 +1280,6 @@ export function PaletteSettings({
     paletteDock,
     setPaletteDock,
     palettePinned,
-    fullscreenStyle,
-    setFullscreenStyle,
     pointerStyle,
     setPointerStyle,
     lowLatencyInk,
@@ -1296,8 +1294,6 @@ export function PaletteSettings({
       paletteDock: s.paletteDock,
       setPaletteDock: s.setPaletteDock,
       palettePinned: s.palettePinned,
-      fullscreenStyle: s.fullscreenStyle,
-      setFullscreenStyle: s.setFullscreenStyle,
       pointerStyle: s.pointerStyle,
       setPointerStyle: s.setPointerStyle,
       lowLatencyInk: s.lowLatencyInk,
@@ -1314,7 +1310,6 @@ export function PaletteSettings({
     widthPresets.join() !== DEFAULT_PREFERENCES.widthPresets.join() ||
     paletteDock !== DEFAULT_PREFERENCES.paletteDock ||
     palettePinned !== DEFAULT_PREFERENCES.palettePinned ||
-    fullscreenStyle !== DEFAULT_PREFERENCES.fullscreenStyle ||
     pointerStyle !== DEFAULT_PREFERENCES.pointerStyle ||
     lowLatencyInk !== DEFAULT_PREFERENCES.lowLatencyInk ||
     JSON.stringify(settings.stylus) !== JSON.stringify(DEFAULT_STYLUS_SETTINGS);
@@ -1441,35 +1436,10 @@ export function PaletteSettings({
       </p>
       {isDesktop && (
         <>
-          <Row label="Fullscreen (F11)">
-            <div className="flex flex-wrap gap-1" role="group" aria-label="Fullscreen style">
-              {(
-                [
-                  { style: 'window', label: 'Borderless window' },
-                  { style: 'screen', label: 'Full screen' },
-                ] as const
-              ).map((choice) => (
-                <button
-                  key={choice.style}
-                  type="button"
-                  aria-pressed={fullscreenStyle === choice.style}
-                  data-fullscreen-style={choice.style}
-                  className={`h-7 rounded-md px-2 text-xs font-medium ${
-                    fullscreenStyle === choice.style
-                      ? 'bg-blue-600 text-white dark:bg-blue-500'
-                      : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700'
-                  }`}
-                  onClick={() => setFullscreenStyle(choice.style)}
-                >
-                  {choice.label}
-                </button>
-              ))}
-            </div>
-          </Row>
           <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-fullscreen-note>
-            Borderless takes the title bar off and fills the screen above the taskbar, and
-            behaves like a maximised window. Full screen covers everything, but on some
-            tablets the mouse pointer lags and blinks in it.
+            F11 takes the title bar off and fills the screen above the taskbar, so it behaves
+            like a maximised window. Windows&rsquo; own full screen is not used: on some PCs the
+            mouse pointer lags in it.
           </p>
         </>
       )}
