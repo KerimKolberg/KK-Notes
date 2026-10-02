@@ -2600,6 +2600,145 @@ async function checkContents(browser) {
 }
 
 /**
+ * Selecting a PDF's text: a drag selects the words it passes over, Copy puts them on the clipboard, a colour
+ * highlights them on the note (one Undo takes it off), a double click takes a word, Text box puts them on the page,
+ * a finger drags a selection too, and in the reading pane the text can be taken but not marked.
+ */
+async function checkTextSelect(browser) {
+  console.log('selecting a PDF\'s text, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height }, permissions: ['clipboard-read', 'clipboard-write'] });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-insert-trigger]', { timeout: 10_000 });
+  const dropPdf = async (name, count, opts) => {
+    const t = await page.evaluateHandle(({ name, bytes }) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array(bytes)], name, { type: 'application/pdf' }));
+      return transfer;
+    }, { name, bytes: tinyPdf(count, name.replace(/\.pdf$/, ''), opts) });
+    await page.dispatchEvent('[data-page-stage]', 'dragover', { dataTransfer: t });
+    await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: t });
+  };
+  const lines = () => ['Fourier series decompose a signal', 'into sines and cosines here.', 'A third line of text'];
+  await dropPdf('Notes.pdf', 2, { lines });
+  await page.waitForFunction(() => /\/ 2/.test(document.querySelector('[data-page-badge]')?.textContent ?? ''), null, { timeout: 15_000 });
+
+  /** Where a PDF point (from the bottom left, in points) is on screen, on a page of the note or of the pane. */
+  const at = (frameSelector, px, py) =>
+    page.$eval(frameSelector, (el, [px, py]) => {
+      const r = el.getBoundingClientRect();
+      const preserve = Math.abs(r.height / r.width - 792 / 612) < 0.01;
+      const k = preserve ? r.width / 612 : (r.width / 794) * Math.min(794 / 612, 1123 / 792);
+      return { x: r.left + px * k, y: r.top + (792 - py) * k };
+    }, [px, py]);
+  const drag = async (frame, from, to) => {
+    const a = await at(frame, ...from);
+    const b = await at(frame, ...to);
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 4 });
+    await page.mouse.move(b.x, b.y, { steps: 4 });
+    await page.mouse.up();
+  };
+  const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+  const NOTE = '[data-page-index="0"]';
+  const highlighted = () =>
+    page.$eval(`${NOTE} canvas[data-layer="committed"]`, (c) => {
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 20) n++;
+      return n;
+    });
+
+  check('a note made from a PDF has a Select text button', (await page.$('[data-select-text-toggle]')) !== null);
+  await page.click('[data-select-text-toggle]');
+  check('which turns selecting on', await page.evaluate(() => document.documentElement.dataset.textSelecting === 'true'));
+
+  // From the start of the first line to partway along the second.
+  await drag(NOTE, [61, 644], [92, 620]);
+  await page.waitForSelector('[data-text-selection]', { timeout: 10_000 });
+  check('a drag over the words selects them, shaded line by line', (await page.getAttribute('[data-text-selection]', 'data-text-selection')) === '2');
+  await page.waitForFunction(() => {
+    const bar = document.querySelector('[data-text-toolbar]');
+    return bar && getComputedStyle(bar).visibility !== 'hidden';
+  }, null, { timeout: 5_000 });
+  check('and offers what to do with them', true);
+  await page.click('[data-text-copy]');
+  await page.waitForTimeout(100);
+  const copied = await clipboard();
+  check('Copy puts the words on the clipboard, lines as lines', copied.startsWith('Fourier series decompose a signal\ninto'), JSON.stringify(copied));
+
+  check('nothing is marked on the page yet', (await highlighted()) === 0);
+  await page.click('[data-text-highlight="yellow"]');
+  await page.waitForTimeout(250);
+  const marked = await highlighted();
+  check('a colour highlights the lines on the note', marked > 500, `${marked} px`);
+  check('and the selection goes', (await page.$('[data-text-selection]')) === null);
+  await page.click('[data-undo]');
+  await page.waitForTimeout(250);
+  check('one Undo takes the highlight off again', (await highlighted()) === 0);
+
+  // A double click takes one word: "sines" on the second line.
+  const word = await at(NOTE, 100, 620);
+  await page.mouse.dblclick(word.x, word.y);
+  await page.waitForSelector('[data-text-selection]', { timeout: 5_000 });
+  await page.click('[data-text-copy]');
+  await page.waitForTimeout(100);
+  check('a double click selects a word', (await clipboard()) === 'sines', JSON.stringify(await clipboard()));
+  // A tap clears it.
+  const blank = await at(NOTE, 400, 560);
+  await page.mouse.click(blank.x, blank.y);
+  await page.waitForTimeout(100);
+  check('and a tap elsewhere clears it', (await page.$('[data-text-selection]')) === null);
+
+  // A finger drags a selection as well.
+  const f1 = await at(NOTE, 61, 620);
+  const f2 = await at(NOTE, 200, 596);
+  await page.evaluate(({ x, y, x2, y2 }) => {
+    const el = document.elementFromPoint(x, y);
+    const fire = (type, cx, cy) =>
+      el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerType: 'touch', pointerId: 12, isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: cx, clientY: cy }));
+    fire('pointerdown', x, y);
+    fire('pointermove', (x + x2) / 2, (y + y2) / 2);
+    fire('pointermove', x2, y2);
+    fire('pointerup', x2, y2);
+  }, { x: f1.x, y: f1.y, x2: f2.x, y2: f2.y });
+  const fingerShown = await page.waitForSelector('[data-text-selection]', { timeout: 5_000 }).then(() => true, () => false);
+  check('a finger drag selects too', fingerShown);
+
+  // Into a text box, under the words.
+  const boxesBefore = (await page.$$('[data-media-kind="text"]')).length;
+  await page.click('[data-text-to-box]');
+  await page.waitForFunction((n) => document.querySelectorAll('[data-media-kind="text"]').length === n + 1, boxesBefore, { timeout: 5_000 });
+  const boxText = await page.$eval('[data-media-kind="text"]', (e) => e.textContent);
+  check('Text box puts the words on the page as a text box', boxText.includes('into sines'), boxText);
+  check('and puts selecting away, so the box can be moved', await page.evaluate(() => document.documentElement.dataset.textSelecting === undefined));
+
+  // The reading pane: text can be taken from it, not marked on it.
+  await dropPdf('Paper.pdf', 2, { lines: () => ['The reading side has words', 'to borrow for the notes.'] });
+  await page.waitForFunction(() => document.querySelectorAll('[data-tab]').length === 2, null, { timeout: 15_000 });
+  await page.click('[data-tab-split]');
+  await page.waitForSelector('[data-reference-select-text]', { timeout: 10_000 });
+  await page.click('[data-reference-select-text]');
+  const PANE = '[data-reference-page-frame]';
+  await page.waitForSelector(PANE);
+  await drag(PANE, [61, 644], [200, 640]);
+  await page.waitForSelector(`${PANE} [data-text-selection]`, { timeout: 10_000 });
+  check('in the reading pane a drag selects its text', true);
+  check('which can be copied or reused but not highlighted there', (await page.$('[data-text-copy]')) !== null && (await page.$('[data-text-highlight]')) === null);
+  const before = (await page.$$('[data-media-kind="text"]')).length;
+  await page.click('[data-text-to-box]');
+  await page.waitForFunction((n) => document.querySelectorAll('[data-media-kind="text"]').length === n + 1, before, { timeout: 5_000 });
+  const added = await page.$$eval('[data-media-kind="text"]', (els) => els.map((e) => e.textContent));
+  check('Text box from the pane puts them on the note being written in', added.some((t) => t.includes('The reading side')), added.join(' | '));
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * The snipping tool: cut a piece out of a PDF in the reference pane, put it on the note (with the button and by
  * dragging), take it off with Undo, snip in the editor itself without drawing, and carry one onto another tab.
  */
@@ -3113,6 +3252,7 @@ try {
     checkLibraryOrganising,
     checkReadingDrop,
     checkContents,
+    checkTextSelect,
     checkSnipping,
     checkDragScroll,
     checkErrorBoundary,

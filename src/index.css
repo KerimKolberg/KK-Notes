@@ -66,3 +66,12 @@ html[data-snipping] [data-reference-page-frame] * {
   outline-offset: -2px;
   background-color: rgba(37, 99, 235, 0.12);
 }
+
+/* Selecting a PDF's text: an I-beam over the PDF pages, and a finger's drag there is a selection rather than a scroll. */
+html[data-text-selecting] [data-page-index][data-page-pdf],
+html[data-text-selecting] [data-page-index][data-page-pdf] *,
+html[data-text-selecting] [data-reference-page-frame][data-reference-page-pdf],
+html[data-text-selecting] [data-reference-page-frame][data-reference-page-pdf] * {
+  cursor: text !important;
+  touch-action: none !important;
+}

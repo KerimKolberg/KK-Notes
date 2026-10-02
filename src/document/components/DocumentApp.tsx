@@ -44,6 +44,9 @@ import { ErrorBoundary } from '../../ui/ErrorBoundary';
 import { SnipTray } from '../../snip/SnipTray';
 import { useSnipStore } from '../../snip/snipStore';
 import { useSnipping } from '../../snip/useSnipping';
+import { useTextSelecting } from '../../textselect/useTextSelecting';
+import { TextSelectionToolbar } from '../../textselect/TextSelectionToolbar';
+import { useTextSelectStore } from '../../textselect/textSelectStore';
 import { useToolStore } from '../toolStore';
 import { DocumentViewer } from './DocumentViewer';
 import { PageArranger } from './PageArranger';
@@ -153,6 +156,7 @@ export function DocumentApp() {
   useUndoRedoShortcuts(performUndo, performRedo, !readOnly);
   useDesktopIntegration();
   useSnipping();
+  useTextSelecting();
   // New pages pick up whatever the user set as their default layout.
   usePageDefaultsSource();
 
@@ -370,6 +374,9 @@ export function DocumentApp() {
             </ErrorBoundary>
           )}
           <NoticeToast />
+          <ErrorBoundary what="the text selection" fallback={null} onError={(e) => panelFailed('Selecting text', e, () => useTextSelectStore.getState().setMode(false))}>
+            <TextSelectionToolbar />
+          </ErrorBoundary>
           <ErrorBoundary what="the snips" fallback={null} onError={(e) => panelFailed('The snip tray', e, () => useSnipStore.getState().setMode(false))}>
             <SnipTray />
           </ErrorBoundary>

@@ -149,6 +149,8 @@ export interface DocumentStore {
 
   // ink (keyed by page id so a stale index can never write to the wrong page)
   commitStroke: (pageId: string, stroke: Stroke) => void;
+  /** Several strokes at once, taken back by one Undo (a highlight over several lines of a PDF). */
+  commitStrokes: (pageId: string, strokes: readonly Stroke[]) => void;
   eraseStrokes: (pageId: string, ids: ReadonlySet<string>) => void;
   clearPage: (pageId: string) => void;
   undo: (pageId: string) => void;
@@ -453,6 +455,15 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
 
   commitStroke: (pageId, stroke) =>
     set(edit((s) => ({ document: updatePageById(s.document, pageId, (page) => appendStroke(page, stroke)) }))),
+
+  commitStrokes: (pageId, strokes) =>
+    set(
+      edit((s) =>
+        strokes.length === 0
+          ? s
+          : { document: updatePageById(s.document, pageId, (page) => withStrokes(page, [...page.strokes, ...strokes])) },
+      ),
+    ),
 
   eraseStrokes: (pageId, ids) =>
     set(edit((s) => ({ document: updatePageById(s.document, pageId, (page) => removeStrokes(page, ids)) }))),

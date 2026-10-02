@@ -17,6 +17,7 @@ import {
   Rows3,
   Scissors,
   Search,
+  TextSelect,
   Square,
   Undo2,
   ZoomIn,
@@ -29,6 +30,7 @@ import { useSearchStore } from '../../search/searchStore';
 import { useBookmarksStore } from '../bookmarksStore';
 import { useContentsStore } from '../contentsStore';
 import { useSnipStore } from '../../snip/snipStore';
+import { useTextSelectStore } from '../../textselect/textSelectStore';
 import { actionExportPdf } from '../../desktop/fileActions';
 import { FileMenu } from '../../desktop/FileMenu';
 import { IconButton } from '../../ui/IconButton';
@@ -65,6 +67,8 @@ export function TopBar() {
   };
   const snipping = useSnipStore((s) => s.mode);
   const toggleSnipping = useSnipStore((s) => s.toggleMode);
+  const selectingText = useTextSelectStore((s) => s.mode);
+  const toggleSelectingText = useTextSelectStore((s) => s.toggleMode);
   const contentsOpen = useContentsStore((s) => s.open);
   const toggleContents = useContentsStore((s) => s.toggle);
   const hasPdf = useDocumentStore((s) => s.document.pages.some((p) => p.pdf !== undefined));
@@ -305,6 +309,17 @@ export function TopBar() {
           tooltipSide="bottom"
           data-snip-toggle
         />
+        {hasPdf && (
+          <IconButton
+            icon={TextSelect}
+            label="Select text"
+            hint="copy, highlight or reuse a PDF's words"
+            active={selectingText}
+            onClick={toggleSelectingText}
+            tooltipSide="bottom"
+            data-select-text-toggle
+          />
+        )}
         {hasPdf && (
           <IconButton
             icon={ListTree}

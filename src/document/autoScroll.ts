@@ -41,10 +41,12 @@ export interface AutoScroll {
  * While a drag lasts, scroll the page area towards whichever edge the pointer is at. `pointer` is asked for each frame
  * (the drag keeps the latest position), and `onScrolled` is told how far the area moved, so the dragged thing can follow:
  * the pointer has not moved but the pages under it have.
+ * `area` is what scrolls: the page area unless said otherwise (the reading pane scrolls on its own).
  */
 export function startAutoScroll(
   pointer: () => { readonly x: number; readonly y: number } | null,
   onScrolled?: (dx: number, dy: number) => void,
+  area: () => HTMLElement | null = viewerElement,
 ): AutoScroll {
   let frame = 0;
   let stopped = false;
@@ -54,7 +56,7 @@ export function startAutoScroll(
     // Time, not frames, and never more than a few frames' worth after a stall.
     const seconds = Math.min(0.05, Math.max(0, (now - last) / 1000));
     last = now;
-    const el = viewerElement();
+    const el = area();
     const p = pointer();
     if (el && p) {
       const rect = el.getBoundingClientRect();

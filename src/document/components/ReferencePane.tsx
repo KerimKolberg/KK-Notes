@@ -18,8 +18,10 @@
  * a 200-page PDF in here is 200 `<div>`s and a handful of textures.
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeftRight, ListTree, Minus, PenLine, Plus, Scissors, X } from 'lucide-react';
+import { ArrowLeftRight, ListTree, Minus, PenLine, Plus, Scissors, TextSelect, X } from 'lucide-react';
 import { useSnipStore } from '../../snip/snipStore';
+import { TextSelectionLayer } from '../../textselect/TextSelectionLayer';
+import { useTextSelectStore } from '../../textselect/textSelectStore';
 import { PageSnapshot } from './PageSnapshot';
 import { useTabStore } from '../tabStore';
 import type { Page } from '../types';
@@ -46,6 +48,8 @@ export function ReferencePane(): React.JSX.Element | null {
   const side = useTabStore((s) => s.splitSide);
   const snipping = useSnipStore((s) => s.mode);
   const toggleSnipping = useSnipStore((s) => s.toggleMode);
+  const selectingText = useTextSelectStore((s) => s.mode);
+  const toggleSelectingText = useTextSelectStore((s) => s.toggleMode);
   const tab = useMemo(() => tabs.find((t) => t.id === splitId) ?? null, [tabs, splitId]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -207,6 +211,21 @@ export function ReferencePane(): React.JSX.Element | null {
         >
           <ArrowLeftRight size={13} aria-hidden="true" />
         </button>
+        {hasPdf && (
+          <button
+            type="button"
+            aria-label="Select text in this document"
+            title="Select text — copy it, or put it on your note"
+            aria-pressed={selectingText}
+            data-reference-select-text
+            className={`flex h-7 w-7 items-center justify-center rounded ${
+              selectingText ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700'
+            }`}
+            onClick={toggleSelectingText}
+          >
+            <TextSelect size={13} aria-hidden="true" />
+          </button>
+        )}
         <button
           type="button"
           aria-label="Snip a piece of this document"
@@ -276,8 +295,10 @@ export function ReferencePane(): React.JSX.Element | null {
                 className="overflow-hidden rounded bg-white shadow-sm dark:bg-zinc-100"
                 data-reference-page-frame
                 data-reference-page-id={box.page.id}
+                data-reference-page-pdf={box.page.pdf ? '' : undefined}
               >
                 <PageSnapshot page={box.page} cssWidth={box.cssWidth} cssHeight={box.cssHeight} />
+                <TextSelectionLayer surface="reference" pageId={box.page.id} />
               </div>
             ))}
           </div>
