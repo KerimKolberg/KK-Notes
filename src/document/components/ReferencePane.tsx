@@ -18,14 +18,18 @@
  * a 200-page PDF in here is 200 `<div>`s and a handful of textures.
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeftRight, Minus, PenLine, Plus, Scissors, X } from 'lucide-react';
+import { ArrowLeftRight, ListTree, Minus, PenLine, Plus, Scissors, X } from 'lucide-react';
 import { useSnipStore } from '../../snip/snipStore';
 import { PageSnapshot } from './PageSnapshot';
 import { useTabStore } from '../tabStore';
 import type { Page } from '../types';
+import { useContents } from '../useContents';
+import { OutlineList } from './OutlineList';
 
 /** Pages kept rendered above and below the visible run. */
 const OVERSCAN = 2;
+
+const NO_PAGES: readonly Page[] = [];
 
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 2;
@@ -51,6 +55,7 @@ export function ReferencePane(): React.JSX.Element | null {
   const [viewportHeight, setViewportHeight] = useState(0);
   /** Where the middle of the view was, as fractions of the content, when the zoom last changed. */
   const anchor = useRef<{ readonly x: number; readonly y: number } | null>(null);
+  const [contentsOpen, setContentsOpen] = useState(false);
 
   // Width drives the page size, so it is measured rather than assumed: the
   // divider can be dragged at any moment.
@@ -72,7 +77,9 @@ export function ReferencePane(): React.JSX.Element | null {
     if (element) setScrollTop(element.scrollTop);
   }, []);
 
-  const pages: readonly Page[] = tab?.session?.document.pages ?? [];
+  const pages: readonly Page[] = tab?.session?.document.pages ?? NO_PAGES;
+  const hasPdf = pages.some((p) => p.pdf !== undefined);
+  const sections = useContents(contentsOpen ? pages : NO_PAGES);
 
   /** Page boxes at the current width, and where each one sits in the column. */
   const layout = useMemo(() => {
@@ -130,10 +137,34 @@ export function ReferencePane(): React.JSX.Element | null {
     return index === -1 ? layout.length : index + 1;
   }, [layout, scrollTop]);
 
+  /** Scroll to a chapter from the contents list: its page, and as far down it as its heading. */
+  const goTo = useCallback(
+    (pageIndex: number, within: number) => {
+      const element = scrollRef.current;
+      const box = layout[pageIndex];
+      if (!element || !box) return;
+      const scale = box.cssWidth / box.page.dimensions.width;
+      element.scrollTop = Math.max(0, box.top + within * scale - (within > 0 ? 24 : 8));
+      setContentsOpen(false);
+    },
+    [layout],
+  );
+
+  // Another document in the pane: its contents are another list, and closed.
+  useEffect(() => setContentsOpen(false), [splitId]);
+  useEffect(() => {
+    if (!contentsOpen) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setContentsOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [contentsOpen]);
+
   if (!tab) return null;
 
   return (
-    <div className={`flex min-w-0 flex-1 flex-col bg-zinc-200/60 dark:bg-zinc-900 ${side === 'right' ? 'border-l' : 'border-r'} border-zinc-300 dark:border-zinc-700`} data-reference-pane data-reference-side={side}>
+    <div className={`relative flex min-w-0 flex-1 flex-col bg-zinc-200/60 dark:bg-zinc-900 ${side === 'right' ? 'border-l' : 'border-r'} border-zinc-300 dark:border-zinc-700`} data-reference-pane data-reference-side={side}>
       <header className="flex h-9 shrink-0 items-center gap-1 border-b border-zinc-300 px-2 dark:border-zinc-700">
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-700 dark:text-zinc-300" data-reference-title>
           {tab.title}
@@ -141,6 +172,21 @@ export function ReferencePane(): React.JSX.Element | null {
         <span className="shrink-0 tabular-nums text-[10px] text-zinc-500 dark:text-zinc-400" data-reference-page>
           {pages.length === 0 ? '—' : `${currentPage} / ${pages.length}`}
         </span>
+        {hasPdf && (
+          <button
+            type="button"
+            aria-label="Contents"
+            title="Contents — the PDF's chapters"
+            aria-pressed={contentsOpen}
+            data-reference-contents
+            className={`flex h-7 w-7 items-center justify-center rounded ${
+              contentsOpen ? 'bg-blue-600 text-white' : 'text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700'
+            }`}
+            onClick={() => setContentsOpen((open) => !open)}
+          >
+            <ListTree size={13} aria-hidden="true" />
+          </button>
+        )}
         <button
           type="button"
           aria-label="Edit this one instead; the note you were writing in goes here to be read"
@@ -201,6 +247,16 @@ export function ReferencePane(): React.JSX.Element | null {
         </button>
       </header>
 
+      {contentsOpen && (
+        <div
+          role="region"
+          aria-label="Contents of the document being read"
+          data-reference-contents-list
+          className="absolute inset-x-2 top-10 z-20 flex max-h-[70%] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+        >
+          <OutlineList sections={sections} pageIndex={Math.max(0, currentPage - 1)} onPick={goTo} />
+        </div>
+      )}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto" data-reference-scroll onScroll={onScroll}>
         {pages.length === 0 ? (
           <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">This document has no pages.</p>

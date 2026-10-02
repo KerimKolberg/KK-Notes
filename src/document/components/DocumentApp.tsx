@@ -30,12 +30,14 @@ const ZoomWindow = lazy(() => import('./ZoomWindow').then((m) => ({ default: m.Z
 /** The search panel, likewise, and for the same reason. */
 const VersionHistory = lazy(() => import('./VersionHistory').then((m) => ({ default: m.VersionHistory })));
 const BookmarksPanel = lazy(() => import('./BookmarksPanel').then((m) => ({ default: m.BookmarksPanel })));
+const ContentsPanel = lazy(() => import('./ContentsPanel').then((m) => ({ default: m.ContentsPanel })));
 const SearchPanel = lazy(() => import('./SearchPanel').then((m) => ({ default: m.SearchPanel })));
 import { useDocumentStore } from '../store';
 import { useZoomWindowStore } from '../zoomWindow';
 import { useSearchStore } from '../../search/searchStore';
 import { useVersionsStore } from '../../desktop/versionsStore';
 import { useBookmarksStore } from '../bookmarksStore';
+import { useContentsStore } from '../contentsStore';
 import { performRedo, performUndo } from '../undo';
 import { NoticeToast } from './NoticeToast';
 import { ErrorBoundary } from '../../ui/ErrorBoundary';
@@ -73,6 +75,7 @@ export function DocumentApp() {
   const searchOpen = useSearchStore((s) => s.open);
   const versionsOpen = useVersionsStore((s) => s.open);
   const bookmarksOpen = useBookmarksStore((s) => s.open);
+  const contentsOpen = useContentsStore((s) => s.open);
   // The arranger is a drawer down the right-hand side, where the search and bookmark panels also sit, so
   // each gives way to the other rather than one covering the other's controls.
   const arrangerOpen = useDocumentStore((s) => s.arrangerOpen);
@@ -80,10 +83,11 @@ export function DocumentApp() {
     if (!arrangerOpen) return;
     useSearchStore.getState().close();
     useBookmarksStore.getState().close();
+    useContentsStore.getState().close();
   }, [arrangerOpen]);
   useEffect(() => {
-    if (searchOpen || bookmarksOpen) useDocumentStore.getState().setArrangerOpen(false);
-  }, [searchOpen, bookmarksOpen]);
+    if (searchOpen || bookmarksOpen || contentsOpen) useDocumentStore.getState().setArrangerOpen(false);
+  }, [searchOpen, bookmarksOpen, contentsOpen]);
 
   // Undo / redo live in the top bar now; the app only needs the page id for
   // the keyboard shortcuts and for clearing.
@@ -373,6 +377,13 @@ export function DocumentApp() {
             <ErrorBoundary what="the bookmarks" fallback={null} onError={(e) => panelFailed('The bookmarks', e, () => useBookmarksStore.getState().close())}>
               <Suspense fallback={null}>
                 <BookmarksPanel />
+              </Suspense>
+            </ErrorBoundary>
+          )}
+          {contentsOpen && (
+            <ErrorBoundary what="the contents" fallback={null} onError={(e) => panelFailed('The contents', e, () => useContentsStore.getState().close())}>
+              <Suspense fallback={null}>
+                <ContentsPanel />
               </Suspense>
             </ErrorBoundary>
           )}

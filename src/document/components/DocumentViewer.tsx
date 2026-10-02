@@ -234,7 +234,11 @@ export const DocumentViewer = memo(function DocumentViewer({ settingsRef, curren
     if (!el) return;
     lastJumpRef.current = performance.now();
     const offset = singlePage ? 0 : scrollOffsetForPage(layout.items, activePageIndex, VIEWER_PADDING, axis);
-    el.scrollTo(axis === 'y' ? { top: offset, left: 0, behavior: 'auto' } : { left: offset, top: 0, behavior: 'auto' });
+    // A jump to a heading partway down the page (a chapter in the PDF's contents) goes that far further, less a
+    // little so the heading is not flush against the top. Down only: across a row it is the page that matters.
+    const within = useDocumentStore.getState().scrollWithin;
+    const down = within && within.request === scrollRequest && axis === 'y' ? Math.max(0, within.y * zoomRef.current - 24) : 0;
+    el.scrollTo(axis === 'y' ? { top: offset + down, left: 0, behavior: 'auto' } : { left: offset, top: 0, behavior: 'auto' });
     setViewport((v) =>
       v.scrollTop === el.scrollTop && v.scrollLeft === el.scrollLeft
         ? v

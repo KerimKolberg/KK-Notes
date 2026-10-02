@@ -2332,19 +2332,50 @@ async function checkLibraryOrganising(browser) {
 }
 
 /** A small valid PDF of `count` pages, each with a line of text, as bytes. */
-function tinyPdf(count, label = 'Lecture') {
+/**
+ * A small PDF built by hand: `count` US-letter pages, each saying "<label> page N" in large type at the top.
+ * `opts.lines(i)` adds lines of 14 pt text under that, 24 pt apart from y = 640 down; `opts.outline` gives it a table
+ * of contents, entries `{ title, page, top?, items? }` with `page` 0-based and `top` a PDF y (an /XYZ destination)
+ * or absent (/Fit).
+ */
+function tinyPdf(count, label = 'Lecture', opts = {}) {
   const objects = [];
   const add = (body) => objects.push(body) && objects.length;
   const catalog = add('');
   const pagesRoot = add('');
   const font = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  const escape = (t) => t.replace(/[\\()]/g, (c) => `\\${c}`);
   const kids = [];
   for (let i = 0; i < count; i++) {
-    const text = `BT /F1 36 Tf 60 700 Td (${label} page ${i + 1}) Tj ET`;
+    let text = `BT /F1 36 Tf 60 700 Td (${escape(`${label} page ${i + 1}`)}) Tj ET`;
+    (opts.lines?.(i) ?? []).forEach((line, k) => {
+      text += `\nBT /F1 14 Tf 60 ${640 - k * 24} Td (${escape(line)}) Tj ET`;
+    });
     const content = add(`<< /Length ${text.length} >>\nstream\n${text}\nendstream`);
     kids.push(add(`<< /Type /Page /Parent ${pagesRoot} 0 R /MediaBox [0 0 612 792] /Contents ${content} 0 R /Resources << /Font << /F1 ${font} 0 R >> >> >>`));
   }
-  objects[catalog - 1] = `<< /Type /Catalog /Pages ${pagesRoot} 0 R >>`;
+  let outlines = '';
+  if (opts.outline?.length) {
+    const root = add('');
+    const build = (entries, parent) => {
+      const ids = entries.map(() => add(''));
+      entries.forEach((entry, k) => {
+        const dest = entry.top === undefined ? `[${kids[entry.page]} 0 R /Fit]` : `[${kids[entry.page]} 0 R /XYZ 0 ${entry.top} 0]`;
+        const children = entry.items?.length ? build(entry.items, ids[k]) : null;
+        objects[ids[k] - 1] =
+          `<< /Title (${escape(entry.title)}) /Parent ${parent} 0 R /Dest ${dest}` +
+          (k > 0 ? ` /Prev ${ids[k - 1]} 0 R` : '') +
+          (k < ids.length - 1 ? ` /Next ${ids[k + 1]} 0 R` : '') +
+          (children ? ` /First ${children[0]} 0 R /Last ${children[children.length - 1]} 0 R /Count ${children.length}` : '') +
+          ' >>';
+      });
+      return ids;
+    };
+    const top = build(opts.outline, root);
+    objects[root - 1] = `<< /Type /Outlines /First ${top[0]} 0 R /Last ${top[top.length - 1]} 0 R /Count ${top.length} >>`;
+    outlines = ` /Outlines ${root} 0 R`;
+  }
+  objects[catalog - 1] = `<< /Type /Catalog /Pages ${pagesRoot} 0 R${outlines} >>`;
   objects[pagesRoot - 1] = `<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(' ')}] /Count ${count} >>`;
   let out = '%PDF-1.4\n';
   const offsets = [];
@@ -2482,6 +2513,87 @@ async function checkReadingDrop(browser) {
   check('and the left edge of the page can be scrolled to', zoomed.leftClipped <= 1, `${zoomed.leftClipped}px of its left is out of reach`);
   check('as can the right edge', zoomed.rightClipped <= 1, `${zoomed.rightClipped}px of its right is out of reach`);
   for (let i = 0; i < 8; i += 1) await page.click('[data-reference-pane] [aria-label="Zoom out"]');
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
+ * A PDF's own table of contents: the Contents button appears for a note made from a PDF, an entry goes to its page
+ * (and as far down it as its heading), a nested entry folds away, and the reading pane has the same list for the
+ * document beside the note.
+ */
+async function checkContents(browser) {
+  console.log('a PDF\'s table of contents, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-insert-trigger]', { timeout: 10_000 });
+  const badge = () => page.$eval('[data-page-badge]', (e) => e.textContent.replace(/\s+/g, ' ').trim());
+  const dropPdf = async (name, count, opts) => {
+    const t = await page.evaluateHandle(({ name, bytes }) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array(bytes)], name, { type: 'application/pdf' }));
+      return transfer;
+    }, { name, bytes: tinyPdf(count, name.replace(/\.pdf$/, ''), opts) });
+    await page.dispatchEvent('[data-page-stage]', 'dragover', { dataTransfer: t });
+    await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: t });
+  };
+
+  check('a plain note has no Contents button', (await page.$('[data-contents-toggle]')) === null);
+  await dropPdf('Lecture 5.pdf', 6, {
+    outline: [
+      { title: 'Introduction', page: 0 },
+      { title: 'Fourier series', page: 2, top: 300, items: [{ title: 'Coefficients', page: 3 }, { title: 'Convergence', page: 4 }] },
+      { title: 'Summary', page: 5 },
+    ],
+  });
+  await page.waitForFunction(() => /\/ 6/.test(document.querySelector('[data-page-badge]')?.textContent ?? ''), null, { timeout: 15_000 });
+  await page.waitForSelector('[data-contents-toggle]', { timeout: 5_000 });
+  check('a note made from a PDF has one', true);
+  await page.click('[data-contents-toggle]');
+  await page.waitForSelector('[data-contents-row]', { timeout: 10_000 });
+  const rows = await page.$$eval('[data-contents-row]', (els) => els.map((e) => e.textContent.trim()));
+  check('it lists the PDF\'s chapters, nested ones too, with their pages', rows.length === 5 && rows[1].includes('Fourier series') && rows[1].endsWith('3') && rows[2].includes('Coefficients'), rows.join(' | '));
+  check('the chapter in view is marked', (await page.$eval('[data-contents-current]', (e) => e.textContent)).includes('Introduction'));
+
+  await page.click('[data-contents-row="1"] [data-contents-go]');
+  await page.waitForFunction(() => /\b3 \/ 6/.test(document.querySelector('[data-page-badge]')?.textContent ?? ''), null, { timeout: 5_000 }).catch(() => {});
+  check('an entry goes to its page', /\b3 \/ 6/.test(await badge()), await badge());
+  await page.waitForTimeout(200);
+  const offset = await page.evaluate(() => {
+    const viewer = document.querySelector('[data-viewer]').getBoundingClientRect();
+    const frame = document.querySelector('[data-page-index="2"]').getBoundingClientRect();
+    return Math.round(frame.top - viewer.top);
+  });
+  // The heading is at y = 300 of 792: about 60% of the way down the page, so the page's top is well above the view.
+  check('and as far down it as its heading', offset < -200, `page top ${offset}px from the top of the view`);
+  check('which is now the one marked', (await page.$eval('[data-contents-current]', (e) => e.textContent)).includes('Fourier series'));
+
+  await page.click('[data-contents-row="1"] [data-contents-fold]');
+  check('a chapter folds what is under it', (await page.$$('[data-contents-row]')).length === 3);
+  await page.click('[data-search-toggle]');
+  const searchShown = await page.waitForSelector('[data-search-panel]', { timeout: 5_000 }).then(() => true, () => false);
+  check('opening the search puts the contents away', searchShown && (await page.$('[data-contents-panel]')) === null);
+  await page.click('[data-search-toggle]');
+
+  // The reading pane.
+  await page.keyboard.press('Escape');
+  await dropPdf('Exercises.pdf', 6, { outline: [{ title: 'Sheet A', page: 0 }, { title: 'Sheet B', page: 2 }] });
+  await page.waitForFunction(() => document.querySelectorAll('[data-tab]').length === 2, null, { timeout: 15_000 });
+  await page.click('[data-tab-split]');
+  await page.waitForSelector('[data-reference-contents]', { timeout: 10_000 });
+  check('the reading pane has a Contents button for its PDF', true);
+  await page.click('[data-reference-contents]');
+  await page.waitForSelector('[data-reference-contents-list] [data-contents-row]', { timeout: 10_000 });
+  const paneRows = await page.$$eval('[data-reference-contents-list] [data-contents-row]', (els) => els.map((e) => e.textContent.trim()));
+  check('listing that PDF\'s chapters, not the note\'s', paneRows.length === 2 && paneRows[1].includes('Sheet B'), paneRows.join(' | '));
+  await page.click('[data-reference-contents-list] [data-contents-row="1"] [data-contents-go]');
+  await page.waitForTimeout(200);
+  check('an entry scrolls the pane to its page and closes the list', (await page.textContent('[data-reference-page]')).trim().startsWith('3') && (await page.$('[data-reference-contents-list]')) === null, await page.textContent('[data-reference-page]'));
+  check('and the note stays where it was', /\b3 \/ 6/.test(await badge()), await badge());
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await ctx.close();
@@ -3000,6 +3112,7 @@ try {
     checkBookmarks,
     checkLibraryOrganising,
     checkReadingDrop,
+    checkContents,
     checkSnipping,
     checkDragScroll,
     checkErrorBoundary,

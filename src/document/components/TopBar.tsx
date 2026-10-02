@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   Bookmark,
+  ListTree,
   BookmarkCheck,
   ChevronLeft,
   ChevronRight,
@@ -26,6 +27,7 @@ import { useRouteStore } from '../../library/routeStore';
 import { useDesktopStore } from '../../desktop/desktopStore';
 import { useSearchStore } from '../../search/searchStore';
 import { useBookmarksStore } from '../bookmarksStore';
+import { useContentsStore } from '../contentsStore';
 import { useSnipStore } from '../../snip/snipStore';
 import { actionExportPdf } from '../../desktop/fileActions';
 import { FileMenu } from '../../desktop/FileMenu';
@@ -63,6 +65,9 @@ export function TopBar() {
   };
   const snipping = useSnipStore((s) => s.mode);
   const toggleSnipping = useSnipStore((s) => s.toggleMode);
+  const contentsOpen = useContentsStore((s) => s.open);
+  const toggleContents = useContentsStore((s) => s.toggle);
+  const hasPdf = useDocumentStore((s) => s.document.pages.some((p) => p.pdf !== undefined));
   const bookmarksOpen = useBookmarksStore((s) => s.open);
   const toggleBookmarks = useBookmarksStore((s) => s.toggle);
   const pageBookmarked = useDocumentStore((s) => s.document.pages[s.document.activePageIndex]?.bookmark !== undefined);
@@ -300,6 +305,17 @@ export function TopBar() {
           tooltipSide="bottom"
           data-snip-toggle
         />
+        {hasPdf && (
+          <IconButton
+            icon={ListTree}
+            label="Contents"
+            hint="the PDF's chapters"
+            active={contentsOpen}
+            onClick={toggleContents}
+            tooltipSide="bottom"
+            data-contents-toggle
+          />
+        )}
         <IconButton
           icon={pageBookmarked ? BookmarkCheck : Bookmark}
           label="Bookmarks"

@@ -94,6 +94,11 @@ export interface DocumentStore {
   document: Document;
   /** Incremented whenever the viewer should scroll to `document.activePageIndex`. */
   scrollRequest: number;
+  /**
+   * How far down the page (page units) the jump of request `request` goes, when it goes further than the top: a
+   * chapter in a PDF's contents starts where its heading is. Tied to its request, so any other jump is to a top.
+   */
+  scrollWithin: { readonly request: number; readonly y: number } | null;
   arrangerOpen: boolean;
   importDialogOpen: boolean;
   /** True while a PDF export is being assembled. */
@@ -114,7 +119,7 @@ export interface DocumentStore {
 
   // navigation / view
   setActivePage: (index: number) => void;
-  jumpToPage: (index: number) => void;
+  jumpToPage: (index: number, within?: number) => void;
   setViewMode: (mode: ViewMode) => void;
   setZoom: (zoom: number) => void;
   zoomBy: (steps: number) => void;
@@ -276,6 +281,7 @@ const initialDocument = createDocument(1);
 export const useDocumentStore = create<DocumentStore>()((set, get) => ({
   document: initialDocument,
   scrollRequest: 0,
+  scrollWithin: null,
   arrangerOpen: false,
   importDialogOpen: false,
   exporting: false,
@@ -295,10 +301,11 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       return i === s.document.activePageIndex ? s : { document: { ...s.document, activePageIndex: i } };
     }),
 
-  jumpToPage: (index) =>
+  jumpToPage: (index, within) =>
     set((s) => ({
       document: { ...s.document, activePageIndex: clampIndex(index, s.document.pages.length) },
       scrollRequest: s.scrollRequest + 1,
+      scrollWithin: within && within > 0 ? { request: s.scrollRequest + 1, y: within } : null,
     })),
 
   setViewMode: (mode) =>
@@ -737,6 +744,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
     set({
       document: doc,
       scrollRequest: 0,
+      scrollWithin: null,
       selectedMedia: null,
       lassoSelection: null,
       filePath: path,
@@ -752,6 +760,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
     set({
       document: doc,
       scrollRequest: 0,
+      scrollWithin: null,
       selectedMedia: null,
       lassoSelection: null,
       filePath: null,
