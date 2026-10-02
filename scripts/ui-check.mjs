@@ -2814,6 +2814,61 @@ async function checkTextSelect(browser) {
 }
 
 /**
+ * The top bar on a phone and a tablet, with a PDF open (which adds Select text and Contents): it fits, nothing
+ * overlaps or runs off the edge, and what has no room is in the More menu, which works.
+ */
+async function checkTopBarNarrow(browser) {
+  for (const size of [{ width: PHONE.width, height: PHONE.height, name: 'phone', inMenu: 8 }, { width: 800, height: 1280, name: 'tablet', inMenu: 4 }]) {
+    console.log(`the top bar on a ${size.name}, ${size.width}x${size.height}:`);
+    const ctx = await browser.newContext({ viewport: { width: size.width, height: size.height }, hasTouch: true });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await openDocument(page);
+    const t = await page.evaluateHandle(({ bytes }) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array(bytes)], 'Slides.pdf', { type: 'application/pdf' }));
+      return transfer;
+    }, { bytes: tinyPdf(3, 'Slides', { outline: [{ title: 'One', page: 0 }] }) });
+    await page.dispatchEvent('[data-page-stage]', 'dragover', { dataTransfer: t });
+    await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: t });
+    await page.waitForFunction(() => /\/ 3/.test(document.querySelector('[data-page-badge]')?.textContent ?? ''), null, { timeout: 15_000 });
+    await page.waitForTimeout(300);
+    const fit = await page.evaluate(() => {
+      const bar = document.querySelector('[data-top-bar]');
+      const off = [...bar.querySelectorAll('button')].filter((b) => b.offsetWidth > 0 && b.getBoundingClientRect().right > innerWidth + 1).map((b) => b.getAttribute('aria-label'));
+      const badge = document.querySelector('[data-page-badge]').getBoundingClientRect();
+      const search = document.querySelector('[data-search-toggle]').getBoundingClientRect();
+      return { overflow: bar.scrollWidth - bar.clientWidth, off, gap: Math.round(search.left - badge.right) };
+    });
+    check('it fits the width, nothing off the edge', fit.overflow <= 0 && fit.off.length === 0, JSON.stringify(fit));
+    check('and the page counter clears the buttons beside it', fit.gap >= 0, `${fit.gap}px`);
+    await page.click('[data-top-bar-more]');
+    await page.waitForSelector('[data-top-bar-more-menu]');
+    const items = await page.$$eval('[data-top-bar-more-item]', (els) => els.filter((e) => e.offsetWidth > 0).map((e) => e.getAttribute('data-top-bar-more-item')));
+    check('More lists what has no room in the bar', items.length === size.inMenu, items.join(', '));
+    const onTop = await page.evaluate(() => {
+      const menu = document.querySelector('[data-top-bar-more-menu]').getBoundingClientRect();
+      const hit = document.elementFromPoint(menu.left + menu.width / 2, menu.top + 12);
+      return Boolean(hit?.closest('[data-top-bar-more-menu]'));
+    });
+    check('above everything else on the screen', onTop);
+    if (size.name === 'phone') {
+      await page.click('[data-top-bar-more-item="snip"]');
+      await page.waitForTimeout(150);
+      check('choosing a row does it and closes the menu', (await page.$('[data-top-bar-more-menu]')) === null && (await page.$('[data-snip-hint]')) !== null);
+      check('and More shows a dot while something in it is on', (await page.$('[data-top-bar-more-on]')) !== null);
+    } else {
+      await page.click('[data-top-bar-more-item="bookmarks"]');
+      await page.waitForSelector('[data-bookmarks-panel]', { timeout: 5_000 });
+      check('choosing a row does it and closes the menu', (await page.$('[data-top-bar-more-menu]')) === null);
+    }
+    check('no page errors', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+  }
+}
+
+/**
  * The snipping tool: cut a piece out of a PDF in the reference pane, put it on the note (with the button and by
  * dragging), take it off with Undo, snip in the editor itself without drawing, and carry one onto another tab.
  */
@@ -3329,6 +3384,7 @@ try {
     checkReadingDrop,
     checkContents,
     checkTextSelect,
+    checkTopBarNarrow,
     checkSnipping,
     checkDragScroll,
     checkErrorBoundary,

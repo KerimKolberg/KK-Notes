@@ -716,6 +716,17 @@ re-anchors the page point that was at the centre of the view (`anchorForContentP
 re-anchors from is tracked on every scroll event, before the browser clamps it to the
 new, shorter content and reports that a frame late.
 
+### The top bar on a narrow screen (`components/TopBar.tsx`)
+
+On a laptop every button stands in the bar. Narrower, the ones without room go into a **More** menu (⋯) as
+labelled rows, each showing whether it is on: below a laptop's width (1024 px) bookmarks, the read-only lock,
+Import PDF and Export PDF; below a tablet's (768 px) also the view mode, Snip, Select text and Contents. Search
+always stays in the bar. While something in the menu is switched on (snipping, selecting text), More wears a
+dot, since its own button is not there to show it. On a phone the page arrows and the title box give way to the
+page counter (tap it to jump; the library renames a note). Each button is hidden by a wrapper (`hidden
+md:contents`), not by a class on the button, whose own `inline-flex` would win over `hidden`; and the menu is
+drawn on the page's top layer, so notices and the pages' overlays are never above it.
+
 ### Searching a note (`src/search/`, `components/SearchPanel.tsx`)
 
 The magnifier in the top bar (or **Ctrl+F**) opens a panel over the page: type, and every place the
@@ -2635,6 +2646,9 @@ hit-testing can answer:
   chapters, nested ones too, with their pages, the one in view marked; an entry goes to its page and as far down
   as its heading; a chapter folds; opening the search puts the list away; the reading pane has its own list for
   its PDF, whose entries scroll the pane and leave the note where it was.
+- **the top bar on a phone and a tablet**: with a PDF open it fits the width with nothing off the edge and the
+  page counter clear of the buttons; More lists the eight (phone) or four (tablet) buttons with no room, above
+  everything else; a row does what its button does and closes the menu; More wears a dot while snipping is on.
 - **selecting a PDF's text**: a drag selects the words, shaded line by line, with a bar offering what to do;
   Copy puts them on the clipboard with lines as lines; a colour highlights them on the note and one Undo takes it
   off; a double click takes a word and a tap clears it; a finger drag selects too; Text box puts them under the

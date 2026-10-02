@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import {
   Bookmark,
@@ -7,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Columns3,
+  Ellipsis,
   FileDown,
   FileUp,
   House,
@@ -126,6 +128,23 @@ export function TopBar() {
   const mode = VIEW_MODES.find((m) => m.id === viewMode) ?? VIEW_MODES[0]!;
   const nextMode = VIEW_MODES[(VIEW_MODES.indexOf(mode) + 1) % VIEW_MODES.length]!;
 
+  // Everything but Search, in order. On a narrow screen they go into the More menu: the tools once the window is
+  // narrower than a tablet, the rest once it is narrower than a laptop.
+  const actions: BarAction[] = [
+    { id: 'view', tier: 'md', icon: mode.icon, label: mode.label, hint: `next: ${nextMode.label.toLowerCase()}`, onClick: () => setViewMode(nextMode.id), data: { 'data-view-mode-toggle': '', 'data-view-mode': viewMode } },
+    { id: 'snip', tier: 'md', icon: Scissors, label: 'Snip', hint: 'cut a piece out of a page', active: snipping, onClick: toggleSnipping, data: { 'data-snip-toggle': '' } },
+    ...(hasPdf
+      ? ([
+          { id: 'select-text', tier: 'md', icon: TextSelect, label: 'Select text', hint: "copy, highlight or reuse a PDF's words", active: selectingText, onClick: toggleSelectingText, data: { 'data-select-text-toggle': '' } },
+          { id: 'contents', tier: 'md', icon: ListTree, label: 'Contents', hint: "the PDF's chapters", active: contentsOpen, onClick: toggleContents, data: { 'data-contents-toggle': '' } },
+        ] satisfies BarAction[])
+      : []),
+    { id: 'bookmarks', tier: 'lg', icon: pageBookmarked ? BookmarkCheck : Bookmark, label: 'Bookmarks', hint: pageBookmarked ? 'this page is bookmarked' : 'Ctrl+D', active: bookmarksOpen, onClick: toggleBookmarks, data: { 'data-bookmarks-toggle': '' } },
+    { id: 'lock', tier: 'lg', icon: readOnly ? Lock : LockOpen, label: 'Read-only lock', hint: readOnly ? 'on' : 'off', active: readOnly, onClick: toggleReadOnly, data: { 'data-lock-toggle': '' } },
+    { id: 'import', tier: 'lg', icon: FileUp, label: 'Import PDF', disabled: readOnly, onClick: () => setImportDialogOpen(true), data: { 'data-import-pdf': '' } },
+    { id: 'export', tier: 'lg', icon: FileDown, label: 'Export PDF', disabled: exporting, busy: exporting, onClick: () => void actionExportPdf(), data: { 'data-export-pdf': '' } },
+  ];
+
   return (
     <header
       // `relative z-40` gives the bar a stacking context of its own, above the
@@ -187,19 +206,23 @@ export function TopBar() {
 
       {/* Group 2: what you are looking at. */}
       <div className="flex min-w-0 flex-1 items-center justify-center gap-1">
-        <IconButton
-          icon={ChevronLeft}
-          label="Previous page"
-          size="sm"
-          disabled={activePageIndex === 0}
-          onClick={() => jumpToPage(activePageIndex - 1)}
-          tooltipSide="bottom"
-        />
+        {/* On a phone the page counter is enough (tap it to jump); the arrows need room it does not have. */}
+        <span className="hidden sm:contents">
+          <IconButton
+            icon={ChevronLeft}
+            label="Previous page"
+            size="sm"
+            disabled={activePageIndex === 0}
+            onClick={() => jumpToPage(activePageIndex - 1)}
+            tooltipSide="bottom"
+          />
+        </span>
         <div className="flex min-w-0 items-center gap-1.5">
-          {/* Click to rename: it reads as a title until it takes focus. */}
+          {/* Click to rename: it reads as a title until it takes focus. A phone has no room for it beside the
+              page counter (the library renames a note too). */}
           <input
             aria-label="Document title"
-            className="h-9 min-w-0 max-w-[16rem] flex-1 truncate rounded-lg bg-transparent px-2 text-base font-semibold text-zinc-900 outline-none hover:bg-zinc-100 focus:bg-zinc-100 focus:outline-2 focus:outline-blue-500 read-only:hover:bg-transparent dark:text-zinc-100 dark:hover:bg-zinc-900 dark:focus:bg-zinc-900"
+            className="hidden h-9 min-w-0 max-w-[16rem] flex-1 truncate sm:block rounded-lg bg-transparent px-2 text-base font-semibold text-zinc-900 outline-none hover:bg-zinc-100 focus:bg-zinc-100 focus:outline-2 focus:outline-blue-500 read-only:hover:bg-transparent dark:text-zinc-100 dark:hover:bg-zinc-900 dark:focus:bg-zinc-900"
             value={title}
             readOnly={readOnly}
             placeholder="Untitled note"
@@ -242,14 +265,16 @@ export function TopBar() {
             </button>
           )}
         </div>
-        <IconButton
-          icon={ChevronRight}
-          label="Next page"
-          size="sm"
-          disabled={activePageIndex >= pageCount - 1}
-          onClick={() => jumpToPage(activePageIndex + 1)}
-          tooltipSide="bottom"
-        />
+        <span className="hidden sm:contents">
+          <IconButton
+            icon={ChevronRight}
+            label="Next page"
+            size="sm"
+            disabled={activePageIndex >= pageCount - 1}
+            onClick={() => jumpToPage(activePageIndex + 1)}
+            tooltipSide="bottom"
+          />
+        </span>
       </div>
 
       {notice && !notice.action && (
@@ -282,15 +307,11 @@ export function TopBar() {
           <IconButton icon={ZoomIn} label="Zoom in" size="sm" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(1)} tooltipSide="bottom" />
         </div>
 
-        <IconButton
-          icon={mode.icon}
-          label={mode.label}
-          hint={`next: ${nextMode.label.toLowerCase()}`}
-          onClick={() => setViewMode(nextMode.id)}
-          tooltipSide="bottom"
-          data-view-mode-toggle
-          data-view-mode={viewMode}
-        />
+        {actions
+          .filter((a) => a.id === 'view')
+          .map((a) => (
+            <BarButton key={a.id} action={a} />
+          ))}
         <IconButton
           icon={Search}
           label="Search this note"
@@ -300,73 +321,164 @@ export function TopBar() {
           tooltipSide="bottom"
           data-search-toggle
         />
-        <IconButton
-          icon={Scissors}
-          label="Snip"
-          hint="cut a piece out of a page"
-          active={snipping}
-          onClick={toggleSnipping}
-          tooltipSide="bottom"
-          data-snip-toggle
-        />
-        {hasPdf && (
-          <IconButton
-            icon={TextSelect}
-            label="Select text"
-            hint="copy, highlight or reuse a PDF's words"
-            active={selectingText}
-            onClick={toggleSelectingText}
-            tooltipSide="bottom"
-            data-select-text-toggle
-          />
-        )}
-        {hasPdf && (
-          <IconButton
-            icon={ListTree}
-            label="Contents"
-            hint="the PDF's chapters"
-            active={contentsOpen}
-            onClick={toggleContents}
-            tooltipSide="bottom"
-            data-contents-toggle
-          />
-        )}
-        <IconButton
-          icon={pageBookmarked ? BookmarkCheck : Bookmark}
-          label="Bookmarks"
-          hint={pageBookmarked ? 'this page is bookmarked' : 'Ctrl+D'}
-          active={bookmarksOpen}
-          onClick={toggleBookmarks}
-          tooltipSide="bottom"
-          data-bookmarks-toggle
-        />
-        <IconButton
-          icon={readOnly ? Lock : LockOpen}
-          label="Read-only lock"
-          hint={readOnly ? 'on' : 'off'}
-          active={readOnly}
-          onClick={toggleReadOnly}
-          tooltipSide="bottom"
-          data-lock-toggle
-        />
-        <IconButton
-          icon={FileUp}
-          label="Import PDF"
-          disabled={readOnly}
-          onClick={() => setImportDialogOpen(true)}
-          tooltipSide="bottom"
-          data-import-pdf
-        />
-        <IconButton
-          icon={FileDown}
-          label="Export PDF"
-          disabled={exporting}
-          aria-busy={exporting}
-          onClick={() => void actionExportPdf()}
-          tooltipSide="bottom"
-          data-export-pdf
-        />
+        {actions
+          .filter((a) => a.id !== 'view')
+          .map((a) => (
+            <BarButton key={a.id} action={a} />
+          ))}
+        <MoreMenu actions={actions} />
       </div>
     </header>
+  );
+}
+
+/** A button of the top bar that a narrow screen moves into the More menu. */
+interface BarAction {
+  readonly id: string;
+  /** The narrowest screen it stands in the bar on: `md` a tablet, `lg` a laptop. */
+  readonly tier: 'md' | 'lg';
+  readonly icon: LucideIcon;
+  readonly label: string;
+  readonly hint?: string;
+  readonly active?: boolean;
+  readonly disabled?: boolean;
+  readonly busy?: boolean;
+  readonly onClick: () => void;
+  /** What the checks and styles find it by. */
+  readonly data: Readonly<Record<string, string>>;
+}
+
+/** Whether the window is at least `px` wide, following it as it changes. */
+function useWiderThan(px: number): boolean {
+  const query = `(min-width: ${px}px)`;
+  const [wide, setWide] = useState(() => typeof window !== 'undefined' && window.matchMedia?.(query).matches === true);
+  useEffect(() => {
+    const list = window.matchMedia?.(query);
+    if (!list) return;
+    const update = (): void => setWide(list.matches);
+    update();
+    list.addEventListener('change', update);
+    return () => list.removeEventListener('change', update);
+  }, [query]);
+  return wide;
+}
+
+/**
+ * Hidden below its tier, where its row in the More menu shows instead. On a wrapper rather than the button, whose
+ * own `inline-flex` would win over `hidden`; from its tier up the wrapper steps out of the layout (`contents`).
+ */
+const SHOWN_FROM: Record<BarAction['tier'], string> = { md: 'hidden md:contents', lg: 'hidden lg:contents' };
+const ROW_UNTIL: Record<BarAction['tier'], string> = { md: 'md:hidden', lg: 'lg:hidden' };
+
+function BarButton({ action }: { readonly action: BarAction }) {
+  return (
+    <span className={SHOWN_FROM[action.tier]}>
+      <IconButton
+        icon={action.icon}
+        label={action.label}
+        {...(action.hint !== undefined ? { hint: action.hint } : {})}
+        active={action.active ?? false}
+        disabled={action.disabled ?? false}
+        {...(action.busy !== undefined ? { 'aria-busy': action.busy } : {})}
+        onClick={action.onClick}
+        tooltipSide="bottom"
+        {...action.data}
+      />
+    </span>
+  );
+}
+
+/**
+ * The buttons a narrow screen has no room for, as a list under one button. Each row says what it is in words
+ * (there is no hover on a phone to ask), shows whether it is on, and closes the menu when chosen.
+ */
+function MoreMenu({ actions }: { readonly actions: readonly BarAction[] }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(null);
+  // Something in here that is switched on (snipping, selecting text) gets a dot on the button, since its own
+  // button is not there to show it. From a tablet's width up, those stand in the bar themselves.
+  const wide = useWiderThan(768);
+  const anyOn = actions.some((a) => a.active && (a.tier === 'lg' || !wide));
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent): void => {
+      const target = e.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
+    };
+    const place = (): void => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (rect) setAnchor({ top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) });
+    };
+    place();
+    window.addEventListener('resize', place);
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', place);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative lg:hidden">
+      <IconButton
+        icon={Ellipsis}
+        label="More"
+        active={open}
+        hasPopover
+        aria-expanded={open}
+        badge={anyOn && !open ? <span className="block h-2 w-2 rounded-full bg-blue-600" data-top-bar-more-on /> : undefined}
+        onClick={() => setOpen((o) => !o)}
+        tooltipSide="bottom"
+        data-top-bar-more
+      />
+      {open &&
+        anchor &&
+        // On the page's top layer rather than inside the bar, whose stacking would put notices and the pages'
+        // own overlays above it.
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            aria-label="More"
+            data-top-bar-more-menu
+            className="fixed z-[70] w-60 overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+            style={{ top: anchor.top, right: anchor.right }}
+          >
+            {actions.map((a) => {
+              const Icon = a.icon;
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  role={a.active === undefined ? 'menuitem' : 'menuitemcheckbox'}
+                  disabled={a.disabled}
+                  aria-checked={a.active}
+                  data-top-bar-more-item={a.id}
+                  className={`${ROW_UNTIL[a.tier]} flex w-full items-center gap-3 px-3 py-2 text-left text-sm disabled:opacity-40 ${
+                    a.active ? 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/50 dark:text-blue-300' : 'text-zinc-800 hover:bg-zinc-100 dark:text-zinc-100 dark:hover:bg-zinc-800'
+                  }`}
+                  onClick={() => {
+                    setOpen(false);
+                    a.onClick();
+                  }}
+                >
+                  <Icon size={16} aria-hidden="true" className="shrink-0" />
+                  <span className="min-w-0 flex-1 truncate">{a.label}</span>
+                  {a.active && <span className="text-xs">on</span>}
+                </button>
+              );
+            })}
+          </div>,
+          document.body,
+        )}
+    </div>
   );
 }
