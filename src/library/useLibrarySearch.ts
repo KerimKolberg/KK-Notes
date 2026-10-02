@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
-import { listLibrary, readDocumentText } from './libraryService';
-import { NoteIndex, listAllNotes, searchNotes, type IndexedNote, type NoteResult } from './search';
+import { listLibrary, readDocumentContents, readDocumentText } from './libraryService';
+import { createPdfWords } from './notePdfs';
+import { persistentPdfTextStore } from './pdfTextStore';
+import { NoteIndex, listAllNotes, searchNotes, type IndexPhase, type IndexedNote, type NoteResult } from './search';
 
 /**
  * One index for the life of the page: what was read for one search is there for the next, and a note
- * is read again only when its modified time says it has changed.
+ * is read again only when its modified time says it has changed. The words of the PDFs in notes are kept
+ * across runs as well, so a PDF is read once.
  */
-const index = new NoteIndex(readDocumentText);
+const index = new NoteIndex(readDocumentText, createPdfWords(persistentPdfTextStore(), readDocumentContents));
 
 /** The most often the results are redrawn while notes are still being read. */
 const PUBLISH_EVERY_MS = 120;
 
 export interface LibrarySearch {
   readonly results: readonly NoteResult[];
-  /** While notes are still being read: how many of how many. */
-  readonly reading: { readonly done: number; readonly total: number } | null;
+  /** While notes are still being read: how many of how many, and whether it is the notes or the PDFs in them. */
+  readonly reading: { readonly done: number; readonly total: number; readonly phase: IndexPhase } | null;
   /** How many notes were searched. */
   readonly searched: number;
 }
@@ -46,13 +49,13 @@ export function useLibrarySearch(query: string, refreshKey: unknown): LibrarySea
         setReading(null);
         return;
       }
-      setReading({ done: 0, total: waiting });
+      setReading({ done: 0, total: waiting, phase: 'notes' });
       let published = 0;
       await index.update(
         entries,
-        (done, total) => {
+        (done, total, phase) => {
           if (stop) return;
-          setReading({ done, total });
+          setReading({ done, total, phase });
           const now = performance.now();
           if (now - published >= PUBLISH_EVERY_MS) {
             published = now;

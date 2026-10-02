@@ -296,8 +296,20 @@ What was read is kept by the `NoteIndex` keyed by each file's modified time, so 
 instant and only a note that changed is read again (four at a time, the results filling in as they come);
 the notes are read when the box goes from empty to something, not on every letter. Matching is the
 in-note search's own `searchSources`, so the two agree. A note is also found by its title and file name.
-Handwriting is ink and cannot be searched, and the words of a PDF a note was made from are only searched
-inside that note.
+Handwriting is ink and cannot be searched.
+
+**The PDFs in notes are searched too** (`library/notePdfs.ts`, `library/pdfTextStore.ts`), in a second pass
+after the notes' own text, so typed words are found at once and the status line says when the PDFs are still
+being read. `read_document_text` also lists which of a note's pages are made from which page of which embedded
+PDF (`pdfPages`: page, source id, page in the PDF) without reading the PDFs. For a source it has not seen, the
+frontend reads the note's file, finds its `pdfSources` object without parsing the rest of the note (a scan for
+the key, then brace-matching that jumps over strings whole; only a key can be `"pdfSources":` with bare
+quotes), decodes that source and reads each page's words with PDF.js — the reader the in-note search uses —
+two notes at a time. The words are kept in IndexedDB by **source id**, which is fixed for a PDF once imported
+(a new import is a new id), so a PDF is read once however often its note is saved or searched; a PDF that will
+not read is kept as having no words, and after a pass in which everything read, sources no note has any more
+are dropped. A hit on a PDF page says `PDF` and opens the note at its page made from that page of the PDF.
+Where IndexedDB is refused, the words are kept in memory for the session.
 
 **Favourites and tags** (`noteMeta.ts`, `TagsDialog.tsx`). Every note card has a star and a tag button (over
 the corner of the picture in the grid, at the right in the list). A starred note, or one with tags, is
@@ -738,6 +750,47 @@ take a pen stroke) and on its thumbnail in the page arranger, with its name unde
   be a puzzle). It is not part of how a page looks, so toggling one does not repaint the page or touch its
   undo history, and a locked note cannot be bookmarked. It is not written into an exported PDF.
 - The panel and the page arranger both sit down the right-hand side, so opening one puts the other away.
+
+### Contents of a PDF (`document/contents.ts`, `pdf/outline.ts`, `components/ContentsPanel.tsx`)
+
+A note made from a PDF gets a **Contents** button in the top bar, which lists the PDF's own table of contents
+(its outline — what most readers call bookmarks), nested entries indented and foldable, the chapter in view
+marked. An entry goes to its page, and as far down it as the heading when the PDF says where (an `/XYZ` or
+`/FitH` destination; `jumpToPage` takes that distance, tied to its scroll request so no other jump inherits it).
+The reading pane has the same list for its document, in its header.
+
+- **Pointed at the note's pages, not the PDF's.** Pages may have been reordered, deleted or had blank pages put
+  between them, and a note can hold several PDFs; an entry goes to the first page of the note made from its page
+  of the PDF, and one whose page was deleted is listed greyed. Several PDFs are listed one after another under
+  their names.
+- The outline is read with PDF.js from the file it already holds parsed (named destinations looked up, page
+  references turned into page numbers) and kept per source. A long list opens with its first two levels showing.
+- It shares the corner with the search and the bookmarks: opening one puts the others away.
+
+### Selecting a PDF's text (`src/textselect/`, `pdf/pdfTextLayout.ts`)
+
+**Select text** in the top bar (and in the reading pane's header) turns the PDF pages into text: dragging a
+pen, a mouse or a finger over the words selects them, a double tap takes one word, a tap clears it, and a drag
+to the edge scrolls. Pages that are not from a PDF are left to the pen. A small bar under the selection offers:
+
+- **Copy** (Ctrl+C too), with line breaks where the PDF's lines break and a space between pieces of a line that
+  stand apart.
+- **Text box**: the words as a text box on the note — under them, on a page of the note; on the page being
+  written in, from the pane — selected, with the select tool, and selecting text put away so the box can be
+  dragged.
+- **Four highlighter colours**, on the note only (the pane is for reading). A highlight is ordinary highlighter
+  strokes, one per line, as thick as the letters and drawn straight along their middle, grouped and committed as
+  one step (`commitStrokes`): the eraser, the lasso and the PDF export treat it like any other ink and one Undo
+  takes it off.
+
+Where the text is comes from PDF.js's text items: each item's matrix gives its baseline, the direction it runs
+and which way is up, and its font's ascent and descent give its height; all of it is mapped onto the note's page
+through the page's own PDF mapping, so a turned page works (`textselect/geometry.ts`). PDF.js does not say where
+each letter is, so an item's length is shared out evenly between its letters — a fraction of a letter off in
+the narrow items most PDFs are made of. A point is turned into the gap between letters nearest it, up-and-down
+distance counting double (lines are close together). Snipping and selecting text take turns: turning one on
+turns the other off. While it is on, a finger drag over a PDF page selects rather than scrolls (as when
+snipping), and Esc clears the selection, then turns it off.
 
 ### When a screen fails to draw (`ui/ErrorBoundary.tsx`)
 
@@ -2575,6 +2628,18 @@ hit-testing can answer:
   back with the last search in the box.
 - **searching the library**: a note is found by the words inside it, by its title, and a word that is in no
   note finds none; a match on the second page opens the note at that page with the table selected.
+- **searching the PDFs in the library**: a word only a note's PDF has finds the note, the hit marked `PDF` and
+  on the note's page made from that page of the PDF; the note's own words are still found; the PDF's words are
+  kept in IndexedDB; choosing a hit opens the note at its page.
+- **a PDF's contents**: a plain note has no Contents button and a note made from a PDF has one; it lists the
+  chapters, nested ones too, with their pages, the one in view marked; an entry goes to its page and as far down
+  as its heading; a chapter folds; opening the search puts the list away; the reading pane has its own list for
+  its PDF, whose entries scroll the pane and leave the note where it was.
+- **selecting a PDF's text**: a drag selects the words, shaded line by line, with a bar offering what to do;
+  Copy puts them on the clipboard with lines as lines; a colour highlights them on the note and one Undo takes it
+  off; a double click takes a word and a tap clears it; a finger drag selects too; Text box puts them under the
+  words as a text box and puts selecting away; in the reading pane the words can be copied or reused but not
+  highlighted, and Text box puts them on the note being written in.
 - **version history**: the File menu offers it once the note is a file; the dialog lists what is kept newest
   first with when, how old, pages and size; restoring asks first and does nothing until confirmed; then the
   shell is asked to put that version back for this note, the note on screen becomes it, a notice says so and it

@@ -19,7 +19,7 @@ import {
   readBrowserDocument,
   writeBrowserDocument,
 } from './browserLibrary';
-import type { DocumentText } from './search';
+import type { DocumentText, PdfPagePiece } from './search';
 import { OFFLINE_STATUS, type ConflictResolution, type LibraryListing, type LibrarySort, type SyncStatus, type ThumbnailSource } from './types';
 
 export async function listLibrary(path: string | null, sort: LibrarySort): Promise<LibraryListing> {
@@ -87,7 +87,8 @@ export async function readThumbnailSource(path: string): Promise<ThumbnailSource
  * A document's title and the typed text in it, for searching the whole library.
  *
  * On the desktop the Rust side reads only the words out of the file (ink, images and imported PDFs
- * are walked past, not held); the browser fallback has to parse what it stored and keeps just the text.
+ * are walked past, not held), and which of its pages are made from which page of which PDF; the words of
+ * those are read separately, once. The browser fallback has to parse what it stored and keeps just the text.
  */
 export async function readDocumentText(path: string): Promise<DocumentText> {
   if (isTauri()) return tauriInvoke<DocumentText>('read_document_text', { path });
@@ -98,7 +99,11 @@ export async function readDocumentText(path: string): Promise<DocumentText> {
   const document = envelope.document ?? (parsed as SerializedText);
   const pages = Array.isArray(document.pages) ? document.pages : [];
   const pieces: Mutable<DocumentText['pieces']> = [];
+  const pdfPages: PdfPagePiece[] = [];
   pages.forEach((page, pageIndex) => {
+    if (page.pdf && typeof page.pdf.sourceId === 'string' && page.pdf.sourceId) {
+      pdfPages.push({ pageIndex, pageId: page.id ?? '', sourceId: page.pdf.sourceId, pdfPageIndex: Number(page.pdf.pageIndex) || 0 });
+    }
     for (const item of page.media ?? []) {
       const base = { pageIndex, pageId: page.id ?? '', mediaId: item.id ?? null };
       if ((item.kind === 'text' || item.kind === 'note') && typeof item.text === 'string' && item.text.trim()) {
@@ -108,14 +113,29 @@ export async function readDocumentText(path: string): Promise<DocumentText> {
       }
     }
   });
-  return { title: document.title?.trim() || '', pageCount: pages.length, pieces };
+  return { title: document.title?.trim() || '', pageCount: pages.length, pieces, pdfPages };
+}
+
+/**
+ * A saved document's contents as they are on disk, for reading the PDFs in it. Only the library search wants this,
+ * and only for a note whose PDFs it has not read before.
+ */
+export async function readDocumentContents(path: string): Promise<string> {
+  if (isTauri()) return (await tauriInvoke<{ contents: string }>('open_document', { path })).contents;
+  const text = readBrowserDocument(path);
+  if (text === null) throw new Error('That document is no longer in the library.');
+  return text;
 }
 
 type Mutable<T extends readonly unknown[]> = T[number][];
 
 interface SerializedText {
   title?: string;
-  pages?: { id?: string; media?: { id?: string; kind?: string; text?: unknown; cells?: unknown }[] }[];
+  pages?: {
+    id?: string;
+    media?: { id?: string; kind?: string; text?: unknown; cells?: unknown }[];
+    pdf?: { sourceId?: unknown; pageIndex?: unknown };
+  }[];
 }
 
 // ---------------------------------------------------------------------------

@@ -20,7 +20,9 @@ export const LibrarySearchResults = memo(function LibrarySearchResults({ search,
     <div className="mx-auto w-full max-w-3xl" data-library-search-results={results.length}>
       <p className="pb-2 text-xs text-zinc-500 dark:text-zinc-400" role="status" data-library-search-status>
         {reading
-          ? `Reading your notes… ${reading.done} of ${reading.total}`
+          ? reading.phase === 'notes'
+            ? `Reading your notes… ${reading.done} of ${reading.total}`
+            : `${results.length === 1 ? '1 note' : `${results.length} notes`} so far. Reading the PDFs in your notes… ${reading.done} of ${reading.total} (only the first time)`
           : `${results.length === 0 ? 'No notes' : results.length === 1 ? '1 note' : `${results.length} notes`} for “${query.trim()}” among ${searched}. Handwriting cannot be searched.`}
       </p>
       <ul className="flex flex-col gap-2">

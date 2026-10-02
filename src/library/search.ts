@@ -5,10 +5,12 @@
  * search (or the next keystroke) costs nothing and a note that was edited is read again. Matching is
  * the in-note search's own `searchSources`, so the two always agree about what a query finds.
  *
- * Only typed text is indexed: a note's title, its text boxes, sticky notes and table cells.
- * Handwriting is ink, and the words of an imported PDF live in the PDF, not in the note's file.
+ * What is indexed is text: a note's title, its text boxes, sticky notes and table cells, read first because that
+ * is quick, and then the words of the PDFs its pages were made from, which means reading each PDF once (they are
+ * kept, see `notePdfs.ts`). Handwriting is ink, and cannot be searched.
  */
 import { searchSources, type SearchHit, type TextKind, type TextSource } from '../search/text';
+import type { PdfWords } from './notePdfs';
 import type { LibraryEntry, LibraryListing, SortKey, SortOrder } from './types';
 
 /** What a backend can tell about the text of one document. */
@@ -22,6 +24,15 @@ export interface DocumentText {
     readonly kind: Exclude<TextKind, 'title' | 'pdf'>;
     readonly text: string;
   }[];
+  /** The note's pages made from a page of an embedded PDF. */
+  readonly pdfPages?: readonly PdfPagePiece[];
+}
+
+export interface PdfPagePiece {
+  readonly pageIndex: number;
+  readonly pageId: string;
+  readonly sourceId: string;
+  readonly pdfPageIndex: number;
 }
 
 /** One note, read. */
@@ -45,6 +56,8 @@ export interface NoteResult {
 const MAX_NOTES = 2000;
 /** Notes read at the same time. */
 const READERS = 4;
+/** PDFs read at the same time: each is a whole PDF parsed, so fewer. */
+const PDF_READERS = 2;
 /** Matches shown per note. */
 export const HITS_PER_NOTE = 3;
 
@@ -75,6 +88,19 @@ export async function listAllNotes(
   return notes.slice(0, MAX_NOTES);
 }
 
+/** What is being read: the notes' own text, then the PDFs in them. */
+export type IndexPhase = 'notes' | 'pdfs';
+
+/** The words of a note's PDF pages as sources, from each source's pages' words. */
+export function pdfSourcesFor(pages: readonly PdfPagePiece[], words: ReadonlyMap<string, readonly string[]>): TextSource[] {
+  const out: TextSource[] = [];
+  for (const page of pages) {
+    const text = words.get(page.sourceId)?.[page.pdfPageIndex];
+    if (text && text.trim()) out.push({ pageIndex: page.pageIndex, pageId: page.pageId, mediaId: null, kind: 'pdf', text });
+  }
+  return out;
+}
+
 /** A note's words as sources, the title first. */
 export function sourcesOf(text: DocumentText): TextSource[] {
   const out: TextSource[] = [];
@@ -85,55 +111,121 @@ export function sourcesOf(text: DocumentText): TextSource[] {
   return out;
 }
 
+interface Cached {
+  readonly modifiedMs: number;
+  readonly note: IndexedNote;
+  readonly pdfPages: readonly PdfPagePiece[];
+  /** The words of its PDF pages are in `note` (or it has none). */
+  readonly pdfDone: boolean;
+}
+
 /**
  * Keeps each note's words until the note changes.
  *
- * `read` is the backend; it is handed in so the index can be tested without one.
+ * `read` is the backend and `pdfWords` reads the PDFs in a note; both are handed in so the index can be tested
+ * without either. Without `pdfWords`, only typed text is indexed.
  */
 export class NoteIndex {
-  private readonly cache = new Map<string, { readonly modifiedMs: number; readonly note: IndexedNote }>();
+  private readonly cache = new Map<string, Cached>();
 
-  constructor(private readonly read: (path: string) => Promise<DocumentText>) {}
+  constructor(
+    private readonly read: (path: string) => Promise<DocumentText>,
+    private readonly pdfWords?: PdfWords,
+  ) {}
 
-  /** How many of `entries` are read and current. */
+  private isCurrent(entry: LibraryEntry): boolean {
+    const cached = this.cache.get(entry.path);
+    return cached?.modifiedMs === entry.modifiedMs && cached.pdfDone;
+  }
+
+  /** How many of `entries` are read through and current. */
   current(entries: readonly LibraryEntry[]): number {
-    return entries.filter((e) => this.cache.get(e.path)?.modifiedMs === e.modifiedMs).length;
+    return entries.filter((e) => this.isCurrent(e)).length;
   }
 
   /**
-   * Read whatever is new or changed, a few notes at a time, and forget notes that are gone.
-   * `onProgress` hears after each note; `shouldStop` lets a newer search end this one early.
+   * Read whatever is new or changed, a few notes at a time, then the PDFs in them, and forget notes that are gone.
+   * `onProgress` hears after each note (and then each note's PDFs); `shouldStop` lets a newer search end this one.
    */
   async update(
     entries: readonly LibraryEntry[],
-    onProgress?: (done: number, total: number) => void,
+    onProgress?: (done: number, total: number, phase: IndexPhase) => void,
     shouldStop: () => boolean = () => false,
   ): Promise<void> {
     const live = new Set(entries.map((e) => e.path));
     for (const path of [...this.cache.keys()]) if (!live.has(path)) this.cache.delete(path);
+    let failed = false;
 
+    // The notes' own text: quick, and enough for most searches.
     const todo = entries.filter((e) => this.cache.get(e.path)?.modifiedMs !== e.modifiedMs);
+    await this.pool(todo, READERS, shouldStop, async (entry) => {
+      try {
+        const text = await this.read(entry.path);
+        const pdfPages = this.pdfWords ? (text.pdfPages ?? []) : [];
+        this.cache.set(entry.path, {
+          modifiedMs: entry.modifiedMs,
+          note: { entry, title: text.title, pageCount: text.pageCount, sources: sourcesOf(text) },
+          pdfPages,
+          pdfDone: pdfPages.length === 0,
+        });
+      } catch {
+        // A file that will not read (a PDF left in the folder, a half-synced file) has no words.
+        failed = true;
+        this.cache.set(entry.path, { modifiedMs: entry.modifiedMs, note: { entry, title: entry.name, pageCount: 0, sources: [] }, pdfPages: [], pdfDone: true });
+      }
+    }, (done) => onProgress?.(done, todo.length, 'notes'));
+    if (shouldStop()) return;
+
+    // Then the PDFs in them: slow the first time, kept after that.
+    const words = this.pdfWords;
+    if (!words) return;
+    const pdfTodo = entries.filter((e) => {
+      const cached = this.cache.get(e.path);
+      return cached?.modifiedMs === e.modifiedMs && !cached.pdfDone;
+    });
+    await this.pool(pdfTodo, PDF_READERS, shouldStop, async (entry) => {
+      const cached = this.cache.get(entry.path);
+      if (!cached) return;
+      let extra: TextSource[] = [];
+      try {
+        const found = await words.read(entry.path, cached.pdfPages.map((p) => p.sourceId));
+        extra = pdfSourcesFor(cached.pdfPages, found);
+      } catch {
+        failed = true;
+      }
+      // Only if the note did not change while its PDFs were read.
+      const now = this.cache.get(entry.path);
+      if (now !== cached) return;
+      this.cache.set(entry.path, { ...cached, note: { ...cached.note, sources: [...cached.note.sources, ...extra] }, pdfDone: true });
+    }, (done) => onProgress?.(done, pdfTodo.length, 'pdfs'));
+    if (shouldStop() || failed) return;
+
+    // Everything was read: the PDFs kept for notes that no longer have them can go.
+    const sources = new Set<string>();
+    for (const cached of this.cache.values()) for (const page of cached.pdfPages) sources.add(page.sourceId);
+    await words.prune(sources).catch(() => undefined);
+  }
+
+  /** Run `work` over `items`, `width` at a time, telling `progress` after each. */
+  private async pool<T>(
+    items: readonly T[],
+    width: number,
+    shouldStop: () => boolean,
+    work: (item: T) => Promise<void>,
+    progress: (done: number) => void,
+  ): Promise<void> {
     let next = 0;
     let done = 0;
     const worker = async (): Promise<void> => {
       while (!shouldStop()) {
-        const entry = todo[next++];
-        if (!entry) return;
-        try {
-          const text = await this.read(entry.path);
-          this.cache.set(entry.path, {
-            modifiedMs: entry.modifiedMs,
-            note: { entry, title: text.title, pageCount: text.pageCount, sources: sourcesOf(text) },
-          });
-        } catch {
-          // A file that will not read (a PDF left in the folder, a half-synced file) has no words.
-          this.cache.set(entry.path, { modifiedMs: entry.modifiedMs, note: { entry, title: entry.name, pageCount: 0, sources: [] } });
-        }
+        const item = items[next++];
+        if (item === undefined) return;
+        await work(item);
         done += 1;
-        onProgress?.(done, todo.length);
+        progress(done);
       }
     };
-    await Promise.all(Array.from({ length: Math.min(READERS, todo.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(width, items.length) }, worker));
   }
 
   /** The notes among `entries` that have been read, in the order given. */

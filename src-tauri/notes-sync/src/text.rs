@@ -26,12 +26,26 @@ pub struct TextPiece {
     pub text: String,
 }
 
+/// A page made from a page of an embedded PDF. Its words are in the PDF, which this does not read: the frontend
+/// reads them with PDF.js (the same reader the in-note search uses) and keeps them, by source, for next time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfPagePiece {
+    /// Zero-based, in the note.
+    pub page_index: u32,
+    pub page_id: String,
+    pub source_id: String,
+    /// Zero-based, in the PDF.
+    pub pdf_page_index: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentText {
     pub title: String,
     pub page_count: u32,
     pub pieces: Vec<TextPiece>,
+    pub pdf_pages: Vec<PdfPagePiece>,
 }
 
 #[derive(Deserialize)]
@@ -47,11 +61,21 @@ struct MediaHead {
 }
 
 #[derive(Deserialize)]
+struct PdfRefHead {
+    #[serde(default, rename = "sourceId")]
+    source_id: String,
+    #[serde(default, rename = "pageIndex")]
+    page_index: u32,
+}
+
+#[derive(Deserialize)]
 struct PageHead {
     #[serde(default)]
     id: String,
     #[serde(default)]
     media: Vec<MediaHead>,
+    #[serde(default)]
+    pdf: Option<PdfRefHead>,
 }
 
 #[derive(Deserialize)]
@@ -97,8 +121,17 @@ pub fn read_document_text(path: &Path, fallback_title: &str) -> Result<DocumentT
 
     let page_count = u32::try_from(pages.len()).unwrap_or(u32::MAX);
     let mut pieces = Vec::new();
+    let mut pdf_pages = Vec::new();
     for (index, page) in pages.iter().enumerate() {
         let page_index = u32::try_from(index).unwrap_or(u32::MAX);
+        if let Some(pdf) = page.pdf.as_ref().filter(|p| !p.source_id.is_empty()) {
+            pdf_pages.push(PdfPagePiece {
+                page_index,
+                page_id: page.id.clone(),
+                source_id: pdf.source_id.clone(),
+                pdf_page_index: pdf.page_index,
+            });
+        }
         for media in &page.media {
             let mut push = |kind: &'static str, text: &str| {
                 if !text.trim().is_empty() {
@@ -124,7 +157,7 @@ pub fn read_document_text(path: &Path, fallback_title: &str) -> Result<DocumentT
         }
     }
 
-    Ok(DocumentText { title, page_count, pieces })
+    Ok(DocumentText { title, page_count, pieces, pdf_pages })
 }
 
 #[cfg(test)]
@@ -168,6 +201,32 @@ mod tests {
         );
         assert_eq!(text.pieces[0].media_id.as_deref(), Some("m1"));
         assert_eq!(text.pieces[0].page_id, "p1");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn lists_the_pages_made_from_a_pdf_without_reading_the_pdf() {
+        let dir = scratch("p");
+        let path = write(
+            &dir,
+            "p.notex",
+            r#"{"format":"notex","document":{"title":"Lecture","pages":[
+                {"id":"a","pdf":{"sourceId":"pdf_1","pageIndex":0,"viewBox":[0,0,612,792],"rotation":0,"scale":1.3}},
+                {"id":"b","media":[{"id":"m","kind":"text","text":"my answer"}]},
+                {"id":"c","pdf":{"sourceId":"pdf_1","pageIndex":4}},
+                {"id":"d","pdf":{"sourceId":""}}],
+                "pdfSources":{"pdf_1":{"name":"L.pdf","pageCount":5,"data":"JVBERi0="}}}}"#,
+        );
+        let text = read_document_text(&path, "p").unwrap();
+        let got: Vec<(u32, &str, &str, u32)> = text
+            .pdf_pages
+            .iter()
+            .map(|p| (p.page_index, p.page_id.as_str(), p.source_id.as_str(), p.pdf_page_index))
+            .collect();
+        assert_eq!(got, vec![(0, "a", "pdf_1", 0), (2, "c", "pdf_1", 4)]);
+        assert_eq!(text.pieces.len(), 1);
+        let json = serde_json::to_string(&text).unwrap();
+        assert!(json.contains(r#""pdfPages":[{"pageIndex":0,"pageId":"a","sourceId":"pdf_1","pdfPageIndex":0}"#), "{json}");
         let _ = fs::remove_dir_all(dir);
     }
 

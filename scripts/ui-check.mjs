@@ -1967,6 +1967,81 @@ async function checkLibrarySearch(browser) {
 }
 
 /**
+ * The library search finds words that are only in a note's PDF: the note's own text first, then its PDFs read (once,
+ * and kept), each hit pointing at the note's page made from that page of the PDF.
+ */
+async function checkLibraryPdfSearch(browser) {
+  console.log('searching the PDFs in the library, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.click('[data-back-to-library]');
+  await page.waitForSelector('[data-library-view]', { timeout: 10_000 });
+
+  const pdf = Buffer.from(tinyPdf(2, 'Linear algebra', { lines: (i) => (i === 0 ? ['Eigenvalues of a matrix'] : ['Determinants and traces']) })).toString('base64');
+  const seeded = await page.evaluate((data) => {
+    const key = Object.keys(localStorage).find((k) => k.startsWith('notes.library.doc.'));
+    if (!key) return false;
+    const envelope = JSON.parse(localStorage.getItem(key));
+    const doc = envelope.document;
+    doc.title = 'Week 4';
+    const base = doc.pages[0];
+    const box = { x: 100, y: 100, width: 300, height: 80, rotation: 0, zIndex: 1 };
+    const typed = { ...base, media: [{ ...box, id: 'mt', kind: 'text', text: 'my summary', fontFamily: 'sans', fontSize: 16, color: '#000', bold: false, italic: false, underline: false, strikethrough: false, align: 'left' }] };
+    const fromPdf = (id, pageIndex) => ({
+      ...base,
+      id,
+      template: 'pdf',
+      dimensions: { width: 816, height: 1056 },
+      media: [],
+      pdf: { sourceId: 'pdf_la', pageIndex, viewBox: [0, 0, 612, 792], rotation: 0, scale: 4 / 3 },
+    });
+    doc.pages = [typed, fromPdf('pa', 0), fromPdf('pb', 1)];
+    doc.pdfSources = { pdf_la: { name: 'Linear algebra.pdf', pageCount: 2, data } };
+    localStorage.setItem(key, JSON.stringify(envelope));
+    return true;
+  }, pdf);
+  check('a note made from a PDF is in the library', seeded);
+
+  await page.fill('[data-library-search]', 'determinants');
+  await page.waitForSelector('[data-library-search-hit]', { timeout: 20_000 });
+  const hit = await page.$eval('[data-library-search-hit]', (e) => ({ page: e.getAttribute('data-library-search-hit-page'), text: e.textContent }));
+  check('a word only the PDF has finds the note', hit.text.includes('Determinants'), hit.text);
+  check('on the note\'s page made from that page of the PDF, marked as from the PDF', hit.page === '2' && hit.text.includes('PDF'), JSON.stringify(hit));
+  await page.waitForFunction(() => !/Reading/.test(document.querySelector('[data-library-search-status]')?.textContent ?? ''), null, { timeout: 10_000 });
+
+  await page.fill('[data-library-search]', 'summary');
+  await page.waitForSelector('[data-library-search-hit]', { timeout: 5_000 });
+  check('the note\'s own words are still found', (await page.$eval('[data-library-search-hit]', (e) => e.textContent)).includes('Text box'));
+
+  const kept = await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const open = indexedDB.open('kk-notes-search');
+        open.onsuccess = () => {
+          const req = open.result.transaction('pdf-text', 'readonly').objectStore('pdf-text').get('pdf_la');
+          req.onsuccess = () => resolve(req.result ?? null);
+          req.onerror = () => resolve(null);
+        };
+        open.onerror = () => resolve(null);
+      }),
+  );
+  check('the PDF\'s words are kept, so it is read only once', Array.isArray(kept) && kept.length === 2 && kept[0].includes('Eigenvalues'), JSON.stringify(kept));
+
+  await page.fill('[data-library-search]', 'eigenvalues');
+  await page.waitForSelector('[data-library-search-hit]', { timeout: 5_000 });
+  await page.click('[data-library-search-hit]');
+  await page.waitForSelector('[data-arranger-toggle]', { timeout: 10_000 });
+  await page.waitForTimeout(300);
+  check('choosing it opens the note at that page', (await page.$eval('[data-page-badge]', (e) => e.textContent)).includes('Page 2'), await page.$eval('[data-page-badge]', (e) => e.textContent));
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * The version history dialog. It needs the desktop shell, which a browser does not have, so a
  * minimal stand-in for Tauri's `invoke` answers the few commands the library and the dialog make.
  */
@@ -3246,6 +3321,7 @@ try {
     checkZoomWindow,
     checkSearch,
     checkLibrarySearch,
+    checkLibraryPdfSearch,
     checkVersionHistory,
     checkAppLock,
     checkBookmarks,
