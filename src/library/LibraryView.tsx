@@ -41,6 +41,7 @@ import {
   type SortKey,
   type SyncStatus,
 } from './types';
+import { errorMessage } from '../lib/errors';
 
 const LAYOUT_KEY = 'notes.library.layout';
 const SORT_KEY = 'notes.library.sort';
@@ -126,7 +127,7 @@ export function LibraryView() {
         setError(null);
       }
     } catch (e) {
-      if (generation.current === mine) setError(e instanceof Error ? e.message : String(e));
+      if (generation.current === mine) setError(errorMessage(e));
     }
   }, [folder, sort]);
 
@@ -166,7 +167,7 @@ export function LibraryView() {
         await action();
         await refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorMessage(e));
       } finally {
         setBusy(false);
       }
@@ -242,7 +243,7 @@ export function LibraryView() {
       });
       if (opened) useRouteStore.getState().openDocument(path);
     })()
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setError(errorMessage(e)))
       .finally(() => setBusy(false));
   }, []);
 
@@ -283,7 +284,7 @@ export function LibraryView() {
       });
       if (opened) useRouteStore.getState().openDocument(path);
     })()
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setError(errorMessage(e)))
       .finally(() => setBusy(false));
   }, [setNotice]);
 

@@ -65,9 +65,3 @@ export function isPenNearby(now: number = performance.now()): boolean {
 export function penPresence(now: number = performance.now()): { inProximity: boolean; msSincePen: number } {
   return { inProximity: penInProximity, msSincePen: now - penLastSeen };
 }
-
-/** Test hook: forget any pen. */
-export function resetPenPresence(): void {
-  penLastSeen = Number.NEGATIVE_INFINITY;
-  penInProximity = false;
-}

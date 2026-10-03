@@ -97,15 +97,6 @@ export type ArrangeOp =
   | { readonly kind: 'align'; readonly mode: AlignMode }
   | { readonly kind: 'distribute'; readonly axis: DistributeAxis };
 
-export const ALIGN_MODES: readonly { readonly mode: AlignMode; readonly label: string }[] = [
-  { mode: 'left', label: 'Align left edges' },
-  { mode: 'centre', label: 'Centre across' },
-  { mode: 'right', label: 'Align right edges' },
-  { mode: 'top', label: 'Align tops' },
-  { mode: 'middle', label: 'Centre down' },
-  { mode: 'bottom', label: 'Align bottoms' },
-];
-
 /** Aligning needs two things to line up; spreading them evenly needs three. */
 export function canAlign(units: readonly ArrangeUnit[]): boolean {
   return units.length >= 2;

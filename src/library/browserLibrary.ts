@@ -116,22 +116,6 @@ export function writeBrowserDocument(parent: string | null, name: string, conten
   return path;
 }
 
-/** Overwrite an existing document, keeping its creation time. */
-export function saveBrowserDocument(path: string, contents: string): void {
-  try {
-    localStorage.setItem(DOCUMENT_PREFIX + path, contents);
-  } catch {
-    throw new Error('This browser has run out of local storage for the library.');
-  }
-  const index = readIndex();
-  const existing = index.find((e) => e.path === path);
-  if (existing) {
-    existing.bytes = contents.length;
-    existing.modifiedMs = Date.now();
-    writeIndex(index);
-  }
-}
-
 export function readBrowserDocument(path: string): string | null {
   return localStorage.getItem(DOCUMENT_PREFIX + path);
 }

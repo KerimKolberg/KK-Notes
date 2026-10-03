@@ -27,6 +27,7 @@ import { pickBrowserFile } from '../desktop/fileService';
 // reader, the LZ4 decoder and the protobuf walker on the critical path for the
 // sake of one string comparison.
 import { GOODNOTES_EXTENSION, isGoodNotesName } from '../goodnotes/names';
+import { errorMessage } from '../lib/errors';
 
 /** What the picker offers. Documents first, since that is the common case. */
 export const OPENABLE_EXTENSIONS: readonly string[] = [NOTEX_EXTENSION, 'json', 'pdf', GOODNOTES_EXTENSION];
@@ -134,7 +135,7 @@ export async function openBrowserFile(file: File): Promise<BootTarget | null> {
     return { view: 'document', path: null };
   } catch (error) {
     useDesktopStore.getState().setNotice({
-      text: `Could not open ${file.name}: ${error instanceof Error ? error.message : String(error)}`,
+      text: `Could not open ${file.name}: ${errorMessage(error)}`,
     });
     return null;
   }

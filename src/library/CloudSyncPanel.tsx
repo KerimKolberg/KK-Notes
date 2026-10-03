@@ -13,6 +13,7 @@ import {
   type DriveAccountInfo,
 } from './driveService';
 import type { SyncStatus } from './types';
+import { errorMessage } from '../lib/errors';
 
 export interface CloudSyncPanelProps {
   status: SyncStatus;
@@ -84,7 +85,7 @@ export function CloudSyncPanel({ status, onClose, onSyncNow }: CloudSyncPanelPro
             setError(null);
             if (next.connected) onSyncNow();
           })
-          .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+          .catch((e: unknown) => setError(errorMessage(e)))
           .finally(() => setBusy(false));
       }),
     [onSyncNow],
@@ -96,7 +97,7 @@ export function CloudSyncPanel({ status, onClose, onSyncNow }: CloudSyncPanelPro
     try {
       await driveSignIn();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setBusy(false);
     }
     // Deliberately stays busy on success: the browser is open and the answer
@@ -109,7 +110,7 @@ export function CloudSyncPanel({ status, onClose, onSyncNow }: CloudSyncPanelPro
     try {
       setInfo(await driveSignOut());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setBusy(false);
     }

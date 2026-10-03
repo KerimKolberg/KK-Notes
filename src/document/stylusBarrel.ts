@@ -114,7 +114,3 @@ export function resetBarrelButton(): void {
   clearHoldTimer();
   state = IDLE_BARREL;
 }
-
-export function barrelPhase(): BarrelState['phase'] {
-  return state.phase;
-}

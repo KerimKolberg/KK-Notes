@@ -6,6 +6,7 @@
  * (and how far down that page, when the PDF says), so the list can be drawn without waiting on PDF.js again.
  */
 import type { PdfPageRef } from '../document/types';
+import { SourceCache } from './sourceCache';
 
 /** One entry, its page resolved. */
 export interface OutlineItem {
@@ -95,29 +96,13 @@ export async function resolveOutline(doc: OutlineDocument): Promise<OutlineItem[
   return walk(raw, 0);
 }
 
-const MAX_CACHED = 32;
-const cache = new Map<string, Promise<OutlineItem[]>>();
+const cache = new SourceCache<OutlineItem[]>(32);
 
 /** The outline of the PDF a page came from, read once per source. */
 export function pdfOutline(ref: Pick<PdfPageRef, 'sourceId' | 'data'>): Promise<OutlineItem[]> {
-  const cached = cache.get(ref.sourceId);
-  if (cached) return cached;
-  const pending = (async () => {
+  return cache.get(ref.sourceId, '', async () => {
     const { getPdfDocument } = await import('./pdfRenderer');
     const doc = await getPdfDocument(ref);
     return resolveOutline(doc as unknown as OutlineDocument);
-  })();
-  cache.set(ref.sourceId, pending);
-  // A failed read is not remembered: opening the list again tries again.
-  pending.catch(() => cache.delete(ref.sourceId));
-  if (cache.size > MAX_CACHED) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
-  }
-  return pending;
-}
-
-/** How many outlines are held, for tests. */
-export function cachedOutlines(): number {
-  return cache.size;
+  });
 }

@@ -181,7 +181,6 @@ export interface TextBox extends MediaBox, TextStyle {
 }
 
 export type MediaObject = ImageLayer | StickyNote | TableLayer | TextBox;
-export type MediaKind = MediaObject['kind'];
 
 export interface PageDimensions {
   readonly width: number;

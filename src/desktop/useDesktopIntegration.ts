@@ -5,13 +5,9 @@ import { isPenNearby } from '../inking/engine/gestureState';
 import { AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_RECHECK_MS, nextAutosaveStep } from './autosave';
 import { saveDraft, setWindowTitle } from './fileService';
 import { isTauri } from './tauri';
+import { isEditableTarget } from '../lib/dom';
 
 export { AUTOSAVE_DEBOUNCE_MS };
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
-}
 
 /**
  * Desktop shell glue for an *open document*: debounced autosave, window title

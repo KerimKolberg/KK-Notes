@@ -14,6 +14,7 @@ import {
   type NoteVersion,
 } from '../../desktop/versions';
 import { selectIsDirty, useDocumentStore } from '../store';
+import { errorMessage } from '../../lib/errors';
 
 /**
  * The earlier versions of this note: one is kept each time a save replaces the file, thinned to
@@ -38,7 +39,7 @@ export const VersionHistory = memo(function VersionHistory() {
     let live = true;
     listVersions(filePath).then(
       (list) => live && setVersions(list),
-      (e: unknown) => live && setError(e instanceof Error ? e.message : String(e)),
+      (e: unknown) => live && setError(errorMessage(e)),
     );
     return () => {
       live = false;
@@ -70,7 +71,7 @@ export const VersionHistory = memo(function VersionHistory() {
         setNotice({ text: `Restored the version from ${describeTime(version.id)}. The note as it was is in the history too.` });
         close();
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorMessage(e));
       } finally {
         setBusy(false);
         setConfirming(null);

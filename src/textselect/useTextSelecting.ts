@@ -7,6 +7,7 @@ import { pageOfFrame } from '../snip/useSnipping';
 import { copySelection } from './actions';
 import { caretAt, isCollapsed, selectedText, selectionLines, wordAround, type Caret, type TextRun } from './geometry';
 import { useTextSelectStore, type TextSurface } from './textSelectStore';
+import { isEditableTarget } from '../lib/dom';
 
 /** Every page on screen, in the editor and in the reference pane. */
 const FRAME = '[data-page-index], [data-reference-page-frame]';
@@ -34,10 +35,6 @@ interface Drag {
   scroll: AutoScroll | null;
   /** Let go: a page whose text arrives after this still gets the selection the drag made. */
   ended: boolean;
-}
-
-function isEditable(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 }
 
 /**
@@ -202,7 +199,7 @@ export function useTextSelecting(): void {
         else setMode(false);
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'c' && selection && !isEditable(e.target)) {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'c' && selection && !isEditableTarget(e.target)) {
         e.preventDefault();
         e.stopPropagation();
         void copySelection(selection);

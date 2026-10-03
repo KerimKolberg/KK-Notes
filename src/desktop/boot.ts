@@ -14,6 +14,7 @@ import { classifyOpenWith, takeAndroidOpenWith, type OpenWithRequest } from './o
 import { useDesktopStore } from './desktopStore';
 import { actionOpenPath } from './fileActions';
 import { clearDraft, getStartupFile, loadDraft } from './fileService';
+import { errorMessage } from '../lib/errors';
 
 export interface BootTarget {
   /** Where to go. */
@@ -51,7 +52,7 @@ export async function openRequested(request: OpenWithRequest): Promise<BootTarge
     }
   } catch (error) {
     useDesktopStore.getState().setNotice({
-      text: `Could not open that file: ${error instanceof Error ? error.message : String(error)}`,
+      text: `Could not open that file: ${errorMessage(error)}`,
     });
   }
   return null;
@@ -129,7 +130,7 @@ async function adoptGoodNotes(bytes: Uint8Array, fileName: string): Promise<void
     useImportReportStore.getState().setOutcome({
       kind: 'failed',
       fileName,
-      message: error instanceof Error ? error.message : String(error),
+      message: errorMessage(error),
       entries: error instanceof GoodNotesImportError ? error.entries : describeGoodNotesArchive(bytes),
     });
     throw error;

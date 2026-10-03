@@ -4,6 +4,7 @@ import { createImageLayer, nextZIndex } from '../media';
 import { useDocumentStore } from '../store';
 import { useToolStore } from '../toolStore';
 import type { Point } from '../../inking/types';
+import { isEditableTarget } from '../../lib/dom';
 
 export interface DecodedImage {
   readonly src: string;
@@ -24,11 +25,6 @@ export async function readImageFile(file: Blob): Promise<DecodedImage> {
   const decoded = { src, mime: file.type || 'image/png', naturalWidth: bitmap.width, naturalHeight: bitmap.height };
   bitmap.close();
   return decoded;
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
 }
 
 /**

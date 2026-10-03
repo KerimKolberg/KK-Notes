@@ -127,6 +127,10 @@ pub mod test_support {
             self.files().len()
         }
 
+        pub fn is_empty(&self) -> bool {
+            self.files().is_empty()
+        }
+
         fn files(&self) -> MutexGuard<'_, BTreeMap<String, Vec<u8>>> {
             self.files.lock().unwrap()
         }

@@ -316,8 +316,3 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
     },
   };
 });
-
-/** The page layout a new note starts with, preferences applied. */
-export function currentPageDefaults(): PageDefaults | null {
-  return usePreferencesStore.getState().pageDefaults;
-}

@@ -5,6 +5,7 @@ import { isPenNearby } from '../inking/engine/gestureState';
 import { usePreferencesStore } from '../preferences/store';
 import { DEFAULT_RECOGNIZER, inkKey, inkTextIsCurrent, inReadingOrder, MAX_INK_WORDS, recognizerInput } from './inkText';
 import { checkRecognizers, recognizeInk, useRecognizerStore } from './recognizer';
+import { errorMessage } from '../lib/errors';
 
 /** Quiet this long — no pen, no tap, no key, no edit — before a page is read. */
 export const IDLE_MS = 1500;
@@ -111,7 +112,7 @@ export function startHandwritingReader(options: ReaderOptions): () => void {
       failures += 1;
       const halt = failures >= MAX_FAILURES;
       if (halt) stopped = true;
-      onError?.(error instanceof Error ? error.message : String(error), halt);
+      onError?.(errorMessage(error), halt);
     } finally {
       busy = false;
     }

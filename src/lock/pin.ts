@@ -9,6 +9,7 @@
  * notes through KK-Notes. It is not encryption. The notes are ordinary files in the library folder, and
  * whoever can open that folder can read them with or without this.
  */
+import { decodeBase64, encodeBase64 } from '../lib/base64';
 
 export interface LockRecord {
   readonly v: 1;
@@ -23,19 +24,6 @@ export interface LockRecord {
 export const DEFAULT_ITERATIONS = 300_000;
 export const MIN_PASSCODE_LENGTH = 4;
 export const MAX_PASSCODE_LENGTH = 64;
-
-function toBase64(bytes: Uint8Array): string {
-  let s = '';
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s);
-}
-
-function fromBase64(text: string): Uint8Array {
-  const s = atob(text);
-  const out = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
-  return out;
-}
 
 async function derive(passcode: string, salt: Uint8Array, iterations: number): Promise<Uint8Array> {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(passcode), 'PBKDF2', false, ['deriveBits']);
@@ -58,13 +46,13 @@ export function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
 export async function createLockRecord(passcode: string, iterations = DEFAULT_ITERATIONS): Promise<LockRecord> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const hash = await derive(passcode, salt, iterations);
-  return { v: 1, salt: toBase64(salt), hash: toBase64(hash), iterations };
+  return { v: 1, salt: encodeBase64(salt), hash: encodeBase64(hash), iterations };
 }
 
 export async function checkPasscode(passcode: string, record: LockRecord): Promise<boolean> {
   try {
-    const hash = await derive(passcode, fromBase64(record.salt), record.iterations);
-    return sameBytes(hash, fromBase64(record.hash));
+    const hash = await derive(passcode, decodeBase64(record.salt), record.iterations);
+    return sameBytes(hash, decodeBase64(record.hash));
   } catch {
     return false;
   }

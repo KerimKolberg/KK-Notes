@@ -143,7 +143,7 @@ impl<T: HttpTransport, K: TokenSource> GoogleDrive<T, K> {
         }
         self.tokens.invalidate();
         let token = self.tokens.access_token()?;
-        Ok(self.transport.send(build(&token))?)
+        self.transport.send(build(&token))
     }
 
     /// Send, and turn anything that is not a 2xx into a readable error.

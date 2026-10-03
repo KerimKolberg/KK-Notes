@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react';
-import { DocumentApp } from './document';
+import { DocumentApp } from './document/components/DocumentApp';
 import { useOpenWith } from './desktop/useOpenWith';
 import { useFileDropGuard } from './desktop/useFileDrop';
 import { LibraryView } from './library/LibraryView';

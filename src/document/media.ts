@@ -8,6 +8,7 @@
  * only has to decide how each one paints itself.
  */
 import { createStrokeId } from '../inking/engine/ids';
+import { decodeBase64 } from '../lib/base64';
 import type { Point } from '../inking/types';
 import {
   DEFAULT_NOTE_COLOR,
@@ -104,11 +105,6 @@ export function createImageLayer(init: CreateImageInit): ImageLayer {
 
 export function moveImage<T extends MediaBox>(image: T, dx: number, dy: number): T {
   return dx === 0 && dy === 0 ? image : { ...image, x: image.x + dx, y: image.y + dy };
-}
-
-export function rotateImage<T extends MediaBox>(image: T, rotation: number): T {
-  const r = normalizeDegrees(rotation);
-  return r === image.rotation ? image : { ...image, rotation: r };
 }
 
 /** Which box edges a handle moves: −1 = min edge, +1 = max edge, 0 = neither. */
@@ -249,12 +245,7 @@ export function dataUrlToBytes(dataUrl: string): { mime: string; bytes: Uint8Arr
   if (!m) return null;
   const mime = m[1] ?? 'application/octet-stream';
   const payload = m[3] ?? '';
-  if (m[2]) {
-    const binary = atob(payload);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return { mime, bytes };
-  }
+  if (m[2]) return { mime, bytes: decodeBase64(payload) };
   return { mime, bytes: new TextEncoder().encode(decodeURIComponent(payload)) };
 }
 

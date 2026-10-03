@@ -97,7 +97,6 @@ export const DEFAULT_WASHI_WIDTH = 32;
 export const DEFAULT_WASHI_OPACITY = 0.7;
 export const MIN_WASHI_OPACITY = 0.2;
 export const MAX_WASHI_OPACITY = 1;
-export const DEFAULT_WASHI_COLOR = '#f9a8d4';
 export const DEFAULT_WASHI_ACCENT = '#ffffff';
 
 // ---- Procedural curves ----------------------------------------------------

@@ -15,6 +15,7 @@ import { Columns2, X } from 'lucide-react';
 import { selectIsDirty, useDocumentStore } from '../store';
 import { MIN_SPLIT_WIDTH, useTabStore } from '../tabStore';
 import { useDesktopStore } from '../../desktop/desktopStore';
+import { errorMessage } from '../../lib/errors';
 
 /**
  * The strip, or nothing.
@@ -58,7 +59,7 @@ function Bar(): React.JSX.Element {
         } catch (error) {
           useDesktopStore
             .getState()
-            .setNotice({ text: `Could not close ${title}: ${error instanceof Error ? error.message : String(error)}` });
+            .setNotice({ text: `Could not close ${title}: ${errorMessage(error)}` });
         }
       })();
     },
@@ -174,7 +175,7 @@ function Bar(): React.JSX.Element {
               closeNow(id, title);
             })().catch((error: unknown) => {
               useDesktopStore.getState().setNotice({
-                text: `Could not save ${title}: ${error instanceof Error ? error.message : String(error)}`,
+                text: `Could not save ${title}: ${errorMessage(error)}`,
               });
             });
           }}

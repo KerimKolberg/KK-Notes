@@ -56,11 +56,8 @@ import { DocumentViewer } from './DocumentViewer';
 import { PageArranger } from './PageArranger';
 import { TopBar } from './TopBar';
 import { useTabStore } from '../tabStore';
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
-}
+import { errorMessage } from '../../lib/errors';
+import { isEditableTarget } from '../../lib/dom';
 
 /**
  * A panel that failed to draw is put away and the reason given, instead of taking the screen with it. Deferred a tick:
@@ -181,7 +178,7 @@ export function DocumentApp() {
     const name = file.name.toLowerCase();
     const setNotice = useDesktopStore.getState().setNotice;
     const fail = (error: unknown): void => {
-      setNotice({ text: `Could not open ${file.name}: ${error instanceof Error ? error.message : String(error)}` });
+      setNotice({ text: `Could not open ${file.name}: ${errorMessage(error)}` });
     };
 
     if (file.type === 'application/pdf' || name.endsWith('.pdf')) {

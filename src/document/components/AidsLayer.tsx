@@ -3,7 +3,7 @@ import { memo, useCallback, useRef, type CSSProperties, type PointerEvent as Rea
 import { GripHorizontal, RotateCw, X } from 'lucide-react';
 import { snapRotation } from '../../inking/engine/lasso';
 import { PROTRACTOR_MIN_RADIUS, protractorTicks } from '../../inking/engine/protractor';
-import { PX_PER_CM, RULER_WIDTH, angleDegrees, rulerTicks } from '../../inking/engine/ruler';
+import { RULER_WIDTH, angleDegrees, rulerTicks } from '../../inking/engine/ruler';
 import type { Point } from '../../inking/types';
 import { useAidStore, type ProtractorAid, type RulerAid } from '../aids';
 import { regionSize } from '../../inking/engine/zoomRegion';
@@ -381,6 +381,3 @@ function ProtractorView({ aid, page, zoom, toPage }: ViewProps<ProtractorAid>) {
     </div>
   );
 }
-
-// Re-exported for the insert menu's label and for tests.
-export const CM_IN_PAGE_UNITS = PX_PER_CM;

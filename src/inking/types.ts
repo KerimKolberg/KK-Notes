@@ -29,9 +29,6 @@ export type ToolType =
   | 'eraser-stroke'
   | 'eraser-pixel';
 
-/** Tools that put ink on the page (everything except select and the stroke eraser). */
-export type DrawingTool = Exclude<ToolType, 'select'>;
-
 /**
  * Tools that put marks on the surface. The stroke eraser removes existing
  * strokes instead of creating one, and select never draws.
@@ -263,8 +260,6 @@ export type Shape =
   | HeartShape
   | CurveShape
   | CoordinatePlaneShape;
-
-export type ShapeType = Shape['type'];
 
 // ---------------------------------------------------------------------------
 // Strokes

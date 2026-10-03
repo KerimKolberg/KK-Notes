@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { TriangleAlert } from 'lucide-react';
 import type { ConflictResolution } from './types';
+import { errorMessage } from '../lib/errors';
 
 export interface ConflictDialogProps {
   /** Relative paths still waiting on an answer. */
@@ -38,7 +39,7 @@ export function ConflictDialog({ conflicts, onResolve, onClose }: ConflictDialog
     try {
       await onResolve(path, choice);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setBusy(null);
     }

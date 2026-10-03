@@ -28,7 +28,6 @@ export const SNAPSHOT_MAX_SIDE = 1024;
 export const RASTER_CACHE_SIZE = 48;
 
 export const LIGHT_PAGE_BACKGROUND = '#ffffff';
-export const DARK_PAGE_BACKGROUND = '#1c1c21';
 
 export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
   spacing: 20,

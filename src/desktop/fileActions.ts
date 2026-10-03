@@ -20,10 +20,7 @@ import {
 } from './fileService';
 import { titleFromFileName } from './notex';
 import { isTauri } from './tauri';
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+import { errorMessage } from '../lib/errors';
 
 function notify(text: string, action?: { label: string; run: () => void }): void {
   useDesktopStore.getState().setNotice(action ? { text, action } : { text });
@@ -70,7 +67,7 @@ export async function actionOpenPath(path: string): Promise<void> {
     useDesktopStore.getState().setRecent(await addRecent(path, doc.title));
     desktop.setNotice(null);
   } catch (err) {
-    notify(`Could not open ${path}: ${describeError(err)}`);
+    notify(`Could not open ${path}: ${errorMessage(err)}`);
     try {
       useDesktopStore.getState().setRecent(await removeRecent(path));
     } catch {
@@ -93,7 +90,7 @@ export async function actionOpen(): Promise<void> {
     if (opened.path) useDesktopStore.getState().setRecent(await addRecent(opened.path, opened.document.title));
     desktop.setNotice(null);
   } catch (err) {
-    notify(`Could not open the document: ${describeError(err)}`);
+    notify(`Could not open the document: ${errorMessage(err)}`);
   } finally {
     useDesktopStore.getState().setBusy(null);
   }
@@ -113,7 +110,7 @@ export async function actionSave(): Promise<boolean> {
     useDesktopStore.getState().setRecent(await addRecent(filePath, doc.title));
     return true;
   } catch (err) {
-    notify(`Save failed: ${describeError(err)}`);
+    notify(`Save failed: ${errorMessage(err)}`);
     return false;
   } finally {
     useDesktopStore.getState().setBusy(null);
@@ -139,7 +136,7 @@ export async function actionSaveAs(): Promise<boolean> {
     useDesktopStore.getState().setRecent(await addRecent(path, doc.title));
     return true;
   } catch (err) {
-    notify(`Save failed: ${describeError(err)}`);
+    notify(`Save failed: ${errorMessage(err)}`);
     return false;
   } finally {
     useDesktopStore.getState().setBusy(null);
@@ -155,7 +152,7 @@ export async function actionExportPdf(): Promise<void> {
     const path = await exportPdf(useDocumentStore.getState().document);
     if (path) notify(`Exported PDF to ${path}`);
   } catch (err) {
-    notify(`Export failed: ${describeError(err)}`);
+    notify(`Export failed: ${errorMessage(err)}`);
   } finally {
     useDocumentStore.getState().setExporting(false);
     useDesktopStore.getState().setBusy(null);

@@ -7,6 +7,7 @@ import type { Page } from '../document/types';
 import { snipPage } from './capture';
 import { dragRect, isSnip, pageRegion, type Rect } from './geometry';
 import { useSnipStore } from './snipStore';
+import { errorMessage } from '../lib/errors';
 
 /** Every page on screen, in the editor and in the reference pane. */
 const FRAME = '[data-page-index], [data-reference-page-frame]';
@@ -102,7 +103,7 @@ export function useSnipping(): void {
       snipPage(found.page, pageRegion(rect, frameRect, found.page.dimensions), found.from).then(
         (snip) => useSnipStore.getState().add(snip),
         (error: unknown) =>
-          useDesktopStore.getState().setNotice({ text: `Could not snip that: ${error instanceof Error ? error.message : String(error)}` }),
+          useDesktopStore.getState().setNotice({ text: `Could not snip that: ${errorMessage(error)}` }),
       );
     };
     const onCancel = (): void => end();

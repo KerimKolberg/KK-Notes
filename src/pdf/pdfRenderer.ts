@@ -5,6 +5,7 @@
 import { RasterCache } from '../document/raster/rasterCache';
 import type { PdfPageRef } from '../document/types';
 import { displaySizePoints } from './pdfCoords';
+import { releaseSourceCaches } from './sourceCache';
 
 export { backgroundWidthBucket } from './pdfCoords';
 import { ANNOTATION_MODE_FORMS, destroyPdfDocument, openPdfDocument, type PDFDocumentProxy } from './pdfjs';
@@ -93,9 +94,6 @@ export function releasePdfSource(sourceId: string): void {
   for (const key of [...inflight.keys()]) {
     if (key.startsWith(prefix)) inflight.delete(key);
   }
-}
-
-/** How many page rasters are cached. For the tests and the profiler. */
-export function cachedPdfBackgrounds(): number {
-  return backgrounds.size;
+  // And what was read from it: its words, where they sit, its contents.
+  releaseSourceCaches(sourceId);
 }

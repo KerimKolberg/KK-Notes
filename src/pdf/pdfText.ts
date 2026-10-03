@@ -2,10 +2,11 @@
  * The words of a PDF page, for searching it.
  *
  * Read with PDF.js (`getTextContent`), which is already loaded for drawing the page and keeps the
- * document parsed, so this costs a page's worth of text layout and nothing to open. Cached by page,
- * because a search reads the same pages again with every letter typed.
+ * document parsed, so this costs a page's worth of text layout and nothing to open. Cached by page
+ * (`sourceCache.ts`), because a search reads the same pages again with every letter typed.
  */
 import type { PdfPageRef } from '../document/types';
+import { SourceCache } from './sourceCache';
 
 interface TextItemLike {
   readonly str?: string;
@@ -26,41 +27,14 @@ export function joinTextItems(items: readonly TextItemLike[]): string {
   return out.replace(/\s+/g, ' ').trim();
 }
 
-const MAX_CACHED_PAGES = 400;
-const cache = new Map<string, Promise<string>>();
-
-function keyOf(ref: Pick<PdfPageRef, 'sourceId' | 'pageIndex'>): string {
-  return `${ref.sourceId}:${ref.pageIndex}`;
-}
+const cache = new SourceCache<string>(400);
 
 export function pdfPageText(ref: PdfPageRef): Promise<string> {
-  const key = keyOf(ref);
-  const cached = cache.get(key);
-  if (cached) return cached;
-  const pending = (async () => {
+  return cache.get(ref.sourceId, String(ref.pageIndex), async () => {
     const { getPdfDocument } = await import('./pdfRenderer');
     const doc = await getPdfDocument(ref);
     const page = await doc.getPage(ref.pageIndex + 1);
     const content = await page.getTextContent();
     return joinTextItems(content.items as readonly TextItemLike[]);
-  })();
-  cache.set(key, pending);
-  // A failed read is not remembered: the next search tries again.
-  pending.catch(() => cache.delete(key));
-  if (cache.size > MAX_CACHED_PAGES) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
-  }
-  return pending;
-}
-
-/** Forget a source's pages, when it is released. */
-export function releasePdfText(sourceId: string): void {
-  const prefix = `${sourceId}:`;
-  for (const key of [...cache.keys()]) if (key.startsWith(prefix)) cache.delete(key);
-}
-
-/** How many pages' text is held, for tests. */
-export function cachedPdfTexts(): number {
-  return cache.size;
+  });
 }
