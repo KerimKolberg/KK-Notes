@@ -67,6 +67,7 @@ import {
   withStrokes,
 } from './operations';
 import type {
+  InkText,
   Cover,
   Document,
   FormValue,
@@ -141,6 +142,11 @@ export interface DocumentStore {
   setPageBackground: (target: PageTarget, color: string) => void;
   /** Bookmark a page with a name ('' for none), or take its bookmark away (`null`). */
   setPageBookmark: (pageId: string, label: string | null) => void;
+  /**
+   * What the handwriting on a page says, as a recogniser read it (`null`: nothing, take it away). Not an edit: it
+   * works on a locked note, is not undone, and never marks a note as changed — it goes to disk with the next save.
+   */
+  setPageInkText: (pageId: string, inkText: InkText | null) => void;
   /** Patch the template's line spacing / colour / weight. */
   setTemplateConfig: (target: PageTarget, patch: Partial<TemplateConfig>) => void;
   /** Add, replace or (with `null`) remove the notebook cover. */
@@ -427,6 +433,27 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
 
   setPageBookmark: (pageId, label) =>
     set(edit((s) => ({ document: updatePageById(s.document, pageId, (page) => withBookmark(page, label)) }))),
+
+  setPageInkText: (pageId, inkText) =>
+    set((s) => {
+      const index = s.document.pages.findIndex((p) => p.id === pageId);
+      const page = s.document.pages[index];
+      if (!page) return s;
+      if (!inkText && page.inkText === undefined) return s;
+      let next: Page;
+      if (inkText) next = { ...page, inkText };
+      else {
+        const { inkText: _gone, ...rest } = page;
+        next = rest;
+      }
+      const pages = s.document.pages.map((p, i) => (i === index ? next : p));
+      // What was saved stays saved: where the saved pages hold this very page, they take the words as well, so a
+      // note whose handwriting has just been read is not shown as changed and nothing is written because of it.
+      let savedPages = s.savedPages;
+      if (savedPages === s.document.pages) savedPages = pages;
+      else if (savedPages && savedPages[index] === page) savedPages = savedPages.map((p, i) => (i === index ? next : p));
+      return { document: { ...s.document, pages }, savedPages };
+    }),
 
   setPageBackground: (target, color) =>
     set(edit((s) => ({ document: updateTargets(s.document, target, (page) => ({ ...page, backgroundColor: color })) }))),

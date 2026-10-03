@@ -35,6 +35,13 @@ notex-http = { path = "notex-http", optional = true }
 # pulls it), so this is a name for something that is compiled either way.
 getrandom = "0.3"
 
+# Windows' own handwriting recogniser (WinRT), for searching handwriting. The
+# versions are the ones Tauri already builds, so nothing is compiled twice.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Foundation", "Foundation_Collections", "UI_Input_Inking", "Win32_System_Com"] }
+windows-collections = "0.2"
+windows-numerics = "0.2"
+
 [features]
 default = ["cloud-sync"]
 # Compiles the real HTTPS transport in. Everything ships with it; the one

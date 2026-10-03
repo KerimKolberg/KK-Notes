@@ -222,6 +222,33 @@ export interface Page {
    * then shown as the page's number). Not part of how the page looks, so not in {@link PageVisual}.
    */
   readonly bookmark?: string;
+  /**
+   * The words of the handwriting on the page, as a handwriting recogniser read them, for searching. Saved with
+   * the note so a device that cannot read handwriting still finds it. Not part of how the page looks.
+   */
+  readonly inkText?: InkText;
+}
+
+/** One handwritten word as it was read, and where it is on the page (page units). */
+export interface InkWord {
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** What a recogniser read in a page's handwriting. */
+export interface InkText {
+  /**
+   * A fingerprint of the handwriting it was read from (see `handwriting/inkText.ts`). When the page's handwriting
+   * no longer matches it, the words are out of date and the page is read again.
+   */
+  readonly key: string;
+  /** The recogniser that read it (its name), so choosing another language reads the page again. */
+  readonly by: string;
+  /** In reading order: lines from the top, words from the left. */
+  readonly words: readonly InkWord[];
 }
 
 /**
@@ -287,6 +314,7 @@ export interface SerializedPage {
   readonly formValues?: FormValues;
   readonly media?: readonly MediaObject[];
   readonly bookmark?: string;
+  readonly inkText?: InkText;
   /** Files written before notes and tables existed; migrated to `media` on load. */
   readonly images?: readonly Omit<ImageLayer, 'kind'>[];
 }

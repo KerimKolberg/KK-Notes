@@ -21,7 +21,7 @@ pub struct TextPiece {
     pub page_index: u32,
     pub page_id: String,
     pub media_id: Option<String>,
-    /// `text`, `note` or `table`.
+    /// `text`, `note`, `table` or `ink` (the page's handwriting, as a recogniser read it).
     pub kind: &'static str,
     pub text: String,
 }
@@ -69,6 +69,28 @@ struct PdfRefHead {
 }
 
 #[derive(Deserialize)]
+struct InkWordHead {
+    #[serde(default)]
+    text: String,
+}
+
+/// What a handwriting recogniser read on the page; only the words, not where they are.
+#[derive(Deserialize)]
+struct InkTextHead {
+    #[serde(default)]
+    words: Vec<InkWordHead>,
+}
+
+/// The handwriting record as the file has it: anything that is not one is passed over, so a page with a broken
+/// record does not cost the rest of the note its words.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum InkTextField {
+    Words(InkTextHead),
+    Other(serde::de::IgnoredAny),
+}
+
+#[derive(Deserialize)]
 struct PageHead {
     #[serde(default)]
     id: String,
@@ -76,6 +98,8 @@ struct PageHead {
     media: Vec<MediaHead>,
     #[serde(default)]
     pdf: Option<PdfRefHead>,
+    #[serde(default, rename = "inkText")]
+    ink_text: Option<InkTextField>,
 }
 
 #[derive(Deserialize)]
@@ -155,6 +179,13 @@ pub fn read_document_text(path: &Path, fallback_title: &str) -> Result<DocumentT
                 _ => {}
             }
         }
+        // The handwriting, as one piece per page: a phrase written across a line is found as one.
+        if let Some(InkTextField::Words(ink)) = &page.ink_text {
+            let words: Vec<&str> = ink.words.iter().map(|w| w.text.trim()).filter(|w| !w.is_empty()).collect();
+            if !words.is_empty() {
+                pieces.push(TextPiece { page_index, page_id: page.id.clone(), media_id: None, kind: "ink", text: words.join(" ") });
+            }
+        }
     }
 
     Ok(DocumentText { title, page_count, pieces, pdf_pages })
@@ -227,6 +258,26 @@ mod tests {
         assert_eq!(text.pieces.len(), 1);
         let json = serde_json::to_string(&text).unwrap();
         assert!(json.contains(r#""pdfPages":[{"pageIndex":0,"pageId":"a","sourceId":"pdf_1","pdfPageIndex":0}"#), "{json}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reads_the_handwriting_words_a_recogniser_left_on_a_page() {
+        let dir = scratch("i");
+        let path = write(
+            &dir,
+            "i.notex",
+            r#"{"format":"notex","document":{"title":"Ink","pages":[
+                {"id":"a","strokes":[],"inkText":{"key":"3-x","by":"default","words":[
+                    {"text":"Fourier","x":1,"y":2,"width":30,"height":10},{"text":" ","x":0,"y":0,"width":1,"height":1},{"text":"series","x":40,"y":2,"width":30,"height":10}]}},
+                {"id":"b","inkText":{"key":"","by":"default","words":[]}},
+                {"id":"c","inkText":"not words"}]}}"#,
+        );
+        // A page whose handwriting record is not one is passed over, and the rest of the note still reads.
+        let text = read_document_text(&path, "i").unwrap();
+        assert_eq!(text.pieces.len(), 1);
+        assert_eq!((text.pieces[0].page_index, text.pieces[0].kind, text.pieces[0].text.as_str()), (0, "ink", "Fourier series"));
+        assert_eq!(text.pieces[0].media_id, None);
         let _ = fs::remove_dir_all(dir);
     }
 

@@ -15,6 +15,7 @@
 
 mod commands;
 mod drive_commands;
+mod handwriting;
 mod library_commands;
 mod transport;
 
@@ -48,6 +49,8 @@ pub fn run() {
             library_commands::delete_library_entry,
             library_commands::read_document_thumbnail,
             library_commands::read_document_text,
+            handwriting::ink_recognizers,
+            handwriting::recognize_ink,
             library_commands::sync_status,
             library_commands::sync_now,
             library_commands::resolve_conflict,

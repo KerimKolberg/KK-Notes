@@ -50,6 +50,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   swatches: COLOR_PALETTE,
   widthPresets: DEFAULT_WIDTH_PRESETS,
   pageDefaults: null,
+  handwritingSearch: true,
+  handwritingRecognizer: null,
 };
 
 const STYLUS_TOOL_IDS: ReadonlySet<string> = new Set(STYLUS_TOOLS.map((tool) => tool.id));
@@ -178,6 +180,10 @@ export function normalize(stored: unknown): Preferences {
     swatches: normalizeSwatches(record.swatches),
     widthPresets: normalizeWidthPresets(record.widthPresets),
     pageDefaults: normalizePageDefaults(record.pageDefaults),
+    // On unless explicitly turned off.
+    handwritingSearch: record.handwritingSearch !== false,
+    handwritingRecognizer:
+      typeof record.handwritingRecognizer === 'string' && record.handwritingRecognizer.trim() ? record.handwritingRecognizer.slice(0, 200) : null,
   };
 }
 
@@ -221,6 +227,8 @@ export interface PreferencesStore extends Preferences {
   setPointerStyle: (style: PointerStyle) => void;
   setStylus: (stylus: StylusSettings) => void;
   setLowLatencyInk: (enabled: boolean) => void;
+  setHandwritingSearch: (enabled: boolean) => void;
+  setHandwritingRecognizer: (name: string | null) => void;
   /** Clear custom colours, tool order and page defaults in one go. */
   resetPreferences: () => void;
 }
@@ -238,6 +246,8 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
       swatches: patch.swatches ?? current.swatches,
       widthPresets: patch.widthPresets ?? current.widthPresets,
       pageDefaults: patch.pageDefaults !== undefined ? patch.pageDefaults : current.pageDefaults,
+      handwritingSearch: patch.handwritingSearch ?? current.handwritingSearch,
+      handwritingRecognizer: patch.handwritingRecognizer !== undefined ? patch.handwritingRecognizer : current.handwritingRecognizer,
     };
     write(next);
     // Before the state changes, so a surface that remounts on the change already
@@ -291,6 +301,8 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
     setPointerStyle: (style) => save({ pointerStyle: normalizePointerStyle(style) }),
     setStylus: (stylus) => save({ stylus: normalizeStylus(stylus) }),
     setLowLatencyInk: (enabled) => save({ lowLatencyInk: enabled === true }),
+    setHandwritingSearch: (enabled) => save({ handwritingSearch: enabled !== false }),
+    setHandwritingRecognizer: (name) => save({ handwritingRecognizer: name && name.trim() ? name : null }),
 
     resetPreferences: () => {
       try {

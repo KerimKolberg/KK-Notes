@@ -2,15 +2,18 @@
  * Finding words in a note.
  *
  * What can be searched is the text that is *text*: a note's title, its text boxes, its sticky
- * notes, the cells of its tables, and (asynchronously, see `pdfText.ts`) the words of a PDF
- * it was made from. Handwriting is ink, not text, and nothing here can read it.
+ * notes, the cells of its tables, (asynchronously, see `pdfText.ts`) the words of a PDF it was
+ * made from, and its handwriting as far as a recogniser has read it (`handwriting/`).
  *
  * Pure: a document's pages in, matches out. The matching ignores case and accents, so "cafe"
  * finds "Café" and "STRASSE" finds "straße"'s cousin "Strasse"; a query of several words finds
  * the places where every one of them occurs.
  */
 
-export type TextKind = 'title' | 'text' | 'note' | 'table' | 'pdf';
+import type { InkWord } from '../document/types';
+import { inkPageText, type InkSpan } from '../handwriting/inkText';
+
+export type TextKind = 'title' | 'text' | 'note' | 'table' | 'ink' | 'pdf';
 
 /** One piece of searchable text, and where in the note it is. */
 export interface TextSource {
@@ -21,11 +24,14 @@ export interface TextSource {
   readonly mediaId: string | null;
   readonly kind: TextKind;
   readonly text: string;
+  /** For handwriting: where each word is in `text` and on the page, to point at the one a match is in. */
+  readonly spans?: readonly InkSpan[];
 }
 
 interface SearchablePage {
   readonly id: string;
   readonly media?: readonly SearchableMedia[];
+  readonly inkText?: { readonly words: readonly InkWord[] };
 }
 
 type SearchableMedia =
@@ -67,7 +73,7 @@ export function queryWords(query: string): string[] {
     .filter((w) => w.length > 0);
 }
 
-/** Every piece of searchable text in a note: its title, then each page's typed text and tables. */
+/** Every piece of searchable text in a note: its title, then each page's typed text and tables, then its handwriting. */
 export function documentSources(doc: { readonly title: string; readonly pages: readonly SearchablePage[] }): TextSource[] {
   const out: TextSource[] = [];
   if (doc.title.trim()) out.push({ pageIndex: -1, pageId: '', mediaId: null, kind: 'title', text: doc.title });
@@ -80,6 +86,11 @@ export function documentSources(doc: { readonly title: string; readonly pages: r
           if (cell.trim()) out.push({ pageIndex, pageId: page.id, mediaId: item.id, kind: 'table', text: cell });
         }
       }
+    }
+    // The page's handwriting as one text, so a phrase written along a line is found as one.
+    if (page.inkText && page.inkText.words.length > 0) {
+      const { text, spans } = inkPageText(page.inkText.words);
+      if (text.trim()) out.push({ pageIndex, pageId: page.id, mediaId: null, kind: 'ink', text, spans });
     }
   });
   return out;
@@ -151,5 +162,6 @@ export const KIND_LABELS: Readonly<Record<TextKind, string>> = {
   text: 'Text box',
   note: 'Sticky note',
   table: 'Table',
+  ink: 'Handwriting',
   pdf: 'PDF',
 };

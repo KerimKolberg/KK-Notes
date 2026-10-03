@@ -4,6 +4,8 @@ import { Brush, Check, Pen, PenLine, PenTool, Pencil, Pipette, Plus, Rainbow, Tr
 import { useDesktopStore } from '../../desktop/desktopStore';
 import { IconButton } from '../../ui/IconButton';
 import { Tooltip } from '../../ui/Tooltip';
+import { Row, Switch } from '../../ui/SettingsRow';
+import { HandwritingSettings } from '../../handwriting/HandwritingSettings';
 import {
   AXIS_LABEL_PRESETS,
   COLOR_PALETTE,
@@ -110,29 +112,8 @@ export function Chip({ active = false, disabled = false, onClick, children, labe
   );
 }
 
-export function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-center gap-2 px-1 py-1">
-      <span className="w-24 shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400">{label}</span>
-      <div className="flex flex-wrap items-center gap-1">{children}</div>
-    </div>
-  );
-}
-
-export function Switch({ checked, onChange, children }: { checked: boolean; onChange: (v: boolean) => void; children: ReactNode }) {
-  return (
-    <label className="inline-flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800">
-      <input
-        type="checkbox"
-        role="switch"
-        className="h-4 w-4 accent-blue-600"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      {children}
-    </label>
-  );
-}
+// A labelled row and an on/off switch: shared with panels outside the palette, so they live in `ui/`.
+export { Row, Switch };
 
 const SELECT =
   'h-8 rounded-lg border border-zinc-300 bg-white px-2 text-xs text-zinc-900 ' +
@@ -1284,6 +1265,8 @@ export function PaletteSettings({
     setPointerStyle,
     lowLatencyInk,
     setLowLatencyInk,
+    handwritingSearch,
+    handwritingRecognizer,
   } = usePreferencesStore(
     useShallow((s) => ({
       paletteOrder: s.paletteOrder,
@@ -1298,6 +1281,8 @@ export function PaletteSettings({
       setPointerStyle: s.setPointerStyle,
       lowLatencyInk: s.lowLatencyInk,
       setLowLatencyInk: s.setLowLatencyInk,
+      handwritingSearch: s.handwritingSearch,
+      handwritingRecognizer: s.handwritingRecognizer,
     })),
   );
   // Subscribed rather than read once, so the button enables itself the moment
@@ -1312,6 +1297,8 @@ export function PaletteSettings({
     palettePinned !== DEFAULT_PREFERENCES.palettePinned ||
     pointerStyle !== DEFAULT_PREFERENCES.pointerStyle ||
     lowLatencyInk !== DEFAULT_PREFERENCES.lowLatencyInk ||
+    handwritingSearch !== DEFAULT_PREFERENCES.handwritingSearch ||
+    handwritingRecognizer !== DEFAULT_PREFERENCES.handwritingRecognizer ||
     JSON.stringify(settings.stylus) !== JSON.stringify(DEFAULT_STYLUS_SETTINGS);
   return (
     // Scrolls instead of growing: this panel has more in it than a tablet in
@@ -1483,6 +1470,7 @@ export function PaletteSettings({
         Z13 was one) it turns every page dark and makes the cursor blink in
         fullscreen. Off by default; if pages go dark, switch it back off.
       </p>
+      <HandwritingSettings />
       <Row label="Diagnostics">
         <Switch checked={settings.debugMode} onChange={(v) => onSettingsChange({ debugMode: v })}>
           <span data-debug-mode>Debug mode</span>

@@ -296,7 +296,8 @@ What was read is kept by the `NoteIndex` keyed by each file's modified time, so 
 instant and only a note that changed is read again (four at a time, the results filling in as they come);
 the notes are read when the box goes from empty to something, not on every letter. Matching is the
 in-note search's own `searchSources`, so the two agree. A note is also found by its title and file name.
-Handwriting is ink and cannot be searched.
+Handwriting is found where a recogniser has read it: the words are saved with the note (see *Searching
+handwriting*), and the text reader reads them like the typed text.
 
 **The PDFs in notes are searched too** (`library/notePdfs.ts`, `library/pdfTextStore.ts`), in a second pass
 after the notes' own text, so typed words are found at once and the status line says when the PDFs are still
@@ -737,7 +738,8 @@ object, selects it (and switches to the select tool, which is the only one that 
 
 - **What is searched.** Typed text: the title, text boxes, sticky notes, table cells and, for a note made
   from a PDF, the PDF's own text layer (`pdf/pdfText.ts`, PDF.js `getTextContent`, read two pages at a time
-  and cached, with a progress line in the panel). Handwriting is ink, not text, and the panel says so.
+  and cached, with a progress line in the panel). Handwriting, as far as a recogniser has read it (below):
+  one text per page, so a phrase written along a line is found as one; a result in it is marked on the page.
 - **How it matches** (`search/text.ts`, pure). Case and accents are ignored ("cafe" finds "Café") by folding
   each string with a map back to the original, since folding can change a string's length; a query of
   several words finds the pieces of text where every word occurs; results are in document order and limited
@@ -747,6 +749,38 @@ object, selects it (and switches to the select tool, which is the only one that 
 - **Cheap.** The panel reads the text objects' arrays only, which keep their identity until something on a
   page is edited, so a stroke committed every few seconds does not re-run the search. It is loaded only
   when first opened.
+
+### Searching handwriting (`src/handwriting/`, `src-tauri/src/handwriting.rs`)
+
+Handwriting is ink; to be found it has to be read. On Windows the app reads it with **Windows' own handwriting
+recogniser** — the one behind the pen input panel — on the device, with nothing sent anywhere: the shell rebuilds
+a page's pen strokes as WinRT ink (`InkStrokeBuilder.CreateStrokeFromInkPoints` into an `InkStrokeContainer`),
+reads them with `InkRecognizerContainer.RecognizeAsync` on a blocking thread in the multithreaded apartment, and
+hands back each word with its box. It reads in the languages that have handwriting installed in Windows (Settings
+→ Time & language → Language & region → a language's options → Handwriting); the settings offer them, Windows'
+own pick by default. Elsewhere the shell has no recogniser and says so.
+
+- **What is read.** Only what the pen wrote (`tool: 'pen'` freehand strokes), not the highlighter, tape, shapes or
+  the pixel eraser. Each stroke goes over as a flat run of x, y, pressure in page units, points closer than a unit
+  left out and a dot given a second point.
+- **When.** A fingerprint of a page's handwriting — each pen stroke's id, box and point count, hashed (FNV-1a) — is
+  kept with the words (`inkText.key`), and with it which recogniser read them (`inkText.by`). A page is read again
+  only when that no longer matches: after writing, erasing or moving ink, or choosing another language. Reading
+  waits until nothing has happened for 1.5 s (no pen near the screen, no tap, no key, no edit; the reader's own
+  updates do not count) and goes one page at a time, the page in view first. A reading that comes back after more
+  was written is dropped and the page read again; a page that will not read is not tried again until it changes,
+  and three failures in a row stop reading for the session with the reason shown in the settings.
+- **Saved with the note** (`Page.inkText`: `key`, `by`, `words` with boxes, in reading order). So the library search
+  finds it from the file (`notes-sync`'s text reader reads the words, one piece per page), and a device that cannot
+  read handwriting — Android, for now — still finds what a Windows PC read. Putting the words on a page is not an
+  edit (`setPageInkText`): it is not undone, works on a locked note, and never marks a note as changed — where the
+  saved pages hold that very page, they take the words too, so opening an old note to have it read does not ask to
+  be saved; the words go to disk with the next save.
+- **Pointing at a match.** A handwritten word has no object to select, so choosing a result scrolls to it and rings
+  it for a moment (`search/SearchFlash.tsx`). A result from the library carries no box; the word is found again on
+  the opened page from what was searched for.
+- **Not yet:** a recogniser on Android (Google's ML Kit digital ink would be the one), and alternative readings of a
+  word — only the recogniser's first choice is kept, so a word it misread is found by what it read.
 
 ### Bookmarks (`document/bookmarks.ts`, `components/BookmarksPanel.tsx`)
 
@@ -2639,6 +2673,13 @@ hit-testing can answer:
   back with the last search in the box.
 - **searching the library**: a note is found by the words inside it, by its title, and a word that is in no
   note finds none; a match on the second page opens the note at that page with the table selected.
+- **searching handwriting** (desktop shell and recogniser faked): an old note's handwriting is read once things
+  are still, every pen stroke sent as x, y, pressure, with Windows' own pick of language, without marking the
+  note as changed; the search finds the handwritten word and choosing it rings the word where it is, then the
+  ring goes; writing more reads the page again; the settings offer the languages by their short names and say
+  how far the note is read; choosing a language reads it again in that one; turned off, nothing more is read.
+- **searching handwriting in the library**: a note with read handwriting is found by a phrase along a line, the
+  hit marked Handwriting; opening it goes to the page and rings the word.
 - **searching the PDFs in the library**: a word only a note's PDF has finds the note, the hit marked `PDF` and
   on the note's page made from that page of the PDF; the note's own words are still found; the PDF's words are
   kept in IndexedDB; choosing a hit opens the note at its page.

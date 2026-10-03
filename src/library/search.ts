@@ -7,7 +7,8 @@
  *
  * What is indexed is text: a note's title, its text boxes, sticky notes and table cells, read first because that
  * is quick, and then the words of the PDFs its pages were made from, which means reading each PDF once (they are
- * kept, see `notePdfs.ts`). Handwriting is ink, and cannot be searched.
+ * kept, see `notePdfs.ts`). Handwriting is found as far as a recogniser has read it: the words are saved with
+ * the note (`Page.inkText`), so they are in the file like the typed text.
  */
 import { searchSources, type SearchHit, type TextKind, type TextSource } from '../search/text';
 import type { PdfWords } from './notePdfs';

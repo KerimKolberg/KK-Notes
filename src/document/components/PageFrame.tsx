@@ -6,6 +6,7 @@ import type { Point, Stroke, ToolSettings } from '../../inking/types';
 import { FormOverlay } from '../../pdf/FormOverlay';
 import { PdfBackground } from '../../pdf/PdfBackground';
 import { TextSelectionLayer } from '../../textselect/TextSelectionLayer';
+import { SearchFlash } from '../../search/SearchFlash';
 import type { PageLayout } from '../layout';
 import { ClipboardPaste } from 'lucide-react';
 import { usePreferencesStore } from '../../preferences/store';
@@ -216,6 +217,7 @@ export const PageFrame = memo(function PageFrame({
         </button>
       )}
       <TextSelectionLayer surface="editor" pageId={page.id} />
+      <SearchFlash pageId={page.id} width={page.dimensions.width} height={page.dimensions.height} />
       <span className="pointer-events-none absolute bottom-2 right-3 select-none rounded bg-black/40 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-white/90">
         {page.pageNumber}
       </span>

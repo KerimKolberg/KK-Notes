@@ -23,7 +23,7 @@ export const LibrarySearchResults = memo(function LibrarySearchResults({ search,
           ? reading.phase === 'notes'
             ? `Reading your notes… ${reading.done} of ${reading.total}`
             : `${results.length === 1 ? '1 note' : `${results.length} notes`} so far. Reading the PDFs in your notes… ${reading.done} of ${reading.total} (only the first time)`
-          : `${results.length === 0 ? 'No notes' : results.length === 1 ? '1 note' : `${results.length} notes`} for “${query.trim()}” among ${searched}. Handwriting cannot be searched.`}
+          : `${results.length === 0 ? 'No notes' : results.length === 1 ? '1 note' : `${results.length} notes`} for “${query.trim()}” among ${searched}. Handwriting is found once a Windows PC has read it.`}
       </p>
       <ul className="flex flex-col gap-2">
         {results.map(({ note, folder, hits }) => (

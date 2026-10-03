@@ -1,10 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { FileText, Search, Table2, Type, StickyNote, X, type LucideIcon } from 'lucide-react';
+import { FileText, PenLine, Search, Table2, Type, StickyNote, X, type LucideIcon } from 'lucide-react';
 import { pdfPageText } from '../../pdf/pdfText';
 import { revealText } from '../../search/reveal';
 import { useSearchStore } from '../../search/searchStore';
 import { KIND_LABELS, documentSources, searchSources, type SearchHit, type TextKind, type TextSource } from '../../search/text';
+import { wordAt } from '../../handwriting/inkText';
+import { useRecognizerStore } from '../../handwriting/recognizer';
+import { usePreferencesStore } from '../../preferences/store';
 import { useDocumentStore } from '../store';
 
 const KIND_ICONS: Readonly<Record<TextKind, LucideIcon>> = {
@@ -12,6 +15,7 @@ const KIND_ICONS: Readonly<Record<TextKind, LucideIcon>> = {
   text: Type,
   note: StickyNote,
   table: Table2,
+  ink: PenLine,
   pdf: FileText,
 };
 
@@ -19,11 +23,12 @@ const KIND_ICONS: Readonly<Record<TextKind, LucideIcon>> = {
 const PDF_READERS = 2;
 
 /**
- * Search inside the open note: its title, text boxes, sticky notes, table cells and, for a PDF, the
- * words of its pages. Handwriting is ink and is not searched, which the panel says rather than leaving
- * someone to wonder why a word they wrote is not found.
+ * Search inside the open note: its title, text boxes, sticky notes, table cells, its handwriting as far as it
+ * has been read (`handwriting/`) and, for a PDF, the words of its pages. The panel says what it cannot find
+ * rather than leaving someone to wonder why a word they wrote is not found.
  *
- * Choosing a result goes to its page, and for something on a page selects it there.
+ * Choosing a result goes to its page, and for something on a page selects it there; a handwritten word is
+ * marked where it is.
  */
 export const SearchPanel = memo(function SearchPanel() {
   const { query, focusRequest } = useSearchStore(useShallow((s) => ({ query: s.query, focusRequest: s.focusRequest })));
@@ -37,16 +42,26 @@ export const SearchPanel = memo(function SearchPanel() {
   const pageMedia = useDocumentStore(useShallow((s) => s.document.pages.map((p) => p.media)));
   const pageIds = useDocumentStore(useShallow((s) => s.document.pages.map((p) => p.id)));
   const pdfPages = useDocumentStore(useShallow((s) => s.document.pages.map((p) => p.pdf)));
+  const pageInk = useDocumentStore(useShallow((s) => s.document.pages.map((p) => p.inkText)));
+  const readsHandwriting = useRecognizerStore((s) => s.status === 'ready');
+  const handwritingOn = usePreferencesStore((s) => s.handwritingSearch);
 
   useEffect(() => {
     inputRef.current?.focus();
     inputRef.current?.select();
   }, [focusRequest]);
 
-  // The typed text, available at once.
+  // The typed text and the handwriting read so far, available at once.
   const typed = useMemo(
-    () => documentSources({ title, pages: pageIds.map((id, i) => ({ id, media: pageMedia[i] ?? [] })) }),
-    [title, pageIds, pageMedia],
+    () =>
+      documentSources({
+        title,
+        pages: pageIds.map((id, i) => {
+          const ink = pageInk[i];
+          return { id, media: pageMedia[i] ?? [], ...(ink ? { inkText: ink } : {}) };
+        }),
+      }),
+    [title, pageIds, pageMedia, pageInk],
   );
 
   // A PDF's words arrive a page at a time.
@@ -114,7 +129,9 @@ export const SearchPanel = memo(function SearchPanel() {
   const go = useCallback((hit: SearchHit | undefined) => {
     if (!hit) return;
     try {
-      revealText(hit.source);
+      // A handwritten word has no object to select: point at the word itself.
+      const word = hit.source.spans ? wordAt(hit.source.spans, hit.start) : null;
+      revealText({ ...hit.source, box: word });
     } catch (error) {
       console.error('KK-Notes: could not go to that search result', error);
     }
@@ -220,7 +237,11 @@ export const SearchPanel = memo(function SearchPanel() {
       <p className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-zinc-400 dark:border-zinc-800" data-search-note>
         {reading
           ? `Reading the PDF… ${reading.done} of ${reading.total} pages`
-          : 'Finds typed text, sticky notes, tables and PDF text. Handwriting cannot be searched.'}
+          : readsHandwriting && handwritingOn
+            ? 'Finds typed text, sticky notes, tables, PDF text and your handwriting (read a moment after you stop writing).'
+            : pageInk.some((ink) => ink && ink.words.length > 0)
+              ? 'Finds typed text, sticky notes, tables, PDF text and handwriting read on a Windows PC.'
+              : 'Finds typed text, sticky notes, tables and PDF text. Handwriting is found once a Windows PC has read it.'}
       </p>
     </div>
   );

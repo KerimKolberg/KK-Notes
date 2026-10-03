@@ -3,9 +3,11 @@
  * so a page serialises as-is minus its undo/redo stacks.
  */
 import { DEFAULT_TEMPLATE_CONFIG, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM } from './constants';
+import { normalizeInkText } from '../handwriting/inkText';
 import { clampIndex, renumber } from './operations';
 import type {
   Document,
+  InkText,
   MediaObject,
   Page,
   ViewMode,
@@ -84,6 +86,7 @@ export function toSerializablePage(page: Page): SerializedPage {
     ...(Object.keys(page.formValues).length > 0 ? { formValues: page.formValues } : {}),
     ...(page.media.length > 0 ? { media: page.media } : {}),
     ...(page.bookmark !== undefined ? { bookmark: page.bookmark } : {}),
+    ...(page.inkText ? { inkText: page.inkText } : {}),
   };
 }
 
@@ -143,7 +146,14 @@ export function fromSerializablePage(
     formValues: page.formValues ?? {},
     media: mediaOf(page),
     ...(typeof page.bookmark === 'string' ? { bookmark: page.bookmark.slice(0, 200) } : {}),
+    ...withInkText(page.inkText),
   };
+}
+
+/** A page's handwritten words as the file has them, checked: a file from elsewhere is not trusted to be right. */
+function withInkText(raw: unknown): { inkText?: InkText } {
+  const inkText = normalizeInkText(raw);
+  return inkText ? { inkText } : {};
 }
 
 /** Accept the legacy two-mode values written before horizontal scrolling. */

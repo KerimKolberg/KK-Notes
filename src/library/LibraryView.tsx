@@ -345,11 +345,12 @@ export function LibraryView() {
     (path: string, hit: SearchHit | null) => {
       void guard(async () => {
         await openDocumentFromLibrary(path);
-        if (hit) revealText(hit.source);
+        // A handwriting match is pointed at on its page; its word is found again from what was searched for.
+        if (hit) revealText(hit.source, query);
         openDocument(path);
       });
     },
-    [guard, openDocument],
+    [guard, openDocument, query],
   );
 
   return (

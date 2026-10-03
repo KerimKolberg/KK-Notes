@@ -112,6 +112,9 @@ export async function readDocumentText(path: string): Promise<DocumentText> {
         for (const cell of item.cells) if (typeof cell === 'string' && cell.trim()) pieces.push({ ...base, kind: 'table', text: cell });
       }
     }
+    const inkWords = Array.isArray(page.inkText?.words) ? page.inkText.words : [];
+    const ink = inkWords.map((w) => (typeof w?.text === 'string' ? w.text.trim() : '')).filter(Boolean).join(' ');
+    if (ink) pieces.push({ pageIndex, pageId: page.id ?? '', mediaId: null, kind: 'ink', text: ink });
   });
   return { title: document.title?.trim() || '', pageCount: pages.length, pieces, pdfPages };
 }
@@ -135,6 +138,7 @@ interface SerializedText {
     id?: string;
     media?: { id?: string; kind?: string; text?: unknown; cells?: unknown }[];
     pdf?: { sourceId?: unknown; pageIndex?: unknown };
+    inkText?: { words?: { text?: unknown }[] };
   }[];
 }
 

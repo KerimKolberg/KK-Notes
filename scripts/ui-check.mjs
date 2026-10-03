@@ -2042,6 +2042,45 @@ async function checkLibraryPdfSearch(browser) {
 }
 
 /**
+ * The library search finds handwriting a recogniser read and the note saved: the hit says Handwriting, and opening it
+ * goes to the page and marks the word, found again on the page from what was searched for.
+ */
+async function checkLibraryHandwritingSearch(browser) {
+  console.log('searching handwriting in the library, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.click('[data-back-to-library]');
+  await page.waitForSelector('[data-library-view]', { timeout: 10_000 });
+  const seeded = await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) => k.startsWith('notes.library.doc.'));
+    if (!key) return false;
+    const envelope = JSON.parse(localStorage.getItem(key));
+    const doc = envelope.document;
+    doc.title = 'Lecture 7';
+    const second = { ...doc.pages[0], id: 'second', inkText: { key: '', by: 'default', words: [
+      { text: 'Laplace', x: 120, y: 600, width: 90, height: 30 },
+      { text: 'transform', x: 220, y: 602, width: 110, height: 30 },
+    ] } };
+    doc.pages = [doc.pages[0], second];
+    localStorage.setItem(key, JSON.stringify(envelope));
+    return true;
+  });
+  check('a note with read handwriting is in the library', seeded);
+  await page.fill('[data-library-search]', 'laplace transform');
+  await page.waitForSelector('[data-library-search-hit]', { timeout: 10_000 });
+  const hit = await page.$eval('[data-library-search-hit]', (e) => ({ page: e.getAttribute('data-library-search-hit-page'), text: e.textContent }));
+  check('the library search finds the handwriting, a phrase along a line too', hit.page === '1' && hit.text.includes('Handwriting') && hit.text.includes('Laplace'), JSON.stringify(hit));
+  await page.click('[data-library-search-hit]');
+  await page.waitForSelector('[data-search-flash]', { timeout: 10_000 });
+  check('opening it goes to the page and marks the word', (await page.$eval('[data-page-badge]', (e) => e.textContent)).includes('Page 2'));
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * The version history dialog. It needs the desktop shell, which a browser does not have, so a
  * minimal stand-in for Tauri's `invoke` answers the few commands the library and the dialog make.
  */
@@ -2869,6 +2908,152 @@ async function checkTopBarNarrow(browser) {
 }
 
 /**
+ * Searchable handwriting, with the desktop shell faked and its recogniser standing in for Windows': an old note with
+ * handwriting and no words is read once things are still, without being marked as changed; its words are found by
+ * the search and pointed at on the page; writing more reads the page again; the language can be chosen; and turned
+ * off, nothing more is read.
+ */
+async function checkHandwritingSearch(browser) {
+  console.log('searching handwriting, 1280x800 (desktop shell and recogniser faked):');
+  const seedCtx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const seedPage = await seedCtx.newPage();
+  await openDocument(seedPage);
+  const blank = await seedPage.evaluate(() => {
+    const key = Object.keys(localStorage).find((k) => k.startsWith('notes.library.doc.'));
+    return localStorage.getItem(key);
+  });
+  await seedCtx.close();
+
+  // Two lines of "handwriting" on page one: zigzags, the first at y = 200, the second at y = 420.
+  const style = { color: '#111111', size: 3, opacity: 1, compositeOperation: 'source-over', thinning: 0.5, smoothing: 0.5, streamline: 0.5, simulatePressure: false, taperStart: 0, taperEnd: 0, pattern: 'solid', arrowheads: 'none' };
+  const zigzag = (id, x0, y0) => {
+    const points = Array.from({ length: 24 }, (_, i) => ({ x: x0 + i * 6, y: y0 + (i % 2 ? 18 : 0), pressure: 0.5 }));
+    return { kind: 'freehand', id, tool: 'pen', points, style, bbox: { minX: x0 - 3, minY: y0 - 3, maxX: x0 + 141, maxY: y0 + 21 }, pointerType: 'pen', createdAt: 0 };
+  };
+  const envelope = JSON.parse(blank);
+  envelope.document.title = 'Linear algebra';
+  envelope.document.pages[0].strokes = [zigzag('s1', 100, 200), zigzag('s2', 260, 200), zigzag('s3', 100, 420)];
+  const contents = JSON.stringify(envelope);
+
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  await ctx.addInitScript(({ contents }) => {
+    const PATH = '/lib/Linear algebra.notex';
+    window.__calls = [];
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+    // The recogniser: strokes grouped into lines by height, each line one word.
+    const LINE_WORDS = ['Eigenvalues', 'Determinant', 'Trace'];
+    const recognize = (strokes) => {
+      const boxes = strokes.map((s) => {
+        const xs = s.points.filter((_, i) => i % 3 === 0);
+        const ys = s.points.filter((_, i) => i % 3 === 1);
+        return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+      }).sort((a, b) => a.y0 - b.y0);
+      const lines = [];
+      for (const b of boxes) {
+        const line = lines.find((l) => Math.abs(l.y0 - b.y0) < 40);
+        if (line) Object.assign(line, { x0: Math.min(line.x0, b.x0), y0: Math.min(line.y0, b.y0), x1: Math.max(line.x1, b.x1), y1: Math.max(line.y1, b.y1) });
+        else lines.push({ ...b });
+      }
+      return lines.map((l, i) => ({ text: LINE_WORDS[i % LINE_WORDS.length], x: l.x0, y: l.y0, width: l.x1 - l.x0, height: l.y1 - l.y0 }));
+    };
+    window.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } },
+      transformCallback: () => 1,
+      unregisterCallback: () => {},
+      invoke: async (cmd, args) => {
+        window.__calls.push({ cmd, args });
+        switch (cmd) {
+          case 'list_library': return { path: '/lib', relativePath: '', parentPath: null, entries: [] };
+          case 'create_library_document': return PATH;
+          case 'open_document': return { path: PATH, contents, info: { path: PATH, bytes: contents.length, modifiedMs: 1 } };
+          case 'ink_recognizers': return { names: ['Microsoft English (US) Handwriting Recognizer', 'Microsoft German Handwriting Recognizer'] };
+          case 'recognize_ink': return recognize(args.strokes);
+          case 'sync_status':
+          case 'sync_now': return { phase: 'offline', provider: 'Not connected', pending: 0, conflicts: [], lastSyncedMs: 0, message: null };
+          case 'list_recent': return [];
+          default: return null;
+        }
+      },
+    };
+  }, { contents });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForFunction(() => document.querySelector('[data-title]')?.value === 'Linear algebra', null, { timeout: 10_000 });
+  const reads = () => page.evaluate(() => window.__calls.filter((c) => c.cmd === 'recognize_ink'));
+
+  await page.waitForFunction(() => window.__calls.some((c) => c.cmd === 'recognize_ink'), null, { timeout: 10_000 });
+  const first = (await reads())[0];
+  check('an old note\'s handwriting is read once things are still', first.args.strokes.length === 3, `${first.args.strokes.length} strokes`);
+  check('every stroke sent as x, y, pressure', first.args.strokes.every((st) => st.points.length % 3 === 0 && st.points.length >= 6));
+  check('with Windows\' own pick of language', first.args.recognizer === null);
+  await page.waitForTimeout(300);
+  check('and reading it does not mark the note as changed', (await page.$('[data-dirty]')) === null);
+
+  await page.click('[data-search-toggle]');
+  await page.waitForSelector('[data-search-input]');
+  await page.fill('[data-search-input]', 'eigen');
+  await page.waitForSelector('[data-search-hit]', { timeout: 5_000 });
+  const hit = await page.$eval('[data-search-hit]', (e) => ({ kind: e.getAttribute('data-search-hit-kind'), text: e.textContent }));
+  check('the search finds the handwritten word', hit.kind === 'ink' && hit.text.includes('Eigenvalues') && hit.text.includes('Handwriting'), JSON.stringify(hit));
+  await page.fill('[data-search-input]', 'determinant');
+  await page.waitForSelector('[data-search-hit]', { timeout: 5_000 });
+  await page.click('[data-search-hit]');
+  await page.waitForSelector('[data-search-flash]', { timeout: 3_000 });
+  const ring = await page.evaluate(() => {
+    const frame = document.querySelector('[data-page-index="0"]').getBoundingClientRect();
+    const svg = document.querySelector('[data-search-flash]');
+    const rect = svg.querySelector('rect').getBoundingClientRect();
+    const k = frame.width / svg.viewBox.baseVal.width;
+    return { top: Math.round((rect.top - frame.top) / k), left: Math.round((rect.left - frame.left) / k) };
+  });
+  // The second line's strokes start at (100, 420); the ring stands 6 units off the word.
+  check('choosing it marks the word where it is on the page', Math.abs(ring.top - 414) <= 3 && Math.abs(ring.left - 94) <= 3, JSON.stringify(ring));
+  await page.waitForSelector('[data-search-flash]', { state: 'detached', timeout: 4_000 });
+  check('and the mark goes again', true);
+  await page.click('[data-search-close]');
+
+  // Writing more: the page is read again.
+  const before = (await reads()).length;
+  const frame = await (await page.$('[data-page-index="0"]')).boundingBox();
+  await page.evaluate(() => {
+    const canvas = document.querySelector('[data-page-index="0"] [data-layer="live"]');
+    const fire = (type, x, y, buttons) => canvas.dispatchEvent(new PointerEvent(type, { pointerType: 'pen', pointerId: 7, isPrimary: true, bubbles: true, cancelable: true, clientX: x, clientY: y, buttons, button: type === 'pointermove' ? -1 : 0, pressure: buttons ? 0.5 : 0 }));
+    window.__write = (x, y) => {
+      fire('pointerdown', x, y, 1);
+      for (let i = 1; i < 20; i++) fire('pointermove', x + i * 5, y + (i % 2) * 12, 1);
+      fire('pointerup', x + 100, y, 0);
+    };
+  });
+  await page.evaluate(({ x, y }) => window.__write(x, y), { x: frame.x + frame.width * 0.15, y: frame.y + frame.height * 0.6 });
+  await page.waitForFunction((n) => window.__calls.filter((c) => c.cmd === 'recognize_ink').length > n, before, { timeout: 10_000 });
+  check('writing more reads the page again', (await reads()).at(-1).args.strokes.length === 4);
+  await page.fill('[data-search-input]', '').catch(() => {});
+
+  // Settings: the language, and off.
+  await page.click('[data-palette-settings-trigger]');
+  await page.waitForSelector('[data-handwriting-search]', { timeout: 5_000 });
+  const options = await page.$$eval('[data-handwriting-recognizer] option', (els) => els.map((e) => e.textContent));
+  check('the settings offer the languages Windows has, by their short names', options.join('|') === 'Windows default|English (US)|German', options.join('|'));
+  const note = await page.$eval('[data-handwriting-note]', (e) => e.textContent);
+  check('and say how far this note is read', /Read on 1 of 1 page/.test(note), note);
+  const n2 = (await reads()).length;
+  await page.selectOption('[data-handwriting-recognizer]', 'Microsoft German Handwriting Recognizer');
+  await page.waitForFunction((n) => window.__calls.filter((c) => c.cmd === 'recognize_ink').length > n, n2, { timeout: 10_000 });
+  check('choosing a language reads the handwriting again in it', (await reads()).at(-1).args.recognizer === 'Microsoft German Handwriting Recognizer');
+  await page.click('[data-handwriting-search]');
+  await page.click('[data-palette-settings-trigger]');
+  const n3 = (await reads()).length;
+  await page.evaluate(({ x, y }) => window.__write(x, y), { x: frame.x + frame.width * 0.15, y: frame.y + frame.height * 0.75 });
+  await page.waitForTimeout(2500);
+  check('turned off, nothing more is read', (await reads()).length === n3);
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * The snipping tool: cut a piece out of a PDF in the reference pane, put it on the note (with the button and by
  * dragging), take it off with Undo, snip in the editor itself without drawing, and carry one onto another tab.
  */
@@ -3377,6 +3562,7 @@ try {
     checkSearch,
     checkLibrarySearch,
     checkLibraryPdfSearch,
+    checkLibraryHandwritingSearch,
     checkVersionHistory,
     checkAppLock,
     checkBookmarks,
@@ -3385,6 +3571,7 @@ try {
     checkContents,
     checkTextSelect,
     checkTopBarNarrow,
+    checkHandwritingSearch,
     checkSnipping,
     checkDragScroll,
     checkErrorBoundary,

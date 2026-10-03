@@ -45,6 +45,7 @@ import { SnipTray } from '../../snip/SnipTray';
 import { useSnipStore } from '../../snip/snipStore';
 import { useSnipping } from '../../snip/useSnipping';
 import { useTextSelecting } from '../../textselect/useTextSelecting';
+import { useHandwritingReader } from '../../handwriting/useHandwritingReader';
 import { TextSelectionToolbar } from '../../textselect/TextSelectionToolbar';
 import { useTextSelectStore } from '../../textselect/textSelectStore';
 import { useToolStore } from '../toolStore';
@@ -157,6 +158,7 @@ export function DocumentApp() {
   useDesktopIntegration();
   useSnipping();
   useTextSelecting();
+  useHandwritingReader();
   // New pages pick up whatever the user set as their default layout.
   usePageDefaultsSource();
 

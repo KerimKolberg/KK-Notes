@@ -123,6 +123,13 @@ export interface Preferences {
   readonly widthPresets: readonly number[];
   /** `null` until the user has pressed "Set as default" on a page. */
   readonly pageDefaults: PageDefaults | null;
+  /**
+   * Read handwriting so it can be searched, where the device can (Windows' recogniser). On unless turned off:
+   * it runs only while nothing is being written, on the device, and is what makes handwriting findable.
+   */
+  readonly handwritingSearch: boolean;
+  /** The recogniser (language) to read handwriting with, by name; `null` for the one Windows picks. */
+  readonly handwritingRecognizer: string | null;
 }
 
 /** How many quick colours the palette shows; the picker covers everything else. */

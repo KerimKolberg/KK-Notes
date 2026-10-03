@@ -75,3 +75,19 @@ html[data-text-selecting] [data-reference-page-frame][data-reference-page-pdf] *
   cursor: text !important;
   touch-action: none !important;
 }
+
+/* A search result's place, pointed out for a moment: in, pulse, and away. */
+@keyframes search-flash {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  30% { opacity: 0.55; }
+  48% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.search-flash {
+  animation: search-flash 2.2s ease-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .search-flash { animation: none; }
+}
