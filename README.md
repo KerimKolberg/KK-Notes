@@ -782,6 +782,42 @@ own pick by default. Elsewhere the shell has no recogniser and says so.
 - **Not yet:** a recogniser on Android (Google's ML Kit digital ink would be the one), and alternative readings of a
   word — only the recogniser's first choice is kept, so a word it misread is found by what it read.
 
+### Recording sound with the writing (`src/audio/`)
+
+**Record** in the top bar (in More on a phone) records the microphone while you write, and every stroke begun while
+it runs is noted with when it was begun. Afterwards **Recordings** opens a player over the page: as it plays, writing
+not yet done at that point is shown faded and fills in as it is reached, and with **Tap ink** on, tapping a line of
+writing plays from a moment (1.5 s) before it was written — the lecture as it was when you wrote that line.
+
+- **Recording** (`recorder.ts`). The engine's own `MediaRecorder` — Opus in WebM, 32 kbit/s mono with echo
+  cancellation, noise suppression and gain control — which is clear for speech at about 15 MB an hour. It hands over
+  a chunk a second, kept in memory, so a stop that cannot wait loses at most a second. A stroke's time is its own
+  `createdAt` (when the pen went down) in seconds from the start; strokes that arrive without one in range (pasted,
+  or moved in from elsewhere) are marked as of when they appeared.
+- **Kept in the note** (`Document.recordings`: id, when it started, length, format, the audio as base64 and the
+  marks). One file holds everything, which is what the library, sync and version history already handle. Stopping
+  saves a note that has a file, since a lecture is not something to lose to a forgotten Save; a note with no file
+  yet is marked as changed. Adding or deleting a recording marks the note changed like any edit (`savedRecordings`),
+  but is not undone with Undo; deleting asks first and leaves the writing alone.
+- **Leaving the note while it records** (another tab, the library, opening something) ends the recording and puts
+  it in that note wherever it went: into its tab, and saved, when it is in one; otherwise into its file — the file as
+  it is on disk when the note was left with changes that were not saved, so those are not saved behind your back.
+  Closing the window while recording saves the recording first (`core:window:allow-destroy`), and a note with no
+  file keeps it in the draft the next start restores.
+- **Playing** (`player.ts`, `replay.ts`, `RecordingBar.tsx`). An audio element on the recording's bytes; play,
+  ±15 s, a position slider, speed 1–2×, which recording (when there are several), delete. The fading is done on the
+  strokes handed to the page, not the note's own: the faded copies are made once per stroke, and a page redraws only
+  when the position passes one of its strokes; with the player shut the page gets its own list back untouched.
+  Off-screen page previews are not faded.
+- **Tap ink** (`useTapToSeek.ts`) takes presses on the pages before they reach them, as snipping does: a pen or mouse
+  never draws while it is on, a finger that misses the writing still scrolls, and writing from outside the recording
+  says so in the player.
+- **Permissions.** The first Record asks for the microphone: on Windows WebView2's own prompt (and the microphone
+  must be allowed for desktop apps in Settings → Privacy & security → Microphone); on Android the system's, from the
+  `RECORD_AUDIO` permission in the manifest.
+- **Not yet:** a recording kept going with the app in the background on Android (whether the WebView keeps the
+  microphone then is untested; leave the app open while recording), and exporting a recording on its own.
+
 ### Bookmarks (`document/bookmarks.ts`, `components/BookmarksPanel.tsx`)
 
 The bookmark button in the top bar (or **Ctrl+D**) marks the page in view, and opens a panel listing the
@@ -1629,6 +1665,8 @@ falls back to the MIME when a `content://` URI has no visible name at all.
 <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 ```
 
 Saving a `.notex` file and exporting a PDF go through the **Storage Access
@@ -1640,7 +1678,8 @@ permissions cover the same ground on Android 12 and older — capped with
 `maxSdkVersion` so a modern device never sees a broad storage prompt. (There
 is no `READ_MEDIA_DOCUMENTS` permission in Android; documents are reached
 through the Storage Access Framework, which is exactly what the file plugins
-use.)
+use.) `RECORD_AUDIO` and `MODIFY_AUDIO_SETTINGS` are for recording sound with a note: the WebView asks for them
+(wry's `onPermissionRequest`) the first time Record is pressed, not at install.
 
 ### Tablet and stylus accommodations
 
@@ -2688,13 +2727,19 @@ hit-testing can answer:
   as its heading; a chapter folds; opening the search puts the list away; the reading pane has its own list for
   its PDF, whose entries scroll the pane and leave the note where it was.
 - **the top bar on a phone and a tablet**: with a PDF open it fits the width with nothing off the edge and the
-  page counter clear of the buttons; More lists the eight (phone) or four (tablet) buttons with no room, above
+  page counter clear of the buttons; More lists the nine (phone) or four (tablet) buttons with no room, above
   everything else; a row does what its button does and closes the menu; More wears a dot while snipping is on.
 - **selecting a PDF's text**: a drag selects the words, shaded line by line, with a bar offering what to do;
   Copy puts them on the clipboard with lines as lines; a colour highlights them on the note and one Undo takes it
   off; a double click takes a word and a tap clears it; a finger drag selects too; Text box puts them under the
   words as a text box and puts selecting away; in the reading pane the words can be copied or reused but not
   highlighted, and Text box puts them on the note being written in.
+- **recording sound with the writing** (Chromium's fake microphone): Record starts recording and says so, the time
+  counting up; Stop puts the recording in the note and says to save it; the player clears the notice and shows the
+  length; at the start the writing done while recording is faded and the writing from before it is not, part way
+  through what was written by then is shown in full, at the end all of it; with Tap ink on the pen does not draw,
+  tapping older writing says it was not written during the recording, and tapping the last line plays from a little
+  before it was written; deleting the recording closes the player and the writing stays.
 - **version history**: the File menu offers it once the note is a file; the dialog lists what is kept newest
   first with when, how old, pages and size; restoring asks first and does nothing until confirmed; then the
   shell is asked to put that version back for this note, the note on screen becomes it, a notice says so and it

@@ -277,6 +277,28 @@ export interface Document {
   readonly viewMode: ViewMode;
   /** CSS pixels per page pixel. */
   readonly zoom: number;
+  /** Audio recorded while writing in the note, oldest first. */
+  readonly recordings?: readonly Recording[];
+}
+
+/** When a stroke was begun, in seconds from the start of a recording. */
+export interface RecordingMark {
+  readonly strokeId: string;
+  readonly t: number;
+}
+
+/** Sound recorded while writing, and when each stroke written meanwhile was begun. */
+export interface Recording {
+  readonly id: string;
+  /** When it began (ISO 8601), which is also what it is called. */
+  readonly startedAt: string;
+  /** Seconds. */
+  readonly duration: number;
+  /** The audio's media type (`audio/webm;codecs=opus` from a browser engine). */
+  readonly mime: string;
+  readonly data: ArrayBuffer;
+  /** In the order the strokes were begun. */
+  readonly marks: readonly RecordingMark[];
 }
 
 /** Fields that affect how a page looks (used to key raster caches). */
@@ -330,6 +352,17 @@ export interface SerializedDocument {
   readonly activePageIndex: number;
   readonly pages: readonly SerializedPage[];
   readonly pdfSources?: Readonly<Record<string, SerializedPdfSource>>;
+  readonly recordings?: readonly SerializedRecording[];
+}
+
+/** A recording as saved: the audio as base64. */
+export interface SerializedRecording {
+  readonly id: string;
+  readonly startedAt: string;
+  readonly duration: number;
+  readonly mime: string;
+  readonly data: string;
+  readonly marks: readonly RecordingMark[];
 }
 
 /** Where to insert relative to a reference page. */

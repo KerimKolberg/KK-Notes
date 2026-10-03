@@ -23,13 +23,14 @@ export function roomToSplit(): boolean {
   return typeof window !== 'undefined' && window.innerWidth >= MIN_SPLIT_WIDTH;
 }
 
-/** A note with nothing in it: one empty page, no cover, no bookmark. */
+/** A note with nothing in it: one empty page, no cover, no bookmark, no recording. */
 export function isBlankNote(session: TabSession): boolean {
-  const { pages, cover } = session.document;
+  const { pages, cover, recordings } = session.document;
   const [page] = pages;
   return (
     pages.length === 1 &&
     !cover &&
+    (recordings?.length ?? 0) === 0 &&
     !!page &&
     !page.pdf &&
     page.strokes.length === 0 &&
@@ -61,6 +62,7 @@ async function fillBlankNote(before: TabSession, load: () => Promise<boolean>): 
     savedPages: before.savedPages,
     savedTitle: before.savedTitle,
     savedCover: before.savedCover,
+    savedRecordings: before.savedRecordings,
   });
   return true;
 }

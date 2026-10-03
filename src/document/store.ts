@@ -68,6 +68,7 @@ import {
 } from './operations';
 import type {
   InkText,
+  Recording,
   Cover,
   Document,
   FormValue,
@@ -114,6 +115,7 @@ export interface DocumentStore {
   savedPages: readonly Page[] | null;
   savedTitle: string | null;
   savedCover: Cover | null | undefined;
+  savedRecordings: readonly Recording[] | undefined;
   /** Changes to the pages (an import, a page added, moved or deleted) that Undo can take back; see `structureHistory.ts`. */
   structureUndo: readonly StructureEntry[];
   structureRedo: readonly RedoEntry[];
@@ -147,6 +149,10 @@ export interface DocumentStore {
    * works on a locked note, is not undone, and never marks a note as changed — it goes to disk with the next save.
    */
   setPageInkText: (pageId: string, inkText: InkText | null) => void;
+  /** Add a recording to the note: an unsaved change like any other. */
+  addRecording: (recording: Recording) => void;
+  /** Take a recording out of the note. */
+  removeRecording: (id: string) => void;
   /** Patch the template's line spacing / colour / weight. */
   setTemplateConfig: (target: PageTarget, patch: Partial<TemplateConfig>) => void;
   /** Add, replace or (with `null`) remove the notebook cover. */
@@ -244,7 +250,8 @@ export function selectIsDirty(s: DocumentStore): boolean {
   return (
     s.document.pages !== s.savedPages ||
     s.document.title !== s.savedTitle ||
-    s.document.cover !== s.savedCover
+    s.document.cover !== s.savedCover ||
+    s.document.recordings !== s.savedRecordings
   );
 }
 
@@ -300,6 +307,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
   savedPages: initialDocument.pages,
   savedTitle: initialDocument.title,
   savedCover: initialDocument.cover,
+  savedRecordings: initialDocument.recordings,
   structureUndo: [],
   structureRedo: [],
 
@@ -453,6 +461,17 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       if (savedPages === s.document.pages) savedPages = pages;
       else if (savedPages && savedPages[index] === page) savedPages = savedPages.map((p, i) => (i === index ? next : p));
       return { document: { ...s.document, pages }, savedPages };
+    }),
+
+  addRecording: (recording) =>
+    set((s) => ({ document: { ...s.document, recordings: [...(s.document.recordings ?? []), recording] } })),
+
+  removeRecording: (id) =>
+    set((s) => {
+      const kept = (s.document.recordings ?? []).filter((r) => r.id !== id);
+      if (kept.length === (s.document.recordings ?? []).length) return s;
+      const { recordings: _all, ...rest } = s.document;
+      return { document: kept.length > 0 ? { ...rest, recordings: kept } : rest };
     }),
 
   setPageBackground: (target, color) =>
@@ -789,6 +808,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       savedPages: doc.pages,
       savedTitle: doc.title,
       savedCover: doc.cover,
+      savedRecordings: doc.recordings,
       structureUndo: [],
       structureRedo: [],
     }),
@@ -805,6 +825,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       savedPages: doc.pages,
       savedTitle: doc.title,
       savedCover: doc.cover,
+      savedRecordings: doc.recordings,
       structureUndo: [],
       structureRedo: [],
     });
@@ -817,6 +838,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       savedPages: s.document.pages,
       savedTitle: s.document.title,
       savedCover: s.document.cover,
+      savedRecordings: s.document.recordings,
       ...(path !== undefined ? { filePath: path } : {}),
     })),
 }));

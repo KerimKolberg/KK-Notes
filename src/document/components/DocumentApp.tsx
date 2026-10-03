@@ -46,6 +46,9 @@ import { useSnipStore } from '../../snip/snipStore';
 import { useSnipping } from '../../snip/useSnipping';
 import { useTextSelecting } from '../../textselect/useTextSelecting';
 import { useHandwritingReader } from '../../handwriting/useHandwritingReader';
+import { RecordingBar } from '../../audio/RecordingBar';
+import { closePlayer } from '../../audio/player';
+import { useTapToSeek } from '../../audio/useTapToSeek';
 import { TextSelectionToolbar } from '../../textselect/TextSelectionToolbar';
 import { useTextSelectStore } from '../../textselect/textSelectStore';
 import { useToolStore } from '../toolStore';
@@ -159,6 +162,7 @@ export function DocumentApp() {
   useSnipping();
   useTextSelecting();
   useHandwritingReader();
+  useTapToSeek();
   // New pages pick up whatever the user set as their default layout.
   usePageDefaultsSource();
 
@@ -375,6 +379,10 @@ export function DocumentApp() {
               </Suspense>
             </ErrorBoundary>
           )}
+          {/* Before the notices, which pass over it. */}
+          <ErrorBoundary what="the recorder" fallback={null} onError={(e) => panelFailed('The recording player', e, closePlayer)}>
+            <RecordingBar />
+          </ErrorBoundary>
           <NoticeToast />
           <ErrorBoundary what="the text selection" fallback={null} onError={(e) => panelFailed('Selecting text', e, () => useTextSelectStore.getState().setMode(false))}>
             <TextSelectionToolbar />

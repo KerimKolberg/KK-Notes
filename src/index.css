@@ -91,3 +91,9 @@ html[data-text-selecting] [data-reference-page-frame][data-reference-page-pdf] *
 @media (prefers-reduced-motion: reduce) {
   .search-flash { animation: none; }
 }
+
+/* Tapping writing to hear it: a hand over the pages, and the pen never draws there while it is on. */
+html[data-tap-to-seek] [data-page-index],
+html[data-tap-to-seek] [data-page-index] * {
+  cursor: pointer !important;
+}

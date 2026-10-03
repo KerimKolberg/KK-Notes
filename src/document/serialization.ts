@@ -9,6 +9,8 @@ import type {
   Document,
   InkText,
   MediaObject,
+  Recording,
+  RecordingMark,
   Page,
   ViewMode,
   PdfPageRef,
@@ -108,7 +110,54 @@ export function toSerializable(doc: Document): SerializedDocument {
     activePageIndex: doc.activePageIndex,
     pages: doc.pages.map(toSerializablePage),
     ...(Object.keys(pdfSources).length > 0 ? { pdfSources } : {}),
+    ...(doc.recordings && doc.recordings.length > 0
+      ? {
+          recordings: doc.recordings.map((r) => ({
+            id: r.id,
+            startedAt: r.startedAt,
+            duration: r.duration,
+            mime: r.mime,
+            data: cachedBase64(r.data),
+            marks: r.marks,
+          })),
+        }
+      : {}),
   };
+}
+
+/** Recordings as a file has them, checked; one that is not a recording is left out rather than failing the note. */
+function recordingsOf(raw: unknown): Recording[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Recording[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r.id !== 'string' || typeof r.data !== 'string' || typeof r.mime !== 'string') continue;
+    let data: ArrayBuffer;
+    try {
+      data = base64ToArrayBuffer(r.data);
+    } catch {
+      continue;
+    }
+    const marks: RecordingMark[] = [];
+    if (Array.isArray(r.marks)) {
+      for (const m of r.marks) {
+        const mark = m as { strokeId?: unknown; t?: unknown } | null;
+        if (mark && typeof mark.strokeId === 'string' && typeof mark.t === 'number' && Number.isFinite(mark.t) && mark.t >= 0) {
+          marks.push({ strokeId: mark.strokeId, t: mark.t });
+        }
+      }
+    }
+    out.push({
+      id: r.id,
+      startedAt: typeof r.startedAt === 'string' ? r.startedAt : new Date(0).toISOString(),
+      duration: typeof r.duration === 'number' && Number.isFinite(r.duration) && r.duration >= 0 ? r.duration : 0,
+      mime: r.mime,
+      data,
+      marks,
+    });
+  }
+  return out;
 }
 
 export function fromSerializablePage(
@@ -186,7 +235,12 @@ export function fromSerializable(data: SerializedDocument): Document {
     activePageIndex: clampIndex(data.activePageIndex, pages.length),
     viewMode: normalizeViewMode(data.viewMode),
     zoom,
+    ...withRecordings(recordingsOf(data.recordings)),
   };
+}
+
+function withRecordings(recordings: Recording[]): { recordings?: readonly Recording[] } {
+  return recordings.length > 0 ? { recordings } : {};
 }
 
 /**

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import {
+  AudioLines,
   Bookmark,
   ListTree,
   BookmarkCheck,
@@ -15,6 +16,7 @@ import {
   Layers,
   Lock,
   LockOpen,
+  Mic,
   Redo2,
   Rows3,
   Scissors,
@@ -34,6 +36,8 @@ import { useContentsStore } from '../contentsStore';
 import { useSnipStore } from '../../snip/snipStore';
 import { useTextSelectStore } from '../../textselect/textSelectStore';
 import { actionExportPdf } from '../../desktop/fileActions';
+import { togglePlayer, usePlayerStore } from '../../audio/player';
+import { startRecording, stopRecording, useRecorderStore } from '../../audio/recorder';
 import { FileMenu } from '../../desktop/FileMenu';
 import { IconButton } from '../../ui/IconButton';
 import { MAX_ZOOM, MIN_ZOOM } from '../constants';
@@ -77,6 +81,10 @@ export function TopBar() {
   const bookmarksOpen = useBookmarksStore((s) => s.open);
   const toggleBookmarks = useBookmarksStore((s) => s.toggle);
   const pageBookmarked = useDocumentStore((s) => s.document.pages[s.document.activePageIndex]?.bookmark !== undefined);
+  const recorderStatus = useRecorderStore((s) => s.status);
+  const recording = recorderStatus !== 'idle';
+  const recordingCount = useDocumentStore((s) => s.document.recordings?.length ?? 0);
+  const playerOpen = usePlayerStore((s) => s.open);
   const { title, pageCount, activePageIndex, viewMode, zoom, arrangerOpen, exporting, readOnly, dirty, canUndo, canRedo } =
     useDocumentStore(
       useShallow((s) => {
@@ -137,6 +145,22 @@ export function TopBar() {
       ? ([
           { id: 'select-text', tier: 'md', icon: TextSelect, label: 'Select text', hint: "copy, highlight or reuse a PDF's words", active: selectingText, onClick: toggleSelectingText, data: { 'data-select-text-toggle': '' } },
           { id: 'contents', tier: 'md', icon: ListTree, label: 'Contents', hint: "the PDF's chapters", active: contentsOpen, onClick: toggleContents, data: { 'data-contents-toggle': '' } },
+        ] satisfies BarAction[])
+      : []),
+    {
+      id: 'record',
+      tier: 'md',
+      icon: Mic,
+      label: recording ? 'Stop recording' : 'Record',
+      hint: recording ? 'put the recording in the note' : 'record sound with your writing',
+      active: recording,
+      disabled: recorderStatus === 'starting' || recorderStatus === 'stopping',
+      onClick: () => void (recording ? stopRecording() : startRecording()),
+      data: { 'data-record-toggle': '', 'data-recording': String(recording) },
+    },
+    ...(recordingCount > 0
+      ? ([
+          { id: 'recordings', tier: 'md', icon: AudioLines, label: 'Recordings', hint: recording ? 'not while recording' : recordingCount === 1 ? 'play it with the writing' : `${recordingCount} recordings`, active: playerOpen, disabled: recording, onClick: togglePlayer, data: { 'data-recordings-toggle': '' } },
         ] satisfies BarAction[])
       : []),
     { id: 'bookmarks', tier: 'lg', icon: pageBookmarked ? BookmarkCheck : Bookmark, label: 'Bookmarks', hint: pageBookmarked ? 'this page is bookmarked' : 'Ctrl+D', active: bookmarksOpen, onClick: toggleBookmarks, data: { 'data-bookmarks-toggle': '' } },

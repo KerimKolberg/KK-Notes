@@ -31,7 +31,7 @@
  * is what stops "optimising memory" from meaning "throwing away your work".
  */
 import type { RedoEntry, StructureEntry } from './structureHistory';
-import type { Cover, Document, Page } from './types';
+import type { Cover, Document, Page, Recording } from './types';
 
 /**
  * The store fields that belong to one open document.
@@ -46,6 +46,8 @@ export interface TabSession {
   readonly savedPages: readonly Page[] | null;
   readonly savedTitle: string | null;
   readonly savedCover: Cover | null | undefined;
+  /** Absent in sessions from before recordings existed, which had none. */
+  readonly savedRecordings?: readonly Recording[] | undefined;
   readonly readOnly: boolean;
   /** What Undo and Redo can take back of the note's pages; absent for a document that has been opened fresh. */
   readonly history?: { readonly undo: readonly StructureEntry[]; readonly redo: readonly RedoEntry[] };
@@ -152,6 +154,8 @@ export function isPristine(session: TabSession | null): boolean {
   if (session.filePath !== null) return false;
   if (session.document.pages.length !== 1) return false;
   if (session.document.cover) return false;
+  // A lecture recorded without a line written is not nothing.
+  if ((session.document.recordings?.length ?? 0) > 0) return false;
   const [page] = session.document.pages;
   if (!page) return false;
   return page.strokes.length === 0 && page.media.length === 0;
@@ -198,7 +202,8 @@ export function sessionIsDirty(session: TabSession): boolean {
   return (
     session.document.pages !== session.savedPages ||
     session.document.title !== session.savedTitle ||
-    session.document.cover !== session.savedCover
+    session.document.cover !== session.savedCover ||
+    session.document.recordings !== session.savedRecordings
   );
 }
 

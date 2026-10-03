@@ -12,6 +12,7 @@
  * the strip cannot cost frames.
  */
 import { create } from 'zustand';
+import { isTauri } from '../desktop/tauri';
 import { createStrokeId } from '../inking/engine/ids';
 import { useDocumentStore } from './store';
 import {
@@ -25,6 +26,7 @@ import {
   type Tab,
   type TabSession,
 } from './tabs';
+import type { Document, Recording } from './types';
 
 /** Read the live document out of the document store as a session. */
 export function captureSession(): TabSession {
@@ -35,6 +37,7 @@ export function captureSession(): TabSession {
     savedPages: s.savedPages,
     savedTitle: s.savedTitle,
     savedCover: s.savedCover,
+    savedRecordings: s.savedRecordings,
     readOnly: s.readOnly,
     history: { undo: s.structureUndo, redo: s.structureRedo },
   };
@@ -48,6 +51,7 @@ export function restoreSession(session: TabSession): void {
     savedPages: session.savedPages,
     savedTitle: session.savedTitle,
     savedCover: session.savedCover,
+    savedRecordings: session.savedRecordings,
     readOnly: session.readOnly,
     structureUndo: session.history?.undo ?? [],
     structureRedo: session.history?.redo ?? [],
@@ -257,6 +261,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         savedPages: loaded.document.pages,
         savedTitle: loaded.document.title,
         savedCover: loaded.document.cover,
+        savedRecordings: loaded.document.recordings,
         readOnly: false,
       };
     }
@@ -440,6 +445,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       savedPages: loaded.document.pages,
       savedTitle: loaded.document.title,
       savedCover: loaded.document.cover,
+      savedRecordings: loaded.document.recordings,
       readOnly: true,
     };
     set({
@@ -483,6 +489,33 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     }
   },
 }));
+
+/**
+ * Put a recording in a note that is open in a tab but not the one on screen (its recording went on as the tabs were
+ * switched), and save that note when it has a file, so the recording is safe wherever the note is. `false` when no
+ * tab holds that note as `expected`, the note as it was when it was put away.
+ */
+export async function addRecordingToTab(documentId: string, recording: Recording, expected: Document): Promise<boolean> {
+  const tab = useTabStore.getState().tabs.find((t) => t.session?.document.id === documentId);
+  // Only a session holding the note as it was put away: an older one would be saved over newer work.
+  if (!tab?.session || tab.session.document !== expected) return false;
+  const before = tab.session;
+  const document = { ...before.document, recordings: [...(before.document.recordings ?? []), recording] };
+  let session: TabSession = { ...before, document };
+  if (before.filePath && isTauri()) {
+    try {
+      const { saveDocumentToPath } = await import('../desktop/fileService');
+      await saveDocumentToPath(document, before.filePath);
+      session = { ...session, savedPages: document.pages, savedTitle: document.title, savedCover: document.cover, savedRecordings: document.recordings };
+    } catch {
+      // Not saved: the tab shows the note as changed, and closing it asks.
+    }
+  }
+  useTabStore.setState((state) => ({
+    tabs: state.tabs.map((t) => (t.id === tab.id && t.session === before ? { ...t, session, dirty: sessionIsDirty(session) } : t)),
+  }));
+  return true;
+}
 
 /**
  * Run a loader that opens a document, and land the result in a new tab.

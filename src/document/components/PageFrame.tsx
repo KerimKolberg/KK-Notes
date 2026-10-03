@@ -7,6 +7,7 @@ import { FormOverlay } from '../../pdf/FormOverlay';
 import { PdfBackground } from '../../pdf/PdfBackground';
 import { TextSelectionLayer } from '../../textselect/TextSelectionLayer';
 import { SearchFlash } from '../../search/SearchFlash';
+import { useReplayStrokes } from '../../audio/replay';
 import type { PageLayout } from '../layout';
 import { ClipboardPaste } from 'lucide-react';
 import { usePreferencesStore } from '../../preferences/store';
@@ -67,6 +68,8 @@ export const PageFrame = memo(function PageFrame({
   // The ruler on this page, if it is out: a pen that starts at its edge draws along it.
   const ruler = useAidStore((s) => (s.ruler?.pageId === page.id ? s.ruler : null));
   const copiedCount = useClipboardStore((s) => s.strokes.length);
+  // While a recording plays, ink written later than where it has got to is shown faded.
+  const shownStrokes = useReplayStrokes(page.strokes);
   // Only used as a `key`: a canvas's attributes are fixed by its first
   // `getContext`, so the surface has to be rebuilt for the switch to take effect.
   const lowLatencyInk = usePreferencesStore((s) => s.lowLatencyInk);
@@ -153,7 +156,7 @@ export const PageFrame = memo(function PageFrame({
               width={page.dimensions.width}
               height={page.dimensions.height}
               zoom={zoom}
-              strokes={page.strokes}
+              strokes={shownStrokes}
               settingsRef={settingsRef}
               onCommitStroke={onCommit}
               onEraseStrokes={onErase}

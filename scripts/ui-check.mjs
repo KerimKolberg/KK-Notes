@@ -994,8 +994,8 @@ async function checkToolbar(browser) {
  * mapping. Events carry `buttons` as Windows reports them, and go to the live canvas
  * of the first page (or to `on(element, points, buttons)` for anything else).
  */
-async function openPenDocument(browser, stylus) {
-  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+async function openPenDocument(browser, stylus, contextOptions = {}) {
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height }, ...contextOptions });
   if (stylus) {
     await ctx.addInitScript((value) => {
       try { localStorage.setItem('notes.preferences.v1', JSON.stringify({ stylus: value })); } catch { /* none */ }
@@ -2857,7 +2857,7 @@ async function checkTextSelect(browser) {
  * overlaps or runs off the edge, and what has no room is in the More menu, which works.
  */
 async function checkTopBarNarrow(browser) {
-  for (const size of [{ width: PHONE.width, height: PHONE.height, name: 'phone', inMenu: 8 }, { width: 800, height: 1280, name: 'tablet', inMenu: 4 }]) {
+  for (const size of [{ width: PHONE.width, height: PHONE.height, name: 'phone', inMenu: 9 }, { width: 800, height: 1280, name: 'tablet', inMenu: 4 }]) {
     console.log(`the top bar on a ${size.name}, ${size.width}x${size.height}:`);
     const ctx = await browser.newContext({ viewport: { width: size.width, height: size.height }, hasTouch: true });
     const page = await ctx.newPage();
@@ -3537,7 +3537,118 @@ if (!(await isListening(PORT))) {
   }
 }
 
-const browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] });
+/**
+ * Recording sound while writing, and playing it back with the writing: strokes written while it records are marked
+ * with when they were begun; the player fades what was not yet written at its position; tapping writing plays from
+ * when it was written, without drawing; and a recording can be deleted. The microphone is Chromium's fake one.
+ */
+async function checkAudioRecording(browser) {
+  console.log('recording sound with the writing, 1280x800 (fake microphone):');
+  const { ctx, page, errors, cx, cy } = await openPenDocument(browser, undefined, { permissions: ['microphone'] });
+  page.on('dialog', (d) => void d.accept());
+  const row = (y) => Array.from({ length: 30 }, (_, i) => [cx - 120 + i * 8, y]);
+  // Ink as the pen draws it, and ink at a fifth of that, on the page's committed layer.
+  const inkAlpha = () =>
+    page.$eval('[data-layer="committed"]', (c) => {
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let strong = 0, faint = 0;
+      for (let i = 3; i < d.length; i += 4) {
+        if (d[i] > 90) strong++;
+        else if (d[i] > 5) faint++;
+      }
+      return { strong, faint };
+    });
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [row(cy)]);
+  check('there is no Recordings button before anything is recorded', (await page.$('[data-recordings-toggle]')) === null);
+  await page.click('[data-record-toggle]');
+  const started = await page.waitForFunction(() => document.querySelector('[data-recording-elapsed]')?.textContent?.startsWith('Recording'), null, { timeout: 8_000 }).then(() => true, () => false);
+  check('Record starts recording, and says so', started, await page.$eval('[data-recording-bar]', (el) => el.textContent).catch(() => 'no bar'));
+  if (!started) {
+    check('no page errors', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+    return;
+  }
+  check('the Record button shows it is on', (await page.getAttribute('[data-record-toggle]', 'aria-pressed')) === 'true');
+  await page.waitForTimeout(1200);
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [row(cy + 60)]);
+  await page.waitForTimeout(1600);
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [row(cy + 120)]);
+  await page.waitForTimeout(600);
+  const elapsed = await page.$eval('[data-recording-elapsed]', (el) => el.textContent);
+  check('the time recorded counts up', /Recording 0:0[2-4]/.test(elapsed), elapsed);
+  const allInk = await inkAlpha();
+
+  await page.click('[data-recording-stop]');
+  const stopped = await page.waitForSelector('[data-recordings-toggle]', { timeout: 8_000 }).then(() => true, () => false);
+  check('Stop puts the recording in the note', stopped);
+  check('the recording bar goes', (await page.$('[data-recording-bar]')) === null);
+  const notice = await page.evaluate(() => [...document.querySelectorAll('[data-notice], [data-notice-toast]')].map((el) => el.textContent).join(' | '));
+  check('and it says the recording is to be saved with the note', /Recording of 0:0\d added/.test(notice ?? ''), notice);
+
+  await page.click('[data-recordings-toggle]');
+  await page.waitForSelector('[data-player]', { timeout: 5_000 });
+  check('opening the player clears the notice, which would cover it on a narrow screen', (await page.$('[data-notice], [data-notice-toast]')) === null);
+  const time = () => page.$eval('[data-player-time]', (el) => el.textContent);
+  const length = (await time()).split('/')[1]?.trim() ?? '';
+  check('the player shows the recording\'s length', /^0:0[3-4]$/.test(length), await time());
+  await frames();
+  const atStart = await inkAlpha();
+  check('at the start, the writing done while recording is faded', atStart.strong < allInk.strong * 0.5 && atStart.faint > 0, `${atStart.strong} strong of ${allInk.strong}, ${atStart.faint} faint`);
+  check('and the writing from before it is not', atStart.strong > allInk.strong * 0.2, `${atStart.strong} strong of ${allInk.strong}`);
+
+  const seekTo = (t) =>
+    page.evaluate((value) => {
+      const el = document.querySelector('[data-player-seek]');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, String(value));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, t);
+  await seekTo(2.2);
+  await frames();
+  const middle = await inkAlpha();
+  check('part way through, what was written by then is shown in full', middle.strong > atStart.strong * 1.5 && middle.strong < allInk.strong * 0.9, `${middle.strong} strong, start ${atStart.strong}, all ${allInk.strong}`);
+  await seekTo(10);
+  await frames();
+  const end = await inkAlpha();
+  check('at the end, all of it', Math.abs(end.strong - allInk.strong) < allInk.strong * 0.05, `${end.strong} vs ${allInk.strong}`);
+
+  // Tap ink: a tap on paper draws nothing; a tap on the last line plays from a little before it was written.
+  await page.click('[data-player-tap]');
+  await seekTo(0);
+  await frames();
+  const beforeTaps = await inkAlpha();
+  await page.evaluate(([x, y]) => window.__pen.stroke([[x, y], [x + 1, y]], 1), [cx, cy + 260]);
+  await frames();
+  const afterBlankTap = await inkAlpha();
+  check('with Tap ink on, the pen does not draw', afterBlankTap.strong === beforeTaps.strong && afterBlankTap.faint === beforeTaps.faint, JSON.stringify([beforeTaps, afterBlankTap]));
+  await page.evaluate(([x, y]) => window.__pen.stroke([[x, y]], 1), [cx, cy]);
+  const said = await page.waitForSelector('[data-player-message]', { timeout: 2_000 }).then((el) => el.textContent(), () => '');
+  check('tapping writing from before the recording says it was not written during it', /Not written during this recording/.test(said), said);
+  check('and does not play', (await page.getAttribute('[data-player-play]', 'aria-label')) === 'Play');
+  await page.evaluate(([x, y]) => window.__pen.stroke([[x, y]], 1), [cx, cy + 120]);
+  const playing = await page.waitForSelector('[data-player-play][aria-label="Pause"]', { timeout: 3_000 }).then(() => true, () => false);
+  check('tapping the last line plays the recording', playing, await page.$eval('[data-player-play]', (el) => el.getAttribute('aria-label')));
+  const from = await page.evaluate(() => document.querySelector('[data-player-seek]').valueAsNumber);
+  check('from a little before it was written', from >= 0.8 && from <= 2.6, `at ${from.toFixed(2)} s`);
+  await page.click('[data-player-play]');
+
+  await page.click('[data-player-delete]');
+  const gone = await page.waitForSelector('[data-player]', { state: 'detached', timeout: 3_000 }).then(() => true, () => false);
+  check('deleting the recording closes the player', gone);
+  check('and the Recordings button goes with it', (await page.$('[data-recordings-toggle]')) === null);
+  await frames();
+  const after = await inkAlpha();
+  check('the writing stays, in full', Math.abs(after.strong - allInk.strong) < allInk.strong * 0.05, `${after.strong} vs ${allInk.strong}`);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+const browser = await chromium.launch({
+  executablePath,
+  // A microphone that plays a tone, allowed without asking, and sound that may play without a tap first.
+  args: ['--no-sandbox', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'],
+});
 try {
   const checks = [
     checkPhone,
@@ -3577,6 +3688,7 @@ try {
     checkErrorBoundary,
     checkTextToolbar,
     checkZoomAnchor,
+    checkAudioRecording,
   ];
   for (const run of checks) {
     if (only.length > 0 && !only.some((o) => run.name.toLowerCase().includes(o.toLowerCase()))) continue;
