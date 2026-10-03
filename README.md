@@ -98,9 +98,9 @@ rename writes:
 
 | Command | Purpose |
 | --- | --- |
-| `save_document(path, contents)` / `open_document(path)` | `.notex` JSON on disk |
+| `save_document` / `open_document(path)` | `.notex` JSON on disk; saved from the raw IPC body (the file's UTF-8 bytes), destination in the percent-encoded `x-path` header |
 | `write_binary_file` | raw IPC body → file (PDF export lands on disk without a blob download); destination in the percent-encoded `x-path` header |
-| `save_draft` / `load_draft` / `clear_draft` | autosave in `app_data_dir/drafts/autosave.notex` |
+| `save_draft` / `load_draft` / `clear_draft` | autosave in `app_data_dir/drafts/autosave.notex`; the draft is the raw IPC body too |
 | `list_recent` / `add_recent` / `remove_recent` | last five documents in `app_data_dir/recent.json`, de-duplicated, pruned when files vanish |
 | `get_startup_file` | the `.notex` passed on the command line (file association), handed out once |
 
@@ -137,9 +137,13 @@ and the wait ends in the pause before the following one) and grew with every pag
 notes; on the ROG Flow Z13 the overlay's `worst` read 500–800 ms. Two changes. Pages
 are immutable — an edit makes a new one and shares the rest — so `serializePageJson`
 keeps each page's JSON in a `WeakMap` keyed by the page object, and a save re-serialises
-only the page that was written on; PDF sources' base64 is cached the same way, by
-buffer (`encodeNotex` writes the envelope by hand around the cached pages, and parses
-to exactly what `buildNotex` describes). And a draft that comes due while the pen is on
+only the page that was written on; the base64 of embedded files (PDFs, recordings) is cached
+the same way, by buffer. The file is assembled from those pieces (`documentPieces`) straight
+into bytes (`encodeNotexBytes`), which go to the shell as the raw IPC body: escaping a
+textbook's base64 into a JSON string again on every save, and again for the IPC, had cost
+150–600 ms per save for a note with a 20 MB PDF; now it is a copy, about 40 ms, and the
+output is byte-for-byte what it was (`encodeNotex` gives the same as text, and parses to
+exactly what `buildNotex` describes). And a draft that comes due while the pen is on
 the page or hovering just above it is put off and looked at again every 750 ms
 (`desktop/autosave.ts`), running once the pen has gone quiet — but never for more than
 20 s, because a draft is what a crash restores from. The window title is only set
@@ -747,7 +751,10 @@ object, selects it (and switches to the select tool, which is the only one that 
 - **Scrolls only its own list.** Keeping the chosen result in view moves the list itself: `scrollIntoView` scrolls every
   ancestor that can scroll, hidden ones included, and could shift the whole app out of the window.
 - **Cheap.** The panel reads the text objects' arrays only, which keep their identity until something on a
-  page is edited, so a stroke committed every few seconds does not re-run the search. It is loaded only
+  page is edited, so a stroke committed every few seconds does not re-run the search. Each piece of text is
+  folded once and kept (by the source object, so the library search shares it), with the map back to the
+  original kept only where folding changed a length: typing in the box searches a 300-page PDF in under a
+  millisecond a letter, where folding it all again had cost about a tenth of a second. It is loaded only
   when first opened.
 
 ### Searching handwriting (`src/handwriting/`, `src-tauri/src/handwriting.rs`)
@@ -2808,6 +2815,25 @@ checks whose function name contains one of those words.
 ## Layout
 
 ```
+src/
+├── App.tsx, main.tsx       the library or a note, and the boot that decides which
+├── document/               the note: store, pages, media, tabs, reading pane, the editor's components
+├── inking/                 the ink engine, the surface it draws on, the tool palette
+├── library/                the home screen: notes, folders, library search, cloud sync
+├── desktop/                the Tauri shell: files, drafts, versions, window, open-with
+├── pdf/                    PDF.js and pdf-lib: import, render, text, contents, export
+├── search/                 searching a note: its text, handwriting and PDFs
+├── handwriting/            reading handwriting with Windows' recogniser
+├── textselect/             selecting a PDF's text
+├── snip/                   cutting a piece out of a page
+├── audio/                  recording sound with the writing, and playing it back
+├── goodnotes/              opening .goodnotes notebooks
+├── lock/                   the app passcode
+├── preferences/            the user's settings
+├── debug/                  the performance overlay
+├── ui/                     shared components: buttons, tooltips, panels, error boundary
+└── lib/                    small framework-free helpers: base64, errors, DOM
+
 src/inking/
 ├── InkingCanvas.tsx        standalone component: layers, history, imperative handle
 ├── InkSurface.tsx          page-sized surface for the document viewer (zoom-aware)

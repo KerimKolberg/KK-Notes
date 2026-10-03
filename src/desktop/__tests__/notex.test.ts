@@ -3,7 +3,7 @@ import { A4_DIMENSIONS } from '../../document/constants';
 import { appendStroke, createDocument, createPage } from '../../document/operations';
 import type { Document, Page } from '../../document/types';
 import type { Stroke } from '../../inking/types';
-import { APP_INFO, NOTEX_VERSION, buildNotex, decodeNotex, encodeNotex, fileBaseName, parseNotex, titleFromFileName } from '../notex';
+import { APP_INFO, NOTEX_VERSION, buildNotex, decodeNotex, encodeNotex, encodeNotexBytes, fileBaseName, parseNotex, titleFromFileName } from '../notex';
 
 const style: Stroke['style'] = {
   color: '#1f1f24',
@@ -127,6 +127,12 @@ describe('.notex round trip', () => {
     expect(Object.keys(file.document.pdfSources ?? {})).toEqual(['src_a']);
     const parsed = parseNotex(JSON.stringify(file));
     expect(parsed.savedAt).toBe('2026-09-17T06:00:00.000Z');
+  });
+
+  it('writes as bytes exactly the text it would write', () => {
+    const doc = { ...richDocument(), title: 'Übung — ✓ 日本' };
+    const when = new Date('2026-01-01T00:00:00Z');
+    expect(new TextDecoder().decode(encodeNotexBytes(doc, when))).toBe(encodeNotex(doc, when));
   });
 
   it('is stable across two encode passes', () => {

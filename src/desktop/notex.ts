@@ -3,7 +3,7 @@
  * document's JSON serialization (metadata, page layouts, stroke arrays,
  * image layers as data URLs, form values, PDF sources as base64).
  */
-import { fromSerializable, serializeDocumentJson, toSerializable } from '../document/serialization';
+import { documentPieces, fromSerializable, piecesToBytes, piecesToText, toSerializable, type JsonPiece } from '../document/serialization';
 import type { Document, SerializedDocument } from '../document/types';
 
 export const NOTEX_FORMAT = 'notex' as const;
@@ -32,15 +32,27 @@ export function buildNotex(doc: Document, savedAt: Date = new Date()): NotexFile
 }
 
 /**
- * The file's text. The envelope is written by hand around the document's JSON so the
- * pages inside it can come from the per-page cache; the result parses to exactly
- * what `buildNotex` describes.
+ * The file's JSON as pieces: the envelope written by hand around the document's own pieces, so the pages and the
+ * embedded files inside it come from their caches (`documentPieces`); the result parses to exactly what `buildNotex`
+ * describes.
  */
-export function encodeNotex(doc: Document, savedAt: Date = new Date()): string {
-  return (
+function notexPieces(doc: Document, savedAt: Date): JsonPiece[] {
+  return [
     `{"format":${JSON.stringify(NOTEX_FORMAT)},"version":${NOTEX_VERSION},"savedAt":${JSON.stringify(savedAt.toISOString())},` +
-    `"app":${JSON.stringify(APP_INFO)},"document":${serializeDocumentJson(doc)}}`
-  );
+      `"app":${JSON.stringify(APP_INFO)},"document":`,
+    ...documentPieces(doc),
+    '}',
+  ];
+}
+
+/** The file's text. */
+export function encodeNotex(doc: Document, savedAt: Date = new Date()): string {
+  return piecesToText(notexPieces(doc, savedAt));
+}
+
+/** The file's bytes (UTF-8), for writing: the same as the text's, made without making the text. */
+export function encodeNotexBytes(doc: Document, savedAt: Date = new Date()): Uint8Array {
+  return piecesToBytes(notexPieces(doc, savedAt));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

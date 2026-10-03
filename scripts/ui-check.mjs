@@ -3538,6 +3538,92 @@ if (!(await isListening(PORT))) {
 }
 
 /**
+ * Saving sends the note to the shell as bytes — the IPC body, with the path in a percent-encoded header — not as a
+ * JSON string to be escaped and parsed again, and what arrives is the whole note: its writing and the files embedded
+ * in it. The autosaved draft goes the same way.
+ */
+async function checkSaveAsBytes(browser) {
+  console.log('saving as bytes, 1280x800 (desktop shell faked):');
+  const seedCtx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const seedPage = await seedCtx.newPage();
+  await openDocument(seedPage);
+  const blank = await seedPage.evaluate(() => localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('notes.library.doc.'))));
+  await seedCtx.close();
+  const envelope = JSON.parse(blank);
+  envelope.document.title = 'Übung 3';
+  envelope.document.recordings = [{ id: 'rec_1', startedAt: '2026-10-03T09:00:00.000Z', duration: 1, mime: 'audio/webm', data: 'AAECAwT/', marks: [] }];
+  const contents = JSON.stringify(envelope);
+
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  await ctx.addInitScript(({ contents }) => {
+    const PATH = '/lib/Übung 3 – notes.notex';
+    window.__writes = [];
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+    window.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } },
+      transformCallback: () => 1,
+      unregisterCallback: () => {},
+      invoke: async (cmd, args, options) => {
+        if (cmd === 'save_document' || cmd === 'save_draft') {
+          const bytes = args instanceof Uint8Array;
+          window.__writes.push({ cmd, bytes, path: options?.headers?.['x-path'] ?? null, text: bytes ? new TextDecoder().decode(args) : null });
+          return { path: PATH, bytes: bytes ? args.byteLength : 0, modifiedMs: 1 };
+        }
+        switch (cmd) {
+          case 'list_library': return { path: '/lib', relativePath: '', parentPath: null, entries: [] };
+          case 'create_library_document': return PATH;
+          case 'open_document': return { path: PATH, contents, info: { path: PATH, bytes: contents.length, modifiedMs: 1 } };
+          case 'ink_recognizers': return { names: [] };
+          case 'sync_status':
+          case 'sync_now': return { phase: 'offline', provider: 'Not connected', pending: 0, conflicts: [], lastSyncedMs: 0, message: null };
+          case 'list_recent': return [];
+          default: return null;
+        }
+      },
+    };
+  }, { contents });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForFunction(() => document.querySelector('[data-title]')?.value === 'Übung 3', null, { timeout: 10_000 });
+  await page.waitForSelector('[data-layer="live"]', { state: 'attached' });
+  const stroke = (y) =>
+    page.evaluate(async (y) => {
+      const c = document.querySelector('[data-layer="live"]');
+      const r = c.getBoundingClientRect();
+      const fire = (type, x, b) => c.dispatchEvent(new PointerEvent(type, { pointerType: 'pen', pointerId: 7, isPrimary: true, bubbles: true, cancelable: true, clientX: r.x + x, clientY: r.y + y, buttons: b, button: type === 'pointermove' ? -1 : 0, pressure: b ? 0.5 : 0 }));
+      fire('pointerdown', 100, 1);
+      for (let i = 1; i < 20; i++) {
+        fire('pointermove', 100 + i * 10, 1);
+        await new Promise((res) => setTimeout(res, 6));
+      }
+      fire('pointerup', 300, 0);
+    }, y);
+  const writes = (cmd) => page.evaluate((cmd) => window.__writes.filter((w) => w.cmd === cmd), cmd);
+
+  await stroke(200);
+  await page.keyboard.press('Control+s');
+  await page.waitForFunction(() => window.__writes.some((w) => w.cmd === 'save_document'), null, { timeout: 5_000 }).catch(() => {});
+  const [saved] = await writes('save_document');
+  check('Save sends the note as bytes', saved?.bytes === true, JSON.stringify(saved && { bytes: saved.bytes, path: saved.path }));
+  check('with its path in the header, percent-encoded', saved?.path === encodeURIComponent('/lib/Übung 3 – notes.notex'), saved?.path);
+  let file = null;
+  try { file = JSON.parse(saved?.text ?? ''); } catch { /* checked below */ }
+  check('and the bytes are the whole note, as the file has it', file?.format === 'notex' && file.document.title === 'Übung 3' && file.document.pages[0].strokes.length === 1, saved?.text?.slice(0, 120));
+  check('the recording embedded in it written back unchanged', file?.document.recordings?.[0]?.data === 'AAECAwT/', JSON.stringify(file?.document.recordings?.[0]?.data));
+
+  await stroke(300);
+  await page.waitForFunction(() => window.__writes.some((w) => w.cmd === 'save_draft'), null, { timeout: 10_000 }).catch(() => {});
+  const [draft] = await writes('save_draft');
+  let draftFile = null;
+  try { draftFile = JSON.parse(draft?.text ?? ''); } catch { /* checked below */ }
+  check('the autosaved draft goes as bytes too, with the new stroke', draft?.bytes === true && draftFile?.document.pages[0].strokes.length === 2, JSON.stringify(draft && { bytes: draft.bytes, strokes: draftFile?.document.pages[0].strokes.length }));
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Recording sound while writing, and playing it back with the writing: strokes written while it records are marked
  * with when they were begun; the player fades what was not yet written at its position; tapping writing plays from
  * when it was written, without drawing; and a recording can be deleted. The microphone is Chromium's fake one.
@@ -3689,6 +3775,7 @@ try {
     checkTextToolbar,
     checkZoomAnchor,
     checkAudioRecording,
+    checkSaveAsBytes,
   ];
   for (const run of checks) {
     if (only.length > 0 && !only.some((o) => run.name.toLowerCase().includes(o.toLowerCase()))) continue;

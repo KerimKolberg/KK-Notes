@@ -4,6 +4,7 @@
  */
 import { DEFAULT_TEMPLATE_CONFIG, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM } from './constants';
 import { normalizeInkText } from '../handwriting/inkText';
+import { base64Ascii, decodeBase64, encodeBase64 } from '../lib/base64';
 import { clampIndex, renumber } from './operations';
 import type {
   Document,
@@ -19,40 +20,41 @@ import type {
   SerializedPdfSource,
 } from './types';
 
-/** Chunked base64 so multi-megabyte PDFs don't blow the argument limit of `String.fromCharCode`. */
+/** The base64 of a buffer. */
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
-}
-
-/**
- * The base64 of a PDF's bytes, worked out once per buffer.
- *
- * An autosave used to re-encode every PDF in the document each time it ran, which for
- * a textbook is megabytes of `String.fromCharCode` and `btoa` on the main thread — to
- * write out bytes that had not changed since the last save. The buffers are never
- * modified (they are the bytes the file was opened with), so identity is the key.
- */
-const pdfBase64 = new WeakMap<ArrayBuffer, string>();
-function cachedBase64(buffer: ArrayBuffer): string {
-  let text = pdfBase64.get(buffer);
-  if (text === undefined) {
-    text = arrayBufferToBase64(buffer);
-    pdfBase64.set(buffer, text);
-  }
-  return text;
+  return encodeBase64(new Uint8Array(buffer));
 }
 
 export function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
+  const bytes = decodeBase64(base64);
+  return bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? (bytes.buffer as ArrayBuffer) : (bytes.slice().buffer as ArrayBuffer);
+}
+
+/**
+ * The base64 of an embedded file's bytes (a PDF, a recording), worked out once per buffer, as text or as the bytes
+ * that are written to disk.
+ *
+ * An autosave used to re-encode every PDF in the document each time it ran, which for a textbook is megabytes of work
+ * on the main thread — to write out bytes that had not changed since the last save. The buffers are never modified
+ * (they are the bytes the file was opened with, or a finished recording), so identity is the key.
+ */
+const base64Text = new WeakMap<ArrayBuffer, string>();
+function cachedBase64(buffer: ArrayBuffer): string {
+  let text = base64Text.get(buffer);
+  if (text === undefined) {
+    text = arrayBufferToBase64(buffer);
+    base64Text.set(buffer, text);
+  }
+  return text;
+}
+const base64Bytes = new WeakMap<ArrayBuffer, Uint8Array>();
+function cachedBase64Bytes(buffer: ArrayBuffer): Uint8Array {
+  let bytes = base64Bytes.get(buffer);
+  if (bytes === undefined) {
+    bytes = base64Ascii(new Uint8Array(buffer));
+    base64Bytes.set(buffer, bytes);
+  }
+  return bytes;
 }
 
 /**
@@ -243,17 +245,77 @@ function withRecordings(recordings: Recording[]): { recordings?: readonly Record
   return recordings.length > 0 ? { recordings } : {};
 }
 
+// ---------------------------------------------------------------------------
+// Writing: the JSON assembled from pieces
+// ---------------------------------------------------------------------------
+
 /**
- * A page as JSON text, worked out once per page *object*.
+ * A stretch of a document's JSON: text, the base64 of an embedded file's bytes, or a page.
  *
- * Pages are immutable — every edit makes a new one and shares the rest — so the text
- * of a page that has not been touched since the last save is still right, and only the
- * page that was written on has to be serialised again. Autosave runs a second and a
- * half after every burst of writing; with the whole document serialised each time it
- * cost about a tenth of a second per hundred thousand points, a stall that landed in
- * the middle of the next stroke and grew with every page of notes. Now it costs one
- * page.
+ * A note's JSON is mostly things that have not changed since the last save — every page but the one written on, and
+ * the PDFs and recordings, which never change — so it is put together from pieces that are each worked out once and
+ * kept: a page's JSON once per page object (pages are immutable; every edit makes a new one and shares the rest), an
+ * embedded file's base64 once per buffer. Autosave runs a second and a half after every burst of writing; serialising
+ * the whole note each time cost about a tenth of a second per hundred thousand points, and escaping a textbook's
+ * base64 again cost more than that, stalls that landed in the middle of the next stroke. Now a save costs the page
+ * that changed, and the bytes are copied, not re-encoded.
  */
+export type JsonPiece = string | { readonly base64: ArrayBuffer } | { readonly page: Page };
+
+/** A recording's JSON either side of its audio, once per recording. */
+const recordingJson = new WeakMap<Recording, readonly [string, string]>();
+function recordingPieces(r: Recording): readonly [string, string] {
+  let pieces = recordingJson.get(r);
+  if (!pieces) {
+    const head = `{"id":${JSON.stringify(r.id)},"startedAt":${JSON.stringify(r.startedAt)},"duration":${JSON.stringify(r.duration)},"mime":${JSON.stringify(r.mime)},"data":"`;
+    pieces = [head, `","marks":${JSON.stringify(r.marks)}}`];
+    recordingJson.set(r, pieces);
+  }
+  return pieces;
+}
+
+/** The document's JSON as pieces: what `JSON.stringify(toSerializable(doc))` gives, with the pages last. */
+export function documentPieces(doc: Document): JsonPiece[] {
+  const head = JSON.stringify({
+    version: 1,
+    id: doc.id,
+    title: doc.title,
+    ...(doc.cover ? { cover: doc.cover } : {}),
+    viewMode: doc.viewMode,
+    zoom: doc.zoom,
+    activePageIndex: doc.activePageIndex,
+  });
+  const out: JsonPiece[] = [head.slice(0, -1)];
+  const sources = new Set<string>();
+  for (const page of doc.pages) {
+    const ref = page.pdf;
+    if (!ref || sources.has(ref.sourceId)) continue;
+    out.push(
+      `${sources.size === 0 ? ',"pdfSources":{' : ','}${JSON.stringify(ref.sourceId)}:{"name":${JSON.stringify(ref.sourceName)},"pageCount":${JSON.stringify(ref.pageCount)},"data":"`,
+      { base64: ref.data },
+      '"}',
+    );
+    sources.add(ref.sourceId);
+  }
+  if (sources.size > 0) out.push('}');
+  if (doc.recordings && doc.recordings.length > 0) {
+    out.push(',"recordings":[');
+    doc.recordings.forEach((r, i) => {
+      const [before, after] = recordingPieces(r);
+      out.push(i === 0 ? before : `,${before}`, { base64: r.data }, after);
+    });
+    out.push(']');
+  }
+  out.push(',"pages":[');
+  doc.pages.forEach((page, i) => {
+    if (i > 0) out.push(',');
+    out.push({ page });
+  });
+  out.push(']}');
+  return out;
+}
+
+/** A page as JSON text, worked out once per page object (see `JsonPiece`). */
 const pageJson = new WeakMap<Page, string>();
 export function serializePageJson(page: Page): string {
   let json = pageJson.get(page);
@@ -264,16 +326,50 @@ export function serializePageJson(page: Page): string {
   return json;
 }
 
+const utf8 = new TextEncoder();
+
+/** A page as UTF-8 JSON, worked out once per page object; kept apart from the text so only one is ever held. */
+const pageBytes = new WeakMap<Page, Uint8Array>();
+function serializePageBytes(page: Page): Uint8Array {
+  let bytes = pageBytes.get(page);
+  if (bytes === undefined) {
+    bytes = utf8.encode(pageJson.get(page) ?? JSON.stringify(toSerializablePage(page)));
+    pageBytes.set(page, bytes);
+  }
+  return bytes;
+}
+
+/** The pieces as text. */
+export function piecesToText(pieces: readonly JsonPiece[]): string {
+  let out = '';
+  for (const piece of pieces) {
+    out += typeof piece === 'string' ? piece : 'page' in piece ? serializePageJson(piece.page) : cachedBase64(piece.base64);
+  }
+  return out;
+}
+
+/** The pieces as the UTF-8 bytes of that text: what is written to disk, without the text ever being made. */
+export function piecesToBytes(pieces: readonly JsonPiece[]): Uint8Array {
+  const parts = pieces.map((piece) =>
+    typeof piece === 'string' ? utf8.encode(piece) : 'page' in piece ? serializePageBytes(piece.page) : cachedBase64Bytes(piece.base64),
+  );
+  let total = 0;
+  for (const part of parts) total += part.byteLength;
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.byteLength;
+  }
+  return out;
+}
+
 /**
- * The document as JSON text, byte-for-byte what `JSON.stringify(toSerializable(doc))`
- * gives apart from the order of two keys, assembled from per-page text that is reused
- * when the page has not changed.
+ * The document as JSON text, byte-for-byte what `JSON.stringify(toSerializable(doc))` gives apart from where the
+ * pages come (last), assembled from pieces that are reused when they have not changed.
  */
 export function serializeDocumentJson(doc: Document): string {
-  const { pages: _pages, ...shell } = toSerializable(doc);
-  void _pages;
-  const head = JSON.stringify(shell);
-  return `${head.slice(0, -1)},"pages":[${doc.pages.map(serializePageJson).join(',')}]}`;
+  return piecesToText(documentPieces(doc));
 }
 
 export function serializeDocument(doc: Document): string {

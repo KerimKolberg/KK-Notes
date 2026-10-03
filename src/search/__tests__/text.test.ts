@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { documentSources, fold, queryWords, searchSources, type TextSource } from '../text';
+import { documentSources, fold, originAt, queryWords, searchSources, type TextSource } from '../text';
 
 const source = (text: string, over: Partial<TextSource> = {}): TextSource => ({
   pageIndex: 0,
@@ -19,22 +19,26 @@ describe('folding text for comparison', () => {
   it('keeps a map back to where each character was typed, through letters that fold to several', () => {
     const folded = fold('áb'); // a + combining acute, then b
     expect(folded.text).toBe('ab');
-    expect(folded.origin[folded.text.indexOf('b')]).toBe(2);
+    expect(originAt(folded, folded.text.indexOf('b'))).toBe(2);
     // A precomposed letter that decomposes keeps its place too.
     const composed = fold('éb');
     expect(composed.text).toBe('eb');
-    expect(composed.origin[1]).toBe(1);
+    expect(originAt(composed, 1)).toBe(1);
   });
 
   it('ends its map at the end of the original', () => {
     const f = fold('abc');
-    expect(f.origin).toEqual([0, 1, 2, 3]);
+    expect([0, 1, 2, 3].map((k) => originAt(f, k))).toEqual([0, 1, 2, 3]);
+    // Nothing changed length, so no map is kept at all.
+    expect(f.origin).toBeNull();
+    const accented = fold('Noël!');
+    expect(originAt(accented, accented.text.length)).toBe(5);
   });
 
   it('copes with characters outside the basic plane', () => {
     const f = fold('😀x');
     expect(f.text).toBe('😀x');
-    expect(f.origin[f.text.indexOf('x')]).toBe(2);
+    expect(originAt(f, f.text.indexOf('x'))).toBe(2);
   });
 
   it('turns a query into words', () => {

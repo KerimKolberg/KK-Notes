@@ -43,27 +43,59 @@ type SearchableMedia =
 /** Text folded for comparison, with where each folded character came from in the original. */
 interface Folded {
   readonly text: string;
-  /** `origin[i]` is the index in the original of folded character `i`; one more entry marks the end. */
-  readonly origin: readonly number[];
+  /**
+   * `origin[i]` is the index in the original of folded character `i`; one more entry marks the end. `null` when
+   * every character kept its length, so folded character `i` is original character `i` — which is nearly all text,
+   * and saves a number per character for every text a search keeps folded.
+   */
+  readonly origin: readonly number[] | null;
+}
+
+/** Where folded character `k` came from in the original (`k` = the folded length is the end of the original). */
+export function originAt(folded: Folded, k: number): number {
+  return folded.origin ? (folded.origin[Math.min(k, folded.origin.length - 1)] ?? 0) : Math.min(k, folded.text.length);
 }
 
 /**
  * Lower-cased, accents removed, and a map back to the original. Folding can change a string's length
  * (a precomposed letter may become two code points, one of them a mark that is dropped), so a match's
- * position in the folded text is not its position in the text that was typed.
+ * position in the folded text is not always its position in the text that was typed.
  */
 export function fold(text: string): Folded {
   let out = '';
-  const origin: number[] = [];
+  let origin: number[] | null = null;
   let i = 0;
   for (const ch of text) {
-    const folded = ch.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
-    for (let k = 0; k < folded.length; k++) origin.push(i);
+    const code = ch.charCodeAt(0);
+    // ASCII, which is most of any text: only its capitals change.
+    const folded =
+      code < 0x80
+        ? code >= 65 && code <= 90
+          ? String.fromCharCode(code + 32)
+          : ch
+        : ch.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+    if (origin === null && folded.length !== ch.length) origin = Array.from({ length: out.length }, (_, k) => k);
+    if (origin !== null) for (let k = 0; k < folded.length; k++) origin.push(i);
     out += folded;
     i += ch.length;
   }
-  origin.push(text.length);
-  return { text: out, origin };
+  origin?.push(text.length);
+  // Text with nothing to fold is kept once, not twice.
+  return { text: out === text ? text : out, origin };
+}
+
+/**
+ * A source's text folded, once per source: a search runs again with every letter typed, over the same sources (a
+ * PDF's pages, read once), and folding a textbook each time was most of the work.
+ */
+const foldedSources = new WeakMap<TextSource, Folded>();
+function foldedOf(source: TextSource): Folded {
+  let folded = foldedSources.get(source);
+  if (!folded) {
+    folded = fold(source.text);
+    foldedSources.set(source, folded);
+  }
+  return folded;
 }
 
 /** The words of a query, folded; empty when there is nothing to look for. */
@@ -125,7 +157,7 @@ export function searchSources(sources: readonly TextSource[], query: string, lim
   if (words.length === 0) return [];
   const hits: SearchHit[] = [];
   for (const source of sources) {
-    const folded = fold(source.text);
+    const folded = foldedOf(source);
     let first = -1;
     let firstLength = 0;
     let all = true;
@@ -141,8 +173,8 @@ export function searchSources(sources: readonly TextSource[], query: string, lim
       }
     }
     if (!all || first < 0) continue;
-    const start = folded.origin[first] ?? 0;
-    const end = folded.origin[Math.min(first + firstLength, folded.origin.length - 1)] ?? source.text.length;
+    const start = originAt(folded, first);
+    const end = originAt(folded, first + firstLength);
     hits.push({
       source,
       start,

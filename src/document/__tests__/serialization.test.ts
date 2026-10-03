@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { Stroke } from '../../inking/types';
 import { appendStroke, createDocument } from '../operations';
-import { deserializeDocument, fromSerializable, serializeDocument, serializeDocumentJson, serializePageJson, toSerializable } from '../serialization';
+import {
+  deserializeDocument,
+  documentPieces,
+  fromSerializable,
+  piecesToBytes,
+  piecesToText,
+  serializeDocument,
+  serializeDocumentJson,
+  serializePageJson,
+  toSerializable,
+} from '../serialization';
+import type { Document } from '../types';
 
 const freehand: Stroke = {
   kind: 'freehand',
@@ -161,12 +172,14 @@ describe('document serialization', () => {
   });
 });
 
+/** Three pages, a stroke on each. */
+const twoPages = () => {
+  let doc = createDocument(3, 'Notes');
+  doc = { ...doc, pages: doc.pages.map((page, i) => appendStroke(page, { ...freehand, id: `s${i}` })) };
+  return doc;
+};
+
 describe('serialising for autosave', () => {
-  const twoPages = () => {
-    let doc = createDocument(3, 'Notes');
-    doc = { ...doc, pages: doc.pages.map((page, i) => appendStroke(page, { ...freehand, id: `s${i}` })) };
-    return doc;
-  };
 
   it('writes the same document the plain stringify does', () => {
     const doc = twoPages();
@@ -219,5 +232,68 @@ describe('serialising for autosave', () => {
     const back = deserializeDocument(serializeDocumentJson(doc));
     expect(back.pages.map((p) => p.strokes.length)).toEqual([1, 1, 1]);
     expect(serializeDocumentJson(back)).toBe(serializeDocumentJson(back));
+  });
+});
+
+describe('writing a note as pieces', () => {
+  /** What the writer produced before it was assembled from pieces: the shell stringified, then the pages. */
+  const asBefore = (doc: Document): string => {
+    const { pages: _pages, ...shell } = toSerializable(doc);
+    void _pages;
+    return `${JSON.stringify(shell).slice(0, -1)},"pages":[${doc.pages.map((p) => JSON.stringify(toSerializable({ ...doc, pages: [p] }).pages[0])).join(',')}]}`;
+  };
+  const pdf = (sourceId: string, bytes: number[], pageIndex = 0) => ({
+    sourceId,
+    sourceName: `${sourceId} “notes”.pdf`,
+    data: new Uint8Array(bytes).buffer,
+    pageCount: 2,
+    pageIndex,
+    viewBox: [0, 0, 612, 792] as const,
+    rotation: 0,
+    scale: 1,
+  });
+  const full = (): Document => {
+    const doc = createDocument(3, 'Lineare Algebra — Übung 3 ✓');
+    const [a, b, c] = doc.pages;
+    if (!a || !b || !c) throw new Error('pages');
+    const one = pdf('s1', [0x25, 0x50, 0x44, 0x46, 0xff, 0x00]);
+    return {
+      ...doc,
+      cover: { title: 'Linear Algebra', description: 'Übungen', coverColor: '#123456', textColor: '#ffffff' },
+      pages: [
+        { ...appendStroke(a, freehand), template: 'pdf' as const, pdf: one },
+        { ...b, template: 'pdf' as const, pdf: { ...one, pageIndex: 1 } },
+        { ...appendStroke(c, plane), template: 'pdf' as const, pdf: pdf('s2', [1, 2, 3, 4, 5]) },
+      ],
+      recordings: [
+        { id: 'r1', startedAt: '2026-10-03T09:00:00.000Z', duration: 61.5, mime: 'audio/webm;codecs=opus', data: new Uint8Array([9, 8, 7]).buffer, marks: [{ strokeId: 'f1', t: 1.25 }] },
+        { id: 'r2', startedAt: '2026-10-03T10:00:00.000Z', duration: 2, mime: 'audio/webm', data: new Uint8Array([]).buffer, marks: [] },
+      ],
+    };
+  };
+
+  it('writes exactly what the plain stringify did, PDFs, recordings and all', () => {
+    for (const doc of [twoPages(), full()]) expect(serializeDocumentJson(doc)).toBe(asBefore(doc));
+  });
+
+  it('writes the same as bytes as it does as text, accents and all', () => {
+    for (const doc of [twoPages(), full()]) {
+      const pieces = documentPieces(doc);
+      expect(new TextDecoder().decode(piecesToBytes(pieces))).toBe(piecesToText(pieces));
+    }
+  });
+
+  it('reads back what it writes', () => {
+    const doc = full();
+    const back = deserializeDocument(new TextDecoder().decode(piecesToBytes(documentPieces(doc))));
+    expect(back.title).toBe(doc.title);
+    expect(back.pages.map((p) => p.pdf?.sourceId)).toEqual(['s1', 's1', 's2']);
+    expect([...new Uint8Array(back.pages[0]!.pdf!.data)]).toEqual([0x25, 0x50, 0x44, 0x46, 0xff, 0x00]);
+    expect(back.recordings!.map((r) => [...new Uint8Array(r.data)])).toEqual([[9, 8, 7], []]);
+    expect(back.recordings![0]!.marks).toEqual([{ strokeId: 'f1', t: 1.25 }]);
+  });
+
+  it('puts each embedded file in once, however many pages it backs', () => {
+    expect(documentPieces(full()).filter((p) => typeof p !== 'string' && 'base64' in p)).toHaveLength(4);
   });
 });

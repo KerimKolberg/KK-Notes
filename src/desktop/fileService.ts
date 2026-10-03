@@ -5,7 +5,7 @@
 import { downloadBytes, safeFilename } from '../pdf/download';
 import type { Document } from '../document/types';
 import { borderlessFrame } from './borderless';
-import { NOTEX_EXTENSION, NOTEX_MIME, encodeNotex, parseNotex, type ParsedNotex } from './notex';
+import { NOTEX_EXTENSION, NOTEX_MIME, encodeNotex, encodeNotexBytes, parseNotex, type ParsedNotex } from './notex';
 import { isTauri, tauriDialog, tauriInvoke, tauriWindow } from './tauri';
 
 export interface FileInfo {
@@ -77,17 +77,19 @@ export async function pickDocumentSavePath(title: string): Promise<string | null
 /**
  * Write the document to a known native path (atomic on the Rust side).
  *
- * A SAF content URI takes the same detour as the PDF export does: it is not a
- * path, and the native writer cannot open one.
+ * The file goes over as bytes, the IPC body, as an exported PDF does (`writeBinary`): sent as a JSON string it
+ * would be escaped and copied again on its way, which for a note with a textbook or a lecture recording in it is
+ * hundreds of milliseconds on every save. A SAF content URI takes the fs plugin: it is not a path, and the native
+ * writer cannot open one.
  */
 export async function saveDocumentToPath(doc: Document, path: string): Promise<FileInfo> {
-  const contents = encodeNotex(doc);
+  const bytes = encodeNotexBytes(doc);
   if (isContentUri(path)) {
-    const { writeTextFile } = await import('@tauri-apps/plugin-fs');
-    await writeTextFile(path, contents);
-    return { path, bytes: contents.length, modifiedMs: Date.now() };
+    const { writeFile } = await import('@tauri-apps/plugin-fs');
+    await writeFile(path, bytes);
+    return { path, bytes: bytes.byteLength, modifiedMs: Date.now() };
   }
-  return tauriInvoke<FileInfo>('save_document', { path, contents });
+  return tauriInvoke<FileInfo>('save_document', bytes, { headers: { 'x-path': encodeURIComponent(path) } });
 }
 
 /** Browser fallback: download the `.notex`. */
@@ -179,13 +181,12 @@ export async function exportPdf(doc: Document): Promise<string | null> {
 // ---------------------------------------------------------------------------
 
 export async function saveDraft(doc: Document): Promise<void> {
-  const contents = encodeNotex(doc);
   if (isTauri()) {
-    await tauriInvoke<FileInfo>('save_draft', { contents });
+    await tauriInvoke<FileInfo>('save_draft', encodeNotexBytes(doc));
     return;
   }
   try {
-    localStorage.setItem(DRAFT_KEY, contents);
+    localStorage.setItem(DRAFT_KEY, encodeNotex(doc));
   } catch {
     /* quota exceeded or storage disabled: drafts are best-effort */
   }

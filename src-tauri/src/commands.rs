@@ -146,10 +146,11 @@ fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
+    let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() + 0 && i + 2 <= bytes.len() - 1 {
-            if let Ok(value) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
-                out.push(value);
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push(hi << 4 | lo);
                 i += 3;
                 continue;
             }
@@ -174,15 +175,39 @@ fn history_folder(app: &AppHandle, path: &Path) -> Result<PathBuf, String> {
 ///
 /// The file being replaced is kept first as an earlier version (see `notes_sync::history`). Failing
 /// to keep it never stops the save: a full disk for the copy is no reason to lose the new work.
+///
+/// The file's UTF-8 bytes are the IPC body and the destination the percent-encoded `x-path` header, as
+/// for `write_binary_file`: a note can carry a textbook or an hour of audio, and as a JSON string argument
+/// it would be escaped, copied and parsed again on every save.
 #[tauri::command]
-pub fn save_document(app: AppHandle, path: String, contents: String) -> Result<FileInfo, String> {
+pub fn save_document(app: AppHandle, request: Request<'_>) -> Result<FileInfo, String> {
+    let path = header_path(&request)?;
+    let contents = raw_body(&request)?;
     let target = Path::new(&path);
     if !is_content_uri(target) {
         if let Ok(folder) = history_folder(&app, target) {
             let _ = history::snapshot(&folder, target, now_ms());
         }
     }
-    atomic_write(target, contents.as_bytes())
+    atomic_write(target, contents)
+}
+
+/// The destination of a raw-body write: the percent-encoded `x-path` header.
+fn header_path(request: &Request<'_>) -> Result<String, String> {
+    request
+        .headers()
+        .get("x-path")
+        .and_then(|v| v.to_str().ok())
+        .map(percent_decode)
+        .ok_or_else(|| "Missing x-path header".to_string())
+}
+
+/// The bytes sent as the IPC body.
+fn raw_body<'a>(request: &'a Request<'_>) -> Result<&'a [u8], String> {
+    match request.body() {
+        InvokeBody::Raw(bytes) => Ok(bytes),
+        InvokeBody::Json(_) => Err("Expected a binary body".to_string()),
+    }
 }
 
 /// The earlier versions kept of the document at `path`, newest first.
@@ -218,17 +243,8 @@ pub fn open_document(path: String) -> Result<OpenedDocument, String> {
 /// megabytes of binary as number arrays.
 #[tauri::command]
 pub fn write_binary_file(request: Request<'_>) -> Result<FileInfo, String> {
-    let path = request
-        .headers()
-        .get("x-path")
-        .and_then(|v| v.to_str().ok())
-        .map(percent_decode)
-        .ok_or_else(|| "Missing x-path header".to_string())?;
-    let bytes: &[u8] = match request.body() {
-        InvokeBody::Raw(bytes) => bytes,
-        InvokeBody::Json(_) => return Err("Expected a binary body".to_string()),
-    };
-    atomic_write(Path::new(&path), bytes)
+    let path = header_path(&request)?;
+    atomic_write(Path::new(&path), raw_body(&request)?)
 }
 
 // ---------------------------------------------------------------------------
@@ -236,9 +252,9 @@ pub fn write_binary_file(request: Request<'_>) -> Result<FileInfo, String> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn save_draft(app: AppHandle, contents: String) -> Result<FileInfo, String> {
+pub fn save_draft(app: AppHandle, request: Request<'_>) -> Result<FileInfo, String> {
     let path = app_data_path(&app, &[DRAFT_DIR, DRAFT_FILE])?;
-    atomic_write(&path, contents.as_bytes())
+    atomic_write(&path, raw_body(&request)?)
 }
 
 #[tauri::command]
@@ -365,6 +381,11 @@ mod tests {
         assert_eq!(percent_decode("C%3A%5CUsers%5Cme%2Fnotes.pdf"), "C:\\Users\\me/notes.pdf");
         assert_eq!(percent_decode("plain"), "plain");
         assert_eq!(percent_decode("%E2%9C%93"), "✓");
+        // A stray or cut-short escape is kept as it is, and never splits a character.
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("a%2"), "a%2");
+        assert_eq!(percent_decode("%zz%41"), "%zzA");
+        assert_eq!(percent_decode("%é"), "%é");
     }
 
     #[test]
