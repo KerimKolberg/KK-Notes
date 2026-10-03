@@ -10,6 +10,7 @@ import { create } from 'zustand';
 import { useDesktopStore } from '../desktop/desktopStore';
 import { useDocumentStore } from '../document/store';
 import type { Recording } from '../document/types';
+import { errorMessage } from '../lib/errors';
 
 export interface PlayerState {
   readonly open: boolean;
@@ -142,7 +143,7 @@ export async function play(): Promise<void> {
   try {
     await audio.play();
   } catch (error) {
-    say(`Could not play: ${error instanceof Error ? error.message : String(error)}`);
+    say(`Could not play: ${errorMessage(error)}`);
   }
 }
 

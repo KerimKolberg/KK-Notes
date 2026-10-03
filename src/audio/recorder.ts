@@ -16,6 +16,7 @@ import type { Document, Recording, RecordingMark } from '../document/types';
 import { createStrokeId } from '../inking/engine/ids';
 import type { Stroke } from '../inking/types';
 import { closePlayer } from './player';
+import { errorMessage } from '../lib/errors';
 
 export type RecorderStatus = 'idle' | 'starting' | 'recording' | 'stopping';
 
@@ -127,6 +128,7 @@ export async function startRecording(): Promise<boolean> {
   useRecorderStore.setState({ status: 'starting' });
   // What is played back would be recorded again.
   closePlayer();
+  const wanted = useDocumentStore.getState().document.id;
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -140,8 +142,14 @@ export async function startRecording(): Promise<boolean> {
         ? 'The microphone was not allowed. Allow it for the app (on Windows also in Settings → Privacy & security → Microphone) and try again.'
         : name === 'NotFoundError'
           ? 'No microphone was found.'
-          : `Could not start recording: ${error instanceof Error ? error.message : String(error)}`,
+          : `Could not start recording: ${errorMessage(error)}`,
     );
+    return false;
+  }
+  if (useDocumentStore.getState().document.id !== wanted) {
+    // The note was left while the microphone was being asked for: nothing to record into.
+    stream.getTracks().forEach((t) => t.stop());
+    useRecorderStore.setState({ status: 'idle' });
     return false;
   }
   const mime = pickMime((type) => MediaRecorder.isTypeSupported(type));
@@ -151,7 +159,7 @@ export async function startRecording(): Promise<boolean> {
   } catch (error) {
     stream.getTracks().forEach((t) => t.stop());
     useRecorderStore.setState({ status: 'idle' });
-    notice(`Could not start recording: ${error instanceof Error ? error.message : String(error)}`);
+    notice(`Could not start recording: ${errorMessage(error)}`);
     return false;
   }
 
@@ -188,22 +196,29 @@ export async function startRecording(): Promise<boolean> {
     );
   };
 
+  // All of this before anything is awaited, so no switch of note can fall between the recording starting and its
+  // note being watched.
   const unsubscribe = useDocumentStore.subscribe((state, previous) => onDocumentChange(s, state, previous));
-  const unlistenClose = await guardWindowClose();
   const onUnload = (event: BeforeUnloadEvent): void => {
     // A browser cannot wait for the save; it can only ask.
     event.preventDefault();
   };
   if (!isTauri()) window.addEventListener('beforeunload', onUnload);
+  let stopped = false;
+  let unlistenClose: (() => void) | null = null;
   s.stop = () => {
+    stopped = true;
     unsubscribe();
-    unlistenClose();
+    unlistenClose?.();
     if (!isTauri()) window.removeEventListener('beforeunload', onUnload);
   };
-
   session = s;
   recorder.start(CHUNK_MS);
   useRecorderStore.setState({ status: 'recording', startedAt, documentId: s.documentId });
+
+  const unlisten = await guardWindowClose();
+  if (stopped) unlisten();
+  else unlistenClose = unlisten;
   return true;
 }
 
@@ -223,6 +238,8 @@ function onDocumentChange(s: Session, state: DocumentStore, previous: DocumentSt
 /** Wait for the recorder to hand over its last chunk, then make the recording; `null` if nothing was recorded. */
 function finish(s: Session): Promise<Recording | null> {
   s.stop();
+  // As long as it ran until now, not until the last chunk has been read.
+  const duration = Math.round(((performance.now() - s.startedAt) / 1000) * 10) / 10;
   return new Promise((resolve) => {
     let done = false;
     const build = (): void => {
@@ -237,7 +254,7 @@ function finish(s: Session): Promise<Recording | null> {
       resolve({
         id: `rec_${createStrokeId()}`,
         startedAt: s.startedIso,
-        duration: Math.round(((performance.now() - s.startedAt) / 1000) * 10) / 10,
+        duration,
         mime: s.mime,
         data,
         marks: [...s.marks].sort((a, b) => a.t - b.t),
@@ -333,7 +350,7 @@ async function saveIntoFile(recording: Recording, released: Released, path: stri
     await saveDocumentToPath({ ...base, recordings: [...(base.recordings ?? []), recording] }, path);
     notice(`The recording was saved with “${released.document.title || 'Untitled note'}”.`);
   } catch (error) {
-    notice(`The recording could not be saved: ${error instanceof Error ? error.message : String(error)}`);
+    notice(`The recording could not be saved: ${errorMessage(error)}`);
   }
 }
 
