@@ -26,6 +26,7 @@ import { PageSnapshot } from './PageSnapshot';
 import { useTabStore } from '../tabStore';
 import type { Page } from '../types';
 import { useContents } from '../useContents';
+import { wheelZoomFactor } from '../gestures';
 import { OutlineList } from './OutlineList';
 
 /** Pages kept rendered above and below the visible run. */
@@ -57,8 +58,11 @@ export function ReferencePane(): React.JSX.Element | null {
   const [zoom, setZoom] = useState(1);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
-  /** Where the middle of the view was, as fractions of the content, when the zoom last changed. */
-  const anchor = useRef<{ readonly x: number; readonly y: number } | null>(null);
+  /**
+   * The point the zoom keeps in place, as fractions of the content, and where it is in the view (px from its top
+   * left): the middle of the view for the buttons, the pointer for a pinch.
+   */
+  const anchor = useRef<{ readonly x: number; readonly y: number; readonly atX: number; readonly atY: number } | null>(null);
   const [contentsOpen, setContentsOpen] = useState(false);
 
   // Width drives the page size, so it is measured rather than assumed: the
@@ -105,13 +109,17 @@ export function ReferencePane(): React.JSX.Element | null {
   // reaches; here the overflow is on the right, which scrolling does.
   const totalWidth = Math.max(width, layout.reduce((widest, box) => Math.max(widest, box.cssWidth), 0) + GUTTER * 2);
 
-  /** Zoom around the middle of what is on screen, not the top left of the document. */
-  const changeZoom = useCallback((next: (zoom: number) => number) => {
+  /** Zoom around a point of the view (its middle unless told otherwise), not the top left of the document. */
+  const changeZoom = useCallback((next: (zoom: number) => number, at?: { readonly x: number; readonly y: number }) => {
     const element = scrollRef.current;
     if (element && element.scrollWidth > 0 && element.scrollHeight > 0) {
+      const atX = at?.x ?? element.clientWidth / 2;
+      const atY = at?.y ?? element.clientHeight / 2;
       anchor.current = {
-        x: (element.scrollLeft + element.clientWidth / 2) / element.scrollWidth,
-        y: (element.scrollTop + element.clientHeight / 2) / element.scrollHeight,
+        x: (element.scrollLeft + atX) / element.scrollWidth,
+        y: (element.scrollTop + atY) / element.scrollHeight,
+        atX,
+        atY,
       };
     }
     setZoom(next);
@@ -122,9 +130,38 @@ export function ReferencePane(): React.JSX.Element | null {
     const at = anchor.current;
     anchor.current = null;
     if (!element || !at) return;
-    element.scrollLeft = Math.max(0, at.x * element.scrollWidth - element.clientWidth / 2);
-    element.scrollTop = Math.max(0, at.y * element.scrollHeight - element.clientHeight / 2);
+    element.scrollLeft = Math.max(0, at.x * element.scrollWidth - at.atX);
+    element.scrollTop = Math.max(0, at.y * element.scrollHeight - at.atY);
   }, [zoom]);
+
+  // A touchpad pinch (and Ctrl + the mouse wheel) arrives as Ctrl + wheel: zoom about the pointer, a frame's worth of
+  // steps at a time, so the pages are laid out once a frame however fast the events come.
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    let factor = 1;
+    let at = { x: 0, y: 0 };
+    let frame = 0;
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const rect = element.getBoundingClientRect();
+      at = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      factor *= wheelZoomFactor(e.deltaY, e.deltaMode);
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const by = factor;
+        factor = 1;
+        changeZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * by)), at);
+      });
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      element.removeEventListener('wheel', onWheel);
+      cancelAnimationFrame(frame);
+    };
+  }, [changeZoom, splitId]);
 
   /** Only the pages near the viewport are handed to the rasteriser. */
   const visible = useMemo(() => {

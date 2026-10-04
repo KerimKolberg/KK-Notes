@@ -6,6 +6,7 @@ import type { ToolSettings } from '../../inking/types';
 import { ACTIVE_OVERSCAN_PX, PAGE_GAP, RENDER_OVERSCAN_PX, VIEWER_PADDING } from '../constants';
 import { anchorForContentPoint, scrollForAnchor } from '../gestures';
 import { useTouchGestures, type TouchGestureCommit } from '../hooks/useTouchGestures';
+import { useWheelZoom } from '../hooks/useWheelZoom';
 import {
   currentPageIndex,
   inRange,
@@ -223,6 +224,8 @@ export const DocumentViewer = memo(function DocumentViewer({ settingsRef, curren
     );
   }, [layout, zoom, axisRef]);
   const gestureHandlers = useTouchGestures({ scrollRef, previewRef, layoutRef, zoomRef, oneFingerInksRef, onCommit: onGestureCommit });
+  // A touchpad pinch (and Ctrl + the mouse wheel), which arrives as Ctrl + wheel rather than as touches.
+  useWheelZoom({ scrollRef, previewRef, layoutRef, zoomRef, axisRef, onCommit: onGestureCommit, setZoom });
 
   const activeRange = visibleRange(layout.items, scrollMain, viewportMain, ACTIVE_OVERSCAN_PX, axis);
   const renderRange = visibleRange(layout.items, scrollMain, viewportMain, RENDER_OVERSCAN_PX, axis);

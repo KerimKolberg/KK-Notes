@@ -3538,6 +3538,99 @@ if (!(await isListening(PORT))) {
 }
 
 /**
+ * A touchpad pinch reaches the page as Ctrl + wheel events, not touches: it zooms the note about the pointer —
+ * previewed while the fingers move, committed when they stop, with the page point under the pointer kept where it
+ * was — and draws nothing. Ctrl + a mouse wheel notch zooms by a sensible step; a plain wheel still scrolls. The
+ * reading pane zooms the same way.
+ */
+async function checkTouchpadPinch(browser) {
+  console.log('touchpad pinch zoom, 1280x800:');
+  const { ctx, page, errors, cx, cy } = await openPenDocument(browser);
+  const zoomText = () => page.$eval('[data-zoom]', (e) => e.textContent.trim());
+  // Where (cx, cy) is on the first page, as fractions of it.
+  const pagePoint = () =>
+    page.evaluate(([x, y]) => {
+      const r = document.querySelector('[data-page-index="0"]').getBoundingClientRect();
+      return { fx: (x - r.left) / r.width, fy: (y - r.top) / r.height, width: r.width };
+    }, [cx, cy]);
+  const wheel = (selector, x, y, deltaY, ctrlKey, times = 1) =>
+    page.evaluate(
+      ({ selector, x, y, deltaY, ctrlKey, times }) => {
+        const target = document.elementFromPoint(x, y)?.closest(selector) ? document.elementFromPoint(x, y) : document.querySelector(selector);
+        for (let i = 0; i < times; i++) {
+          target.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: x, clientY: y, deltaY, deltaMode: 0, ctrlKey }));
+        }
+      },
+      { selector, x, y, deltaY, ctrlKey, times },
+    );
+  const inkBefore = await page.evaluate(() => window.__pen.ink());
+  const before = await pagePoint();
+  check('the note starts at 100%', (await zoomText()) === '100%', await zoomText());
+
+  // Fingers spreading: five steps of a pinch that ends at e^0.5 ≈ 165%.
+  await wheel('[data-viewer]', cx, cy, -10, true, 5);
+  const previewing = await page.$eval('[data-viewer-content]', (e) => e.style.transform);
+  check('while the fingers move, the zoom is previewed', /scale\(1\.6/.test(previewing), previewing);
+  await page.waitForFunction(() => document.querySelector('[data-zoom]')?.textContent.trim() !== '100%', null, { timeout: 2_000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  check('spreading two fingers on the touchpad zooms in', (await zoomText()) === '165%', await zoomText());
+  check('and the preview is put away', (await page.$eval('[data-viewer-content]', (e) => e.style.transform)) === '');
+  const after = await pagePoint();
+  check(
+    'the point under the pointer stays under it',
+    Math.abs(after.fx - before.fx) < 0.01 && Math.abs(after.fy - before.fy) < 0.01 && after.width > before.width * 1.5,
+    JSON.stringify({ before, after }),
+  );
+  check('a pinch draws nothing', (await page.evaluate(() => window.__pen.ink())) === inkBefore);
+
+  // Pinching back in.
+  await wheel('[data-viewer]', cx, cy, 10, true, 5);
+  await page.waitForFunction(() => document.querySelector('[data-zoom]')?.textContent.trim() === '100%', null, { timeout: 2_000 }).catch(() => {});
+  check('pinching the fingers together zooms out again', (await zoomText()) === '100%', await zoomText());
+
+  // A mouse wheel notch with Ctrl: one sensible step, not 2.7×.
+  await wheel('[data-viewer]', cx, cy, -100, true);
+  await page.waitForFunction(() => document.querySelector('[data-zoom]')?.textContent.trim() !== '100%', null, { timeout: 2_000 }).catch(() => {});
+  check('Ctrl + a mouse wheel notch zooms by a step', (await zoomText()) === '128%', await zoomText());
+
+  // A plain wheel is still a scroll.
+  const zoomed = await zoomText();
+  const top = await page.$eval('[data-viewer]', (e) => e.scrollTop);
+  await page.mouse.move(cx, cy);
+  await page.mouse.wheel(0, 300);
+  await page.waitForTimeout(200);
+  check('a plain wheel still scrolls, and does not zoom', (await page.$eval('[data-viewer]', (e) => e.scrollTop)) > top && (await zoomText()) === zoomed);
+
+  // The reading pane: drop a PDF on a note with writing on it (so it opens in a tab), show it beside, pinch over it.
+  await page.evaluate(() => document.querySelector('[data-viewer]').scrollTo(0, 0));
+  await page.evaluate(([x, y]) => window.__pen.stroke([[x, y], [x + 60, y + 10], [x + 120, y]], 1), [cx - 60, cy]);
+  const t = await page.evaluateHandle(({ bytes }) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array(bytes)], 'Reader.pdf', { type: 'application/pdf' }));
+    return transfer;
+  }, { bytes: tinyPdf(2, 'Reader') });
+  await page.dispatchEvent('[data-page-stage]', 'dragover', { dataTransfer: t });
+  await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: t });
+  await page.waitForSelector('[data-tab-split], [data-reference-pane]', { timeout: 15_000 }).catch(() => {});
+  if (!(await page.$('[data-reference-pane]'))) await page.click('[data-tab-split]').catch(() => {});
+  const pane = await page.waitForSelector('[data-reference-scroll] [data-reference-page-frame]', { timeout: 10_000 }).then(() => true, () => false);
+  check('a PDF can be shown in the reading pane', pane);
+  if (pane) {
+    const paneWidth = () => page.$eval('[data-reference-scroll] [data-reference-page-frame]', (e) => e.getBoundingClientRect().width);
+    const box = await page.$eval('[data-reference-scroll]', (e) => e.getBoundingClientRect().toJSON());
+    const w0 = await paneWidth();
+    const noteZoom = await zoomText();
+    await wheel('[data-reference-scroll]', box.x + box.width / 2, box.y + 200, -10, true, 4);
+    await page.waitForTimeout(250);
+    const w1 = await paneWidth();
+    check('a touchpad pinch over the reading pane zooms the pane', w1 > w0 * 1.3, `${Math.round(w0)} → ${Math.round(w1)} px`);
+    check('and leaves the note as it was', (await zoomText()) === noteZoom, await zoomText());
+  }
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Saving sends the note to the shell as bytes — the IPC body, with the path in a percent-encoded header — not as a
  * JSON string to be escaped and parsed again, and what arrives is the whole note: its writing and the files embedded
  * in it. The autosaved draft goes the same way.
@@ -3776,6 +3869,7 @@ try {
     checkZoomAnchor,
     checkAudioRecording,
     checkSaveAsBytes,
+    checkTouchpadPinch,
   ];
   for (const run of checks) {
     if (only.length > 0 && !only.some((o) => run.name.toLowerCase().includes(o.toLowerCase()))) continue;

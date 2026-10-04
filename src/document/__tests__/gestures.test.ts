@@ -10,6 +10,7 @@ import {
   previewTransform,
   scrollForAnchor,
   touchDistance,
+  wheelZoomFactor,
 } from '../gestures';
 import { clampZoom, itemAtContent, layoutPages } from '../layout';
 
@@ -111,5 +112,29 @@ describe('anchoring across a zoom change', () => {
   it('returns null without a layout item to anchor on', () => {
     expect(anchorForContentPoint([], { x: 0, y: 0 }, 1, { x: 0, y: 0 })).toBeNull();
     expect(scrollForAnchor(items, { itemIndex: 7, pagePoint: { x: 0, y: 0 }, offset: { x: 0, y: 0 } }, 1)).toBeNull();
+  });
+});
+
+describe('touchpad pinch (Ctrl + wheel)', () => {
+  it('gives a pinch its own scale back', () => {
+    // Chromium sends a pinch of scale s as deltaY = −100 · ln(s).
+    for (const scale of [1.02, 1.1, 0.9, 0.97]) expect(wheelZoomFactor(-100 * Math.log(scale))).toBeCloseTo(scale, 6);
+  });
+
+  it('spreading the fingers zooms in, pinching them zooms out', () => {
+    expect(wheelZoomFactor(-4)).toBeGreaterThan(1);
+    expect(wheelZoomFactor(4)).toBeLessThan(1);
+    expect(wheelZoomFactor(0)).toBe(1);
+  });
+
+  it('keeps a mouse wheel notch to a sensible step, in pixels, lines or pages', () => {
+    expect(wheelZoomFactor(-100)).toBeCloseTo(Math.exp(0.25), 6);
+    expect(wheelZoomFactor(120)).toBeCloseTo(Math.exp(-0.25), 6);
+    expect(wheelZoomFactor(-3, 1)).toBeCloseTo(Math.exp(0.25), 6);
+    expect(wheelZoomFactor(1, 2)).toBeCloseTo(Math.exp(-0.25), 6);
+  });
+
+  it('ignores nonsense', () => {
+    expect(wheelZoomFactor(Number.NaN)).toBe(1);
   });
 });

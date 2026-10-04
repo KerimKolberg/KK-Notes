@@ -110,3 +110,21 @@ export function scrollForAnchor(items: readonly PageLayout[], anchor: GestureAnc
   if (!item) return null;
   return anchoredScroll(pageToContent(anchor.pagePoint, item, zoom), anchor.offset);
 }
+
+/**
+ * The largest step one wheel event can make, in pixels of wheel travel. A touchpad pinch arrives as a stream of
+ * small steps; a mouse wheel's notch is a hundred pixels or more, which unclamped would zoom by e (2.7×) at a click.
+ */
+const MAX_WHEEL_STEP = 25;
+
+/**
+ * How much one wheel event with Ctrl held scales the zoom. That is how a touchpad pinch reaches a page in Chromium
+ * (and so in WebView2): as Ctrl + wheel, with `deltaY = −100 · ln(scale)`, so `exp(−deltaY / 100)` gives the pinch's
+ * own scale back. Ctrl + a mouse wheel arrives the same way, a notch at a time, and is clamped to a sensible step.
+ */
+export function wheelZoomFactor(deltaY: number, deltaMode = 0): number {
+  // Lines and pages, which some mice report, as pixels.
+  const px = deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * 400 : deltaY;
+  if (!Number.isFinite(px)) return 1;
+  return Math.exp(-Math.max(-MAX_WHEEL_STEP, Math.min(MAX_WHEEL_STEP, px)) / 100);
+}

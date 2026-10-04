@@ -1275,6 +1275,16 @@ pinch and cancels a one-finger pan (it was a palm), and pen input is never
 blocked by a gesture. A finger left over after a pinch is ignored until it
 lifts, so lifting fingers one at a time does not nudge the view.
 
+**A touchpad pinch** (`hooks/useWheelZoom.ts`) never arrives as touches: Chromium, and so
+WebView2, hands it to the page as Ctrl + wheel events, with `deltaY = −100 · ln(scale)`, and
+the touch handling above never sees it. The viewer takes those (a non-passive listener, so the
+webview's own zoom never runs; it is switched off anyway) and treats them as a pinch on the
+screen: `exp(−deltaY / 100)` gives each step's scale back, the zoom is previewed with the same
+transform, about the page point under the pointer, and committed through the same anchored
+commit 160 ms after the fingers stop. Ctrl + a mouse wheel arrives the same way, a notch at a
+time, and is clamped to a step of about 28 % (`wheelZoomFactor`). The reading pane zooms
+about the pointer too, a frame's worth of steps at a time.
+
 Verification: `src/inking/__tests__/lasso.test.ts` (polygon containment on
 concave loops, freehand polylines and geometric outlines, transforms,
 restyle, duplicate, handle geometry), `src/document/__tests__/gestures.test.ts`
@@ -2741,6 +2751,13 @@ hit-testing can answer:
   off; a double click takes a word and a tap clears it; a finger drag selects too; Text box puts them under the
   words as a text box and puts selecting away; in the reading pane the words can be copied or reused but not
   highlighted, and Text box puts them on the note being written in.
+- **touchpad pinch**: Ctrl + wheel steps over a page preview the zoom, then commit it (to 165 %) with the page
+  point under the pointer still under it and nothing drawn; pinching back returns to 100 %; Ctrl + a mouse
+  wheel notch is one step (128 %); a plain wheel still scrolls; over the reading pane it zooms the pane and
+  leaves the note alone.
+- **saving as bytes** (desktop shell faked): Save sends the note as the IPC body with its path
+  percent-encoded in a header, the bytes being the whole note with its embedded recording unchanged; the
+  autosaved draft goes the same way.
 - **recording sound with the writing** (Chromium's fake microphone): Record starts recording and says so, the time
   counting up; Stop puts the recording in the note and says to save it; the player clears the notice and shows the
   length; at the start the writing done while recording is faded and the writing from before it is not, part way
