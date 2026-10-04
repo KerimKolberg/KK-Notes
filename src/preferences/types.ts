@@ -130,7 +130,28 @@ export interface Preferences {
   readonly handwritingSearch: boolean;
   /** The recogniser (language) to read handwriting with, by name; `null` for the one Windows picks. */
   readonly handwritingRecognizer: string | null;
+  /** How pinching and the zoom buttons feel. */
+  readonly zoom: ZoomPreferences;
 }
+
+/** How zooming feels: a pinch (on a touchpad or the screen), and one step of the buttons or a wheel notch. */
+export interface ZoomPreferences {
+  /** How far a pinch zooms for the same movement of the fingers; 1 is the pinch's own scale. */
+  readonly pinchSpeed: number;
+  /**
+   * How much a pinch has to change the zoom before the zoom follows it, as a fraction (0.05 is 5 %); 0 for at once.
+   * Past it the zoom carries on from where it is, without a jump. Raised, a two-finger scroll that pinches a little
+   * on the way does not zoom.
+   */
+  readonly pinchThreshold: number;
+  /** One click of + / −, or one notch of Ctrl + a mouse wheel, in percentage points. */
+  readonly zoomStep: number;
+}
+
+export const DEFAULT_ZOOM_PREFERENCES: ZoomPreferences = { pinchSpeed: 1, pinchThreshold: 0, zoomStep: 10 };
+export const PINCH_SPEED_RANGE = { min: 0.25, max: 3 } as const;
+export const PINCH_THRESHOLD_RANGE = { min: 0, max: 0.2 } as const;
+export const ZOOM_STEP_RANGE = { min: 5, max: 50 } as const;
 
 /** How many quick colours the palette shows; the picker covers everything else. */
 export const MAX_SWATCHES = 10;

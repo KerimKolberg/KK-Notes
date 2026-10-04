@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from 'react';
 import { MAX_ZOOM, MIN_ZOOM } from '../constants';
-import { anchorForContentPoint, wheelZoomFactor, type GestureAnchor } from '../gestures';
+import { usePreferencesStore } from '../../preferences/store';
+import { anchorForContentPoint, feltPinchLog, isWheelNotch, wheelPinchLog, type GestureAnchor } from '../gestures';
 import { clampZoom, type DocumentLayout, type LayoutAxis } from '../layout';
 import type { TouchGestureCommit } from './useTouchGestures';
 
@@ -24,6 +25,10 @@ interface WheelGesture {
   /** Scroll-content point under the pointer when the gesture began: the transform origin. */
   readonly content: { readonly x: number; readonly y: number };
   readonly anchor: GestureAnchor | null;
+  /** The pinch so far, as a log scale: summed raw, so the threshold and speed apply to the whole of it. */
+  pinch: number;
+  /** Mouse wheel notches so far, in and out. */
+  notches: number;
   /** Not rounded: a slow pinch is many steps of a fraction of a percent, which rounding each would lose. */
   zoom: number;
 }
@@ -73,9 +78,21 @@ export function useWheelZoom({ scrollRef, previewRef, layoutRef, zoomRef, axisRe
         const offset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
         const content = { x: offset.x + el.scrollLeft, y: offset.y + el.scrollTop };
         const zoom = zoomRef.current;
-        gesture = { startZoom: zoom, content, anchor: anchorForContentPoint(layoutRef.current.items, content, zoom, offset, axisRef.current), zoom };
+        gesture = {
+          startZoom: zoom,
+          content,
+          anchor: anchorForContentPoint(layoutRef.current.items, content, zoom, offset, axisRef.current),
+          pinch: 0,
+          notches: 0,
+          zoom,
+        };
       }
-      gesture.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, gesture.zoom * wheelZoomFactor(e.deltaY, e.deltaMode)));
+      // The user's zoom settings: how a pinch follows the fingers, and how big a step a notch is.
+      const feel = usePreferencesStore.getState().zoom;
+      if (isWheelNotch(e.deltaY, e.deltaMode)) gesture.notches += e.deltaY < 0 ? 1 : -1;
+      else gesture.pinch += wheelPinchLog(e.deltaY);
+      const raw = gesture.startZoom * Math.exp(feltPinchLog(gesture.pinch, feel)) + (gesture.notches * feel.zoomStep) / 100;
+      gesture.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, raw));
       const preview = previewRef.current;
       if (preview) {
         preview.style.transformOrigin = `${gesture.content.x}px ${gesture.content.y}px`;

@@ -27,6 +27,7 @@ import {
   type PinchState,
 } from '../gestures';
 import type { DocumentLayout } from '../layout';
+import { usePreferencesStore } from '../../preferences/store';
 
 export interface TouchGestureCommit {
   /** Zoom the document should switch to (already rounded / clamped). */
@@ -173,7 +174,7 @@ export function useTouchGestures(options: UseTouchGesturesOptions): TouchGesture
         content,
         anchor,
         offset,
-        last: pinchUpdate(start, pa, pb),
+        last: pinchUpdate(start, pa, pb, undefined, undefined, usePreferencesStore.getState().zoom),
       };
       beginTouchGesture();
       capture(el, a);
@@ -185,7 +186,7 @@ export function useTouchGestures(options: UseTouchGesturesOptions): TouchGesture
       const pa = touches.get(state.ids[0]);
       const pb = touches.get(state.ids[1]);
       if (!pa || !pb) return;
-      state.last = pinchUpdate(state.start, pa, pb);
+      state.last = pinchUpdate(state.start, pa, pb, undefined, undefined, usePreferencesStore.getState().zoom);
       const preview = optionsRef.current.previewRef.current;
       if (!preview) return;
       const css = previewTransform(state.content, state.last.pan, state.last.scale);

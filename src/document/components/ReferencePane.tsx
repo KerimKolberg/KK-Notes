@@ -26,7 +26,9 @@ import { PageSnapshot } from './PageSnapshot';
 import { useTabStore } from '../tabStore';
 import type { Page } from '../types';
 import { useContents } from '../useContents';
-import { wheelZoomFactor } from '../gestures';
+import { feltPinchLog, isWheelNotch, wheelPinchLog } from '../gestures';
+import { WHEEL_ZOOM_SETTLE_MS } from '../hooks/useWheelZoom';
+import { usePreferencesStore } from '../../preferences/store';
 import { OutlineList } from './OutlineList';
 
 /** Pages kept rendered above and below the visible run. */
@@ -56,6 +58,7 @@ export function ReferencePane(): React.JSX.Element | null {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const zoomStep = usePreferencesStore((s) => s.zoom.zoomStep);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
   /**
@@ -135,31 +138,54 @@ export function ReferencePane(): React.JSX.Element | null {
   }, [zoom]);
 
   // A touchpad pinch (and Ctrl + the mouse wheel) arrives as Ctrl + wheel: zoom about the pointer, a frame's worth of
-  // steps at a time, so the pages are laid out once a frame however fast the events come.
+  // steps at a time, so the pages are laid out once a frame however fast the events come. A pinch is followed as the
+  // zoom settings say (speed, threshold), counted from where it began; a notch is one zoom step.
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
+    /** The pinch so far (a log scale, raw), and how much of it the zoom has already followed. */
+    let pinch = 0;
+    let followed = 0;
     let factor = 1;
+    let steps = 0;
     let at = { x: 0, y: 0 };
     let frame = 0;
+    let idle: ReturnType<typeof setTimeout> | null = null;
     const onWheel = (e: WheelEvent): void => {
       if (!e.ctrlKey) return;
       e.preventDefault();
       const rect = element.getBoundingClientRect();
       at = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      factor *= wheelZoomFactor(e.deltaY, e.deltaMode);
+      const feel = usePreferencesStore.getState().zoom;
+      if (isWheelNotch(e.deltaY, e.deltaMode)) {
+        steps += e.deltaY < 0 ? 1 : -1;
+      } else {
+        pinch += wheelPinchLog(e.deltaY);
+        const felt = feltPinchLog(pinch, feel);
+        factor *= Math.exp(felt - followed);
+        followed = felt;
+      }
+      // A pause ends the pinch: the next one starts from nothing, threshold and all.
+      if (idle !== null) clearTimeout(idle);
+      idle = setTimeout(() => {
+        pinch = 0;
+        followed = 0;
+      }, WHEEL_ZOOM_SETTLE_MS);
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
         const by = factor;
+        const step = (steps * usePreferencesStore.getState().zoom.zoomStep) / 100;
         factor = 1;
-        changeZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * by)), at);
+        steps = 0;
+        changeZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * by + step)), at);
       });
     };
     element.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       element.removeEventListener('wheel', onWheel);
       cancelAnimationFrame(frame);
+      if (idle !== null) clearTimeout(idle);
     };
   }, [changeZoom, splitId]);
 
@@ -280,7 +306,7 @@ export function ReferencePane(): React.JSX.Element | null {
           type="button"
           aria-label="Zoom out"
           className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700"
-          onClick={() => changeZoom((z) => Math.max(MIN_ZOOM, Math.round((z - 0.1) * 10) / 10))}
+          onClick={() => changeZoom((z) => Math.max(MIN_ZOOM, Math.round((z - zoomStep / 100) * 100) / 100))}
         >
           <Minus size={13} aria-hidden="true" />
         </button>
@@ -288,7 +314,7 @@ export function ReferencePane(): React.JSX.Element | null {
           type="button"
           aria-label="Zoom in"
           className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:bg-zinc-300 dark:hover:bg-zinc-700"
-          onClick={() => changeZoom((z) => Math.min(MAX_ZOOM, Math.round((z + 0.1) * 10) / 10))}
+          onClick={() => changeZoom((z) => Math.min(MAX_ZOOM, Math.round((z + zoomStep / 100) * 100) / 100))}
         >
           <Plus size={13} aria-hidden="true" />
         </button>

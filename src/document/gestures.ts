@@ -40,13 +40,13 @@ export function pinchStart(a: Point, b: Point, zoom: number): PinchStart {
 }
 
 /**
- * Pinch state for the current finger positions. A degenerate start distance
- * (fingers on the same spot) keeps the zoom and only pans.
+ * Pinch state for the current finger positions, as the user's zoom settings have it follow the fingers. A
+ * degenerate start distance (fingers on the same spot) keeps the zoom and only pans.
  */
-export function pinchUpdate(start: PinchStart, a: Point, b: Point, min = MIN_ZOOM, max = MAX_ZOOM): PinchState {
+export function pinchUpdate(start: PinchStart, a: Point, b: Point, min = MIN_ZOOM, max = MAX_ZOOM, feel: ZoomFeel = NATURAL_ZOOM): PinchState {
   const mid = centroid(a, b);
   const dist = touchDistance(a, b);
-  const raw = start.dist > 0 ? (start.zoom * dist) / start.dist : start.zoom;
+  const raw = start.dist > 0 ? start.zoom * feltPinchScale(dist / start.dist, feel) : start.zoom;
   const zoom = clampZoom(raw, min, max);
   return {
     zoom,
@@ -111,20 +111,45 @@ export function scrollForAnchor(items: readonly PageLayout[], anchor: GestureAnc
   return anchoredScroll(pageToContent(anchor.pagePoint, item, zoom), anchor.offset);
 }
 
-/**
- * The largest step one wheel event can make, in pixels of wheel travel. A touchpad pinch arrives as a stream of
- * small steps; a mouse wheel's notch is a hundred pixels or more, which unclamped would zoom by e (2.7×) at a click.
- */
-const MAX_WHEEL_STEP = 25;
+/** How a pinch and a zoom step feel: the user's zoom settings (`ZoomPreferences`). */
+export interface ZoomFeel {
+  /** How far a pinch zooms for the same movement; 1 is the pinch's own scale. */
+  readonly pinchSpeed: number;
+  /** How much a pinch must change the zoom before the zoom follows it (0.05 is 5 %). */
+  readonly pinchThreshold: number;
+  /** One zoom step, in percentage points. */
+  readonly zoomStep: number;
+}
+
+/** A pinch that zooms by exactly what the fingers do. */
+export const NATURAL_ZOOM: ZoomFeel = { pinchSpeed: 1, pinchThreshold: 0, zoomStep: 10 };
 
 /**
- * How much one wheel event with Ctrl held scales the zoom. That is how a touchpad pinch reaches a page in Chromium
- * (and so in WebView2): as Ctrl + wheel, with `deltaY = −100 · ln(scale)`, so `exp(−deltaY / 100)` gives the pinch's
- * own scale back. Ctrl + a mouse wheel arrives the same way, a notch at a time, and is clamped to a sensible step.
+ * A pinch's scale as the zoom follows it, in logs (so zooming in and out are mirror images): nothing until it is
+ * past the threshold, then what is past it, times the speed — so crossing the threshold starts the zoom from where it
+ * is, without a jump.
  */
-export function wheelZoomFactor(deltaY: number, deltaMode = 0): number {
-  // Lines and pages, which some mice report, as pixels.
-  const px = deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * 400 : deltaY;
-  if (!Number.isFinite(px)) return 1;
-  return Math.exp(-Math.max(-MAX_WHEEL_STEP, Math.min(MAX_WHEEL_STEP, px)) / 100);
+export function feltPinchLog(log: number, feel: ZoomFeel = NATURAL_ZOOM): number {
+  if (!Number.isFinite(log)) return 0;
+  const past = Math.max(0, Math.abs(log) - Math.log1p(Math.max(0, feel.pinchThreshold)));
+  return Math.sign(log) * past * feel.pinchSpeed;
+}
+
+/** A pinch's scale (fingers' distance now over at the start) as the zoom follows it. */
+export function feltPinchScale(scale: number, feel: ZoomFeel = NATURAL_ZOOM): number {
+  return scale > 0 ? Math.exp(feltPinchLog(Math.log(scale), feel)) : 1;
+}
+
+/**
+ * Whether a Ctrl + wheel event is a mouse wheel's notch rather than a step of a touchpad pinch. A pinch reaches the
+ * page in Chromium (and so WebView2) as Ctrl + wheel with `deltaY = −100 · ln(scale)`, a stream of small steps; a
+ * notch is a hundred pixels or more, or counted in lines or pages.
+ */
+export function isWheelNotch(deltaY: number, deltaMode = 0): boolean {
+  return deltaMode !== 0 || Math.abs(deltaY) >= 50;
+}
+
+/** The log scale one step of a touchpad pinch asks for (see `isWheelNotch`). */
+export function wheelPinchLog(deltaY: number): number {
+  return Number.isFinite(deltaY) ? -deltaY / 100 : 0;
 }

@@ -31,6 +31,11 @@ import {
   MIN_SWATCHES,
   PALETTE_DOCKS,
   type PageDefaults,
+  DEFAULT_ZOOM_PREFERENCES,
+  PINCH_SPEED_RANGE,
+  PINCH_THRESHOLD_RANGE,
+  ZOOM_STEP_RANGE,
+  type ZoomPreferences,
   POINTER_STYLES,
   type PaletteDock,
   type PaletteSlot,
@@ -52,6 +57,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   pageDefaults: null,
   handwritingSearch: true,
   handwritingRecognizer: null,
+  zoom: DEFAULT_ZOOM_PREFERENCES,
 };
 
 const STYLUS_TOOL_IDS: ReadonlySet<string> = new Set(STYLUS_TOOLS.map((tool) => tool.id));
@@ -165,6 +171,20 @@ function normalizePageDefaults(stored: unknown): PageDefaults | null {
   };
 }
 
+/** A number in a range, or the default when it is not a number at all. */
+function inRange(value: unknown, range: { readonly min: number; readonly max: number }, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(range.max, Math.max(range.min, value)) : fallback;
+}
+
+export function normalizeZoom(stored: unknown): ZoomPreferences {
+  const record = typeof stored === 'object' && stored !== null ? (stored as Record<string, unknown>) : {};
+  return {
+    pinchSpeed: Math.round(inRange(record.pinchSpeed, PINCH_SPEED_RANGE, DEFAULT_ZOOM_PREFERENCES.pinchSpeed) * 100) / 100,
+    pinchThreshold: Math.round(inRange(record.pinchThreshold, PINCH_THRESHOLD_RANGE, DEFAULT_ZOOM_PREFERENCES.pinchThreshold) * 100) / 100,
+    zoomStep: Math.round(inRange(record.zoomStep, ZOOM_STEP_RANGE, DEFAULT_ZOOM_PREFERENCES.zoomStep)),
+  };
+}
+
 export function normalize(stored: unknown): Preferences {
   const record = typeof stored === 'object' && stored !== null ? (stored as Record<string, unknown>) : {};
   return {
@@ -184,6 +204,7 @@ export function normalize(stored: unknown): Preferences {
     handwritingSearch: record.handwritingSearch !== false,
     handwritingRecognizer:
       typeof record.handwritingRecognizer === 'string' && record.handwritingRecognizer.trim() ? record.handwritingRecognizer.slice(0, 200) : null,
+    zoom: normalizeZoom(record.zoom),
   };
 }
 
@@ -229,6 +250,8 @@ export interface PreferencesStore extends Preferences {
   setLowLatencyInk: (enabled: boolean) => void;
   setHandwritingSearch: (enabled: boolean) => void;
   setHandwritingRecognizer: (name: string | null) => void;
+  /** Change some of how zooming feels; out-of-range values are brought into range. */
+  setZoomPreferences: (patch: Partial<ZoomPreferences>) => void;
   /** Clear custom colours, tool order and page defaults in one go. */
   resetPreferences: () => void;
 }
@@ -248,6 +271,7 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
       pageDefaults: patch.pageDefaults !== undefined ? patch.pageDefaults : current.pageDefaults,
       handwritingSearch: patch.handwritingSearch ?? current.handwritingSearch,
       handwritingRecognizer: patch.handwritingRecognizer !== undefined ? patch.handwritingRecognizer : current.handwritingRecognizer,
+      zoom: patch.zoom ?? current.zoom,
     };
     write(next);
     // Before the state changes, so a surface that remounts on the change already
@@ -303,6 +327,7 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
     setLowLatencyInk: (enabled) => save({ lowLatencyInk: enabled === true }),
     setHandwritingSearch: (enabled) => save({ handwritingSearch: enabled !== false }),
     setHandwritingRecognizer: (name) => save({ handwritingRecognizer: name && name.trim() ? name : null }),
+    setZoomPreferences: (patch) => save({ zoom: normalizeZoom({ ...get().zoom, ...patch }) }),
 
     resetPreferences: () => {
       try {

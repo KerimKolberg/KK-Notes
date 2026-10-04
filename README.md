@@ -1282,8 +1282,9 @@ webview's own zoom never runs; it is switched off anyway) and treats them as a p
 screen: `exp(−deltaY / 100)` gives each step's scale back, the zoom is previewed with the same
 transform, about the page point under the pointer, and committed through the same anchored
 commit 160 ms after the fingers stop. Ctrl + a mouse wheel arrives the same way, a notch at a
-time, and is clamped to a step of about 28 % (`wheelZoomFactor`). The reading pane zooms
-about the pointer too, a frame's worth of steps at a time.
+time, told apart by its size (`isWheelNotch`) and taken as one zoom step. How far a pinch goes,
+how much it takes before it zooms, and how big a step is are settings (see *Customisation*).
+The reading pane zooms about the pointer too, a frame's worth of steps at a time.
 
 Verification: `src/inking/__tests__/lasso.test.ts` (polygon containment on
 concave loops, freehand polylines and geometric outlines, transforms,
@@ -2223,6 +2224,14 @@ the **pen button mapping** and the **low-latency ink** switch (all under
 *Settings*, described in the sections on the interface, the stylus and *How it
 works*).
 
+- **How zooming feels** (`ZoomPreferences`, `components/ZoomSettings.tsx`). *Pinch speed* (0.25–3×) is
+  how far the zoom goes for the same pinch, 1× following the fingers; *pinch threshold* (off–20 %) is
+  how much a pinch must change the zoom before it moves at all, for when two-finger scrolling zooms by
+  accident; both apply to a touchpad pinch and to two fingers on the screen. They act on the pinch's
+  log scale (`feltPinchLog`), so in and out mirror each other, and past the threshold the zoom carries on
+  from where it is rather than jumping. *Zoom step* (5–50 %, 10 % by default) is one click of + / − and
+  one notch of Ctrl + a mouse wheel, told from a pinch's small steps by size (`isWheelNotch`); the reading
+  pane uses all three. Out-of-range stored values are brought back into range.
 - **Palette order.** *Arrange icons* in the settings popover turns each tool
   button into a drag handle (the same pointer-reorder hook the page arranger
   uses, so pen, mouse and touch all work). It is a mode rather than an
@@ -2753,8 +2762,10 @@ hit-testing can answer:
   highlighted, and Text box puts them on the note being written in.
 - **touchpad pinch**: Ctrl + wheel steps over a page preview the zoom, then commit it (to 165 %) with the page
   point under the pointer still under it and nothing drawn; pinching back returns to 100 %; Ctrl + a mouse
-  wheel notch is one step (128 %); a plain wheel still scrolls; over the reading pane it zooms the pane and
-  leaves the note alone.
+  wheel notch is one step (110 %); the zoom settings take effect — at pinch speed 2× the same pinch goes
+  twice as far, a 25 % step makes + and a notch 25 %, a pinch inside a 20 % threshold does not zoom and one
+  past it carries on without a jump, and Reset zoom puts them back; a plain wheel still scrolls; over the
+  reading pane it zooms the pane and leaves the note alone.
 - **saving as bytes** (desktop shell faked): Save sends the note as the IPC body with its path
   percent-encoded in a header, the bytes being the whole note with its embedded recording unchanged; the
   autosaved draft goes the same way.

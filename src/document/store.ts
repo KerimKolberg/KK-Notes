@@ -125,7 +125,8 @@ export interface DocumentStore {
   jumpToPage: (index: number, within?: number) => void;
   setViewMode: (mode: ViewMode) => void;
   setZoom: (zoom: number) => void;
-  zoomBy: (steps: number) => void;
+  /** Zoom by `steps` steps of `step` (a fraction: 0.1 is ten percentage points). */
+  zoomBy: (steps: number, step?: number) => void;
   setTitle: (title: string) => void;
   setArrangerOpen: (open: boolean) => void;
   setReadOnly: (readOnly: boolean) => void;
@@ -333,7 +334,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
 
   setZoom: (zoom) => set((s) => ({ document: { ...s.document, zoom: clampZoom(zoom) } })),
 
-  zoomBy: (steps) => set((s) => ({ document: { ...s.document, zoom: clampZoom(s.document.zoom + steps * ZOOM_STEP) } })),
+  zoomBy: (steps, step = ZOOM_STEP) => set((s) => ({ document: { ...s.document, zoom: clampZoom(s.document.zoom + steps * step) } })),
 
   setTitle: (title) => set(edit((s) => ({ document: { ...s.document, title } }))),
 

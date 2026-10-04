@@ -29,6 +29,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useRouteStore } from '../../library/routeStore';
+import { usePreferencesStore } from '../../preferences/store';
 import { useDesktopStore } from '../../desktop/desktopStore';
 import { useSearchStore } from '../../search/searchStore';
 import { useBookmarksStore } from '../bookmarksStore';
@@ -81,6 +82,7 @@ export function TopBar() {
   const bookmarksOpen = useBookmarksStore((s) => s.open);
   const toggleBookmarks = useBookmarksStore((s) => s.toggle);
   const pageBookmarked = useDocumentStore((s) => s.document.pages[s.document.activePageIndex]?.bookmark !== undefined);
+  const zoomStep = usePreferencesStore((s) => s.zoom.zoomStep);
   const recorderStatus = useRecorderStore((s) => s.status);
   const recording = recorderStatus !== 'idle';
   const recordingCount = useDocumentStore((s) => s.document.recordings?.length ?? 0);
@@ -318,7 +320,7 @@ export function TopBar() {
       {/* Group 3: how you are looking at it. */}
       <div className="flex items-center gap-0.5" role="group" aria-label="View">
         <div className="hidden items-center gap-0.5 md:flex">
-          <IconButton icon={ZoomOut} label="Zoom out" size="sm" disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(-1)} tooltipSide="bottom" />
+          <IconButton icon={ZoomOut} label="Zoom out" size="sm" disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(-1, zoomStep / 100)} tooltipSide="bottom" />
           <button
             type="button"
             className="h-9 w-14 rounded-lg text-xs font-medium tabular-nums text-zinc-600 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800"
@@ -328,7 +330,7 @@ export function TopBar() {
           >
             {Math.round(zoom * 100)}%
           </button>
-          <IconButton icon={ZoomIn} label="Zoom in" size="sm" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(1)} tooltipSide="bottom" />
+          <IconButton icon={ZoomIn} label="Zoom in" size="sm" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(1, zoomStep / 100)} tooltipSide="bottom" />
         </div>
 
         {actions

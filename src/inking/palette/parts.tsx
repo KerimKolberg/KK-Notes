@@ -6,6 +6,7 @@ import { IconButton } from '../../ui/IconButton';
 import { Tooltip } from '../../ui/Tooltip';
 import { Row, Switch } from '../../ui/SettingsRow';
 import { HandwritingSettings } from '../../handwriting/HandwritingSettings';
+import { ZoomSettings } from '../../document/components/ZoomSettings';
 import {
   AXIS_LABEL_PRESETS,
   COLOR_PALETTE,
@@ -1267,8 +1268,10 @@ export function PaletteSettings({
     setLowLatencyInk,
     handwritingSearch,
     handwritingRecognizer,
+    zoom,
   } = usePreferencesStore(
     useShallow((s) => ({
+      zoom: s.zoom,
       paletteOrder: s.paletteOrder,
       swatches: s.swatches,
       widthPresets: s.widthPresets,
@@ -1299,6 +1302,7 @@ export function PaletteSettings({
     lowLatencyInk !== DEFAULT_PREFERENCES.lowLatencyInk ||
     handwritingSearch !== DEFAULT_PREFERENCES.handwritingSearch ||
     handwritingRecognizer !== DEFAULT_PREFERENCES.handwritingRecognizer ||
+    JSON.stringify(zoom) !== JSON.stringify(DEFAULT_PREFERENCES.zoom) ||
     JSON.stringify(settings.stylus) !== JSON.stringify(DEFAULT_STYLUS_SETTINGS);
   return (
     // Scrolls instead of growing: this panel has more in it than a tablet in
@@ -1470,6 +1474,7 @@ export function PaletteSettings({
         Z13 was one) it turns every page dark and makes the cursor blink in
         fullscreen. Off by default; if pages go dark, switch it back off.
       </p>
+      <ZoomSettings />
       <HandwritingSettings />
       <Row label="Diagnostics">
         <Switch checked={settings.debugMode} onChange={(v) => onSettingsChange({ debugMode: v })}>

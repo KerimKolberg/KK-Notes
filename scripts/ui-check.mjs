@@ -3588,10 +3588,56 @@ async function checkTouchpadPinch(browser) {
   await page.waitForFunction(() => document.querySelector('[data-zoom]')?.textContent.trim() === '100%', null, { timeout: 2_000 }).catch(() => {});
   check('pinching the fingers together zooms out again', (await zoomText()) === '100%', await zoomText());
 
-  // A mouse wheel notch with Ctrl: one sensible step, not 2.7×.
+  // A mouse wheel notch with Ctrl: one zoom step (10 % unless the settings say otherwise), not 2.7×.
   await wheel('[data-viewer]', cx, cy, -100, true);
   await page.waitForFunction(() => document.querySelector('[data-zoom]')?.textContent.trim() !== '100%', null, { timeout: 2_000 }).catch(() => {});
-  check('Ctrl + a mouse wheel notch zooms by a step', (await zoomText()) === '128%', await zoomText());
+  check('Ctrl + a mouse wheel notch zooms by one step', (await zoomText()) === '110%', await zoomText());
+
+  // The zoom settings: speed, threshold and step, each taking effect.
+  const setSlider = (selector, value) =>
+    page.evaluate(([selector, value]) => {
+      const el = document.querySelector(selector);
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, String(value));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, [selector, value]);
+  const resetZoom = async () => {
+    await page.click('[data-zoom]');
+    await page.waitForFunction(() => document.querySelector('[data-zoom]')?.textContent.trim() === '100%', null, { timeout: 2_000 }).catch(() => {});
+  };
+  const settle = () => page.waitForTimeout(400);
+  await page.click('[data-palette-settings-trigger]');
+  await page.waitForSelector('[data-zoom-pinch-speed]', { timeout: 5_000 });
+  check('the settings have zoom settings', (await page.$('[data-zoom-pinch-threshold]')) !== null && (await page.$('[data-zoom-step]')) !== null);
+  await setSlider('[data-zoom-pinch-speed]', 2);
+  await setSlider('[data-zoom-step]', 25);
+  await page.keyboard.press('Escape');
+  await resetZoom();
+  await wheel('[data-viewer]', cx, cy, -10, true, 2);
+  await settle();
+  check('at pinch speed 2×, the same pinch zooms twice as far (in logs)', (await zoomText()) === '149%', await zoomText());
+  await resetZoom();
+  await page.click('[aria-label="Zoom in"]');
+  check('with a 25 % step, + zooms by 25 %', (await zoomText()) === '125%', await zoomText());
+  await wheel('[data-viewer]', cx, cy, -100, true);
+  await settle();
+  check('and so does a Ctrl + mouse wheel notch', (await zoomText()) === '150%', await zoomText());
+  await page.click('[data-palette-settings-trigger]');
+  await page.waitForSelector('[data-zoom-pinch-threshold]', { timeout: 5_000 });
+  await setSlider('[data-zoom-pinch-speed]', 1);
+  await setSlider('[data-zoom-pinch-threshold]', 0.2);
+  await page.keyboard.press('Escape');
+  await resetZoom();
+  await wheel('[data-viewer]', cx, cy, -5, true, 3);
+  await settle();
+  check('a pinch inside the threshold does not zoom', (await zoomText()) === '100%', await zoomText());
+  await wheel('[data-viewer]', cx, cy, -10, true, 4);
+  await settle();
+  check('past it, the zoom follows from where it is, without a jump', (await zoomText()) === '124%', await zoomText());
+  await page.click('[data-palette-settings-trigger]');
+  await page.waitForSelector('[data-zoom-reset]', { timeout: 5_000 });
+  await page.click('[data-zoom-reset]');
+  check('Reset zoom puts them back', (await page.$eval('[data-zoom-step]', (e) => e.value)) === '10' && (await page.$eval('[data-zoom-pinch-threshold]', (e) => e.value)) === '0');
+  await page.keyboard.press('Escape');
 
   // A plain wheel is still a scroll.
   const zoomed = await zoomText();

@@ -16,10 +16,11 @@ import {
   normalizeStylus,
   normalizeSwatches,
   normalizeWidthPresets,
+  normalizeZoom,
   reorder,
   usePreferencesStore,
 } from '../store';
-import { DEFAULT_PALETTE_ORDER, MAX_SWATCHES, MIN_SWATCHES } from '../types';
+import { DEFAULT_PALETTE_ORDER, DEFAULT_ZOOM_PREFERENCES, MAX_SWATCHES, MIN_SWATCHES } from '../types';
 
 beforeEach(() => {
   usePreferencesStore.getState().resetPreferences();
@@ -369,5 +370,29 @@ describe('the pointer over a page', () => {
   it('is part of what a stored preferences object carries', () => {
     expect(normalize({ pointerStyle: 'arrow' }).pointerStyle).toBe('arrow');
     expect(normalize({}).pointerStyle).toBe('cross');
+  });
+});
+
+describe('zoom settings', () => {
+  it('start as a pinch that follows the fingers, and steps of 10 %', () => {
+    expect(DEFAULT_PREFERENCES.zoom).toEqual({ pinchSpeed: 1, pinchThreshold: 0, zoomStep: 10 });
+    expect(normalize({}).zoom).toEqual(DEFAULT_ZOOM_PREFERENCES);
+  });
+
+  it('keep what was stored, within range', () => {
+    expect(normalizeZoom({ pinchSpeed: 1.5, pinchThreshold: 0.05, zoomStep: 25 })).toEqual({ pinchSpeed: 1.5, pinchThreshold: 0.05, zoomStep: 25 });
+    expect(normalizeZoom({ pinchSpeed: 99, pinchThreshold: -1, zoomStep: 1 })).toEqual({ pinchSpeed: 3, pinchThreshold: 0, zoomStep: 5 });
+    expect(normalizeZoom({ pinchSpeed: 'fast', zoomStep: Number.NaN })).toEqual(DEFAULT_ZOOM_PREFERENCES);
+    expect(normalizeZoom('nonsense')).toEqual(DEFAULT_ZOOM_PREFERENCES);
+  });
+
+  it('change one at a time, and go back with the rest on reset', () => {
+    usePreferencesStore.getState().setZoomPreferences({ pinchSpeed: 2 });
+    usePreferencesStore.getState().setZoomPreferences({ zoomStep: 20 });
+    expect(usePreferencesStore.getState().zoom).toEqual({ pinchSpeed: 2, pinchThreshold: 0, zoomStep: 20 });
+    usePreferencesStore.getState().setZoomPreferences({ pinchThreshold: 0.5 });
+    expect(usePreferencesStore.getState().zoom.pinchThreshold).toBe(0.2);
+    usePreferencesStore.getState().resetPreferences();
+    expect(usePreferencesStore.getState().zoom).toEqual(DEFAULT_ZOOM_PREFERENCES);
   });
 });

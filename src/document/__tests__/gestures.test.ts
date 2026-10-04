@@ -9,8 +9,12 @@ import {
   pinchUpdate,
   previewTransform,
   scrollForAnchor,
+  feltPinchLog,
+  feltPinchScale,
+  isWheelNotch,
+  NATURAL_ZOOM,
   touchDistance,
-  wheelZoomFactor,
+  wheelPinchLog,
 } from '../gestures';
 import { clampZoom, itemAtContent, layoutPages } from '../layout';
 
@@ -118,23 +122,52 @@ describe('anchoring across a zoom change', () => {
 describe('touchpad pinch (Ctrl + wheel)', () => {
   it('gives a pinch its own scale back', () => {
     // Chromium sends a pinch of scale s as deltaY = −100 · ln(s).
-    for (const scale of [1.02, 1.1, 0.9, 0.97]) expect(wheelZoomFactor(-100 * Math.log(scale))).toBeCloseTo(scale, 6);
+    for (const scale of [1.02, 1.1, 0.9, 0.97]) expect(Math.exp(wheelPinchLog(-100 * Math.log(scale)))).toBeCloseTo(scale, 6);
   });
 
-  it('spreading the fingers zooms in, pinching them zooms out', () => {
-    expect(wheelZoomFactor(-4)).toBeGreaterThan(1);
-    expect(wheelZoomFactor(4)).toBeLessThan(1);
-    expect(wheelZoomFactor(0)).toBe(1);
-  });
-
-  it('keeps a mouse wheel notch to a sensible step, in pixels, lines or pages', () => {
-    expect(wheelZoomFactor(-100)).toBeCloseTo(Math.exp(0.25), 6);
-    expect(wheelZoomFactor(120)).toBeCloseTo(Math.exp(-0.25), 6);
-    expect(wheelZoomFactor(-3, 1)).toBeCloseTo(Math.exp(0.25), 6);
-    expect(wheelZoomFactor(1, 2)).toBeCloseTo(Math.exp(-0.25), 6);
+  it('tells a mouse wheel notch from a step of a pinch', () => {
+    expect(isWheelNotch(-4)).toBe(false);
+    expect(isWheelNotch(12.5)).toBe(false);
+    expect(isWheelNotch(-100)).toBe(true);
+    expect(isWheelNotch(120)).toBe(true);
+    expect(isWheelNotch(-3, 1)).toBe(true);
+    expect(isWheelNotch(1, 2)).toBe(true);
   });
 
   it('ignores nonsense', () => {
-    expect(wheelZoomFactor(Number.NaN)).toBe(1);
+    expect(wheelPinchLog(Number.NaN)).toBe(0);
+    expect(feltPinchLog(Number.NaN)).toBe(0);
+    expect(feltPinchScale(0)).toBe(1);
+  });
+});
+
+describe('how a pinch feels (the zoom settings)', () => {
+  const feel = (pinchSpeed: number, pinchThreshold: number) => ({ ...NATURAL_ZOOM, pinchSpeed, pinchThreshold });
+
+  it('follows the fingers exactly by default', () => {
+    for (const scale of [0.5, 0.9, 1, 1.3, 2]) expect(feltPinchScale(scale)).toBeCloseTo(scale, 9);
+  });
+
+  it('goes further, or less far, for the same pinch with the speed', () => {
+    expect(feltPinchScale(1.2, feel(2, 0))).toBeCloseTo(1.44, 9);
+    expect(feltPinchScale(1.44, feel(0.5, 0))).toBeCloseTo(1.2, 9);
+    // In and out mirror each other.
+    expect(feltPinchScale(1 / 1.2, feel(2, 0))).toBeCloseTo(1 / 1.44, 9);
+  });
+
+  it('does nothing inside the threshold, then carries on from there without a jump', () => {
+    const f = feel(1, 0.1);
+    expect(feltPinchScale(1.05, f)).toBe(1);
+    expect(feltPinchScale(1 / 1.05, f)).toBe(1);
+    expect(feltPinchScale(1.1, f)).toBeCloseTo(1, 9);
+    expect(feltPinchScale(1.1 * 1.2, f)).toBeCloseTo(1.2, 9);
+    expect(feltPinchScale(1 / (1.1 * 1.2), f)).toBeCloseTo(1 / 1.2, 9);
+  });
+
+  it('a pinch on the screen follows the settings too', () => {
+    const start = pinchStart({ x: 0, y: 0 }, { x: 100, y: 0 }, 1);
+    expect(pinchUpdate(start, { x: 0, y: 0 }, { x: 150, y: 0 }).zoom).toBe(1.5);
+    expect(pinchUpdate(start, { x: 0, y: 0 }, { x: 150, y: 0 }, undefined, undefined, feel(2, 0)).zoom).toBe(2.25);
+    expect(pinchUpdate(start, { x: 0, y: 0 }, { x: 104, y: 0 }, undefined, undefined, feel(1, 0.05)).zoom).toBe(1);
   });
 });
