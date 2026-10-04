@@ -89,7 +89,10 @@ WebView2 launched with hardware-accelerated rasterisation
 `dragDropEnabled: false` so HTML5 image/PDF drops keep reaching the page;
 zoom hotkeys off; a CSP that permits the pdf.js worker, wasm codecs, data and
 blob URLs and the IPC origin; `.notex` registered as a file association.
-`src-tauri/capabilities/default.json` grants `dialog:default`, `fs:default`
+On Windows `src-tauri/tauri.windows.conf.json` repeats the window with `visible: false`
+(a platform file replaces the `windows` array rather than merging into it, so the whole entry
+is there), so a start in the tray never flashes the window up; `setup` shows and maximizes it
+otherwise. `src-tauri/capabilities/default.json` grants `dialog:default`, `fs:default`
 with read/write scope under `$APPDATA`, and the window permissions used for
 fullscreen, maximize and title updates.
 
@@ -103,6 +106,8 @@ rename writes:
 | `save_draft` / `load_draft` / `clear_draft` | autosave in `app_data_dir/drafts/autosave.notex`; the draft is the raw IPC body too |
 | `list_recent` / `add_recent` / `remove_recent` | last five documents in `app_data_dir/recent.json`, de-duplicated, pruned when files vanish |
 | `get_startup_file` | the `.notex` passed on the command line (file association), handed out once |
+| `background_settings` / `set_background_settings` | opening when Windows starts, starting in the tray, closing to the tray (`app_data_dir/background.json`); `supported: false` on Android |
+| `quit_app` | the page's answer to the tray's Quit, once it has saved |
 
 **`.notex` format** (`src/desktop/notex.ts`). A versioned envelope
 `{ format: 'notex', version: 1, savedAt, app, document }` around the document
@@ -166,6 +171,29 @@ that reports no usable geometry falls back to the platform fullscreen. The windo
 needs are in the capabilities (`set-decorations`, `set-position`, `set-size`,
 `current-monitor`, `outer-position`, `outer-size`). The performance overlay's `mode` row
 says `borderless` or `windowed`.
+
+**Starting with Windows, and the tray** (`src-tauri/src/background.rs`, `desktop/background.ts`,
+`desktop/BackgroundSettings.tsx`). Settings → *Windows* has three switches. *Open when Windows
+starts* registers the app with the autostart plugin (a `Run` entry), launched with `--autostart`
+so a login start can be told from one the user made; *…in the tray, without a window* (which
+waits for the first) makes that start show only the tray icon; *Keep running in the tray when
+closed* turns closing the window into hiding it. They are kept by the shell in
+`app_data_dir/background.json`, not with the preferences, because the shell needs them before the
+page has loaded; the first switch is read back from Windows' own login entry, not from the
+file, so it shows what Windows will actually do. The tray icon is there
+while either tray setting is on: a click opens the window (maximized, the first time), and its
+menu has *Open* and *Quit*. Quit asks the page first (`notex-quit-requested`): a recording in
+progress is finished and put in its note, unsaved work goes to the draft, then the page calls
+`quit_app` — and the shell quits after 8 s whatever the page does. Turning both tray settings off
+while the window is hidden shows it before the icon goes, so the app is never left running with
+no way back to it.
+
+**One instance** (`tauri-plugin-single-instance`). A second launch — the Start menu, a file
+double-clicked in Explorer — exits at once and hands its arguments to the running app, which
+comes forward (out of the tray if it is there) and opens the file through the same
+`notex-open-with` event Android's intents use, so it lands in a tab like any other opened file.
+Both plugins are desktop-only dependencies; on Android the commands report `supported: false`
+and the settings do not appear.
 
 **Stylus buttons.** `resolveEffectiveTool` maps hardware buttons per the
 *Stylus* settings in the palette. Two bits of `PointerEvent.buttons` are
@@ -2766,6 +2794,9 @@ hit-testing can answer:
   twice as far, a 25 % step makes + and a notch 25 %, a pinch inside a 20 % threshold does not zoom and one
   past it carries on without a jump, and Reset zoom puts them back; a plain wheel still scrolls; over the
   reading pane it zooms the pane and leaves the note alone.
+- **starting with Windows and the tray** (desktop shell faked): the settings offer the three switches, the
+  tray start waiting for the login start; each switch sends the shell the settings it should; the tray's Quit,
+  with an edit not yet saved, writes the draft before `quit_app`; in a browser none of it shows.
 - **saving as bytes** (desktop shell faked): Save sends the note as the IPC body with its path
   percent-encoded in a header, the bytes being the whole note with its embedded recording unchanged; the
   autosaved draft goes the same way.

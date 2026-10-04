@@ -13,6 +13,7 @@
 //! two things that genuinely need the platform: opening the system browser
 //! for consent, and keeping the refresh token.
 
+mod background;
 mod commands;
 mod drive_commands;
 mod handwriting;
@@ -23,7 +24,19 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // The desktop's background life (`background.rs`). The single-instance plugin goes first, so a second
+    // launch is turned back before anything else of it starts.
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_single_instance::init(background::second_instance))
+        .plugin(tauri_plugin_autostart::Builder::new().args([background::AUTOSTART_ARG]).build())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                background::on_close_requested(window, api);
+            }
+        });
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
@@ -58,8 +71,14 @@ pub fn run() {
             drive_commands::drive_sign_in,
             drive_commands::drive_complete_sign_in,
             drive_commands::drive_sign_out,
+            background::background_settings,
+            background::set_background_settings,
+            background::quit_app,
         ])
         .setup(|app| {
+            // First: whether the window shows at all, before anything slower can keep it from showing.
+            background::setup(app.handle());
+
             // Make sure the per-user data directory exists before the first autosave.
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;

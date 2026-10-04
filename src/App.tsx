@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react';
 import { DocumentApp } from './document/components/DocumentApp';
 import { useOpenWith } from './desktop/useOpenWith';
+import { useBackgroundLife } from './desktop/background';
 import { useFileDropGuard } from './desktop/useFileDrop';
 import { LibraryView } from './library/LibraryView';
 import { useRouteStore } from './library/routeStore';
@@ -33,6 +34,7 @@ export default function App() {
   // A file opened from elsewhere while this app was already running. Mounted
   // above the router because it may need to switch views to show the result.
   useOpenWith();
+  useBackgroundLife();
   // Above the router for a blunter reason: a file dropped on any part of the
   // window the app does not handle would otherwise navigate the webview to it,
   // replacing the app and losing whatever was unsaved.

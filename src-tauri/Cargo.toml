@@ -17,7 +17,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 # Opens the *system* browser for the OAuth consent screen. RFC 8252 forbids
@@ -34,6 +34,14 @@ notex-http = { path = "notex-http", optional = true }
 # 32 bytes for a PKCE verifier and an OAuth state. Already in the tree (uuid
 # pulls it), so this is a name for something that is compiled either way.
 getrandom = "0.3"
+
+# The desktop's background life: one instance (a second launch brings the first forward, with the file it was
+# asked to open), opening at login, and the tray icon it lives in meanwhile (`tray-icon` above).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Held to the last releases built for Tauri 2.11: later ones need Tauri 2.12, and the Tauri CLI refuses to build
+# when the `tauri` crate and `@tauri-apps/api` are on different minor versions — move them all together.
+tauri-plugin-single-instance = "~2.4.5"
+tauri-plugin-autostart = "~2.5.1"
 
 # Windows' own handwriting recogniser (WinRT), for searching handwriting. The
 # versions are the ones Tauri already builds, so nothing is compiled twice.

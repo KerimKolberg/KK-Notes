@@ -3538,6 +3538,93 @@ if (!(await isListening(PORT))) {
 }
 
 /**
+ * Starting with Windows and the tray, with the shell faked: the settings show the section only where the shell has it,
+ * each switch sends the settings it should ("in the tray" only once "open when Windows starts" is on), and the tray's
+ * Quit keeps unsaved work in the draft before it asks the shell to quit.
+ */
+async function checkBackgroundSettings(browser) {
+  console.log('starting with Windows and the tray, 1280x800 (desktop shell faked):');
+  const seedCtx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const seedPage = await seedCtx.newPage();
+  await openDocument(seedPage);
+  const blank = await seedPage.evaluate(() => localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('notes.library.doc.'))));
+  await seedCtx.close();
+  const contents = blank;
+
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  await ctx.addInitScript(({ contents }) => {
+    const PATH = '/lib/Tray.notex';
+    window.__calls = [];
+    window.__callbacks = {};
+    window.__listeners = [];
+    let next = 1;
+    let status = { supported: true, openAtLogin: false, startInTray: false, closeToTray: false };
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+    window.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } },
+      transformCallback: (cb) => {
+        const id = next++;
+        window.__callbacks[id] = cb;
+        return id;
+      },
+      unregisterCallback: () => {},
+      invoke: async (cmd, args) => {
+        window.__calls.push({ cmd, args: cmd === 'save_draft' ? null : args });
+        switch (cmd) {
+          case 'background_settings': return status;
+          case 'set_background_settings': status = { supported: true, ...args.settings }; return status;
+          case 'plugin:event|listen': window.__listeners.push({ event: args.event, handler: args.handler }); return next++;
+          case 'list_library': return { path: '/lib', relativePath: '', parentPath: null, entries: [] };
+          case 'create_library_document': return PATH;
+          case 'open_document': return { path: PATH, contents, info: { path: PATH, bytes: contents.length, modifiedMs: 1 } };
+          case 'ink_recognizers': return { names: [] };
+          case 'sync_status':
+          case 'sync_now': return { phase: 'offline', provider: 'Not connected', pending: 0, conflicts: [], lastSyncedMs: 0, message: null };
+          case 'list_recent': return [];
+          default: return null;
+        }
+      },
+    };
+    window.__emit = (event) => {
+      for (const l of window.__listeners.filter((x) => x.event === event)) window.__callbacks[l.handler]?.({ event, id: 1, payload: null });
+    };
+  }, { contents });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-palette-settings-trigger]', { timeout: 10_000 });
+  const sets = () => page.evaluate(() => window.__calls.filter((c) => c.cmd === 'set_background_settings').map((c) => c.args.settings));
+
+  await page.click('[data-palette-settings-trigger]');
+  const shown = await page.waitForSelector('[data-open-at-login]', { timeout: 5_000 }).then(() => true, () => false);
+  check('the settings offer starting with Windows and the tray', shown);
+  check('"in the tray" waits for "open when Windows starts"', await page.$eval('[data-start-in-tray]', (e) => e.disabled));
+  await page.click('[data-open-at-login]');
+  await page.waitForFunction(() => window.__calls.some((c) => c.cmd === 'set_background_settings'), null, { timeout: 3_000 }).catch(() => {});
+  check('turning it on asks the shell to open at login', JSON.stringify((await sets())[0]) === JSON.stringify({ openAtLogin: true, startInTray: false, closeToTray: false }), JSON.stringify(await sets()));
+  await page.waitForFunction(() => !document.querySelector('[data-start-in-tray]').disabled, null, { timeout: 3_000 }).catch(() => {});
+  await page.click('[data-start-in-tray]');
+  await page.waitForFunction(() => window.__calls.filter((c) => c.cmd === 'set_background_settings').length === 2, null, { timeout: 3_000 }).catch(() => {});
+  check('and then to start in the tray', (await sets())[1]?.startInTray === true && (await sets())[1]?.openAtLogin === true, JSON.stringify(await sets()));
+  await page.click('[data-close-to-tray]');
+  await page.waitForFunction(() => window.__calls.filter((c) => c.cmd === 'set_background_settings').length === 3, null, { timeout: 3_000 }).catch(() => {});
+  check('"keep running in the tray" is its own switch', JSON.stringify((await sets())[2]) === JSON.stringify({ openAtLogin: true, startInTray: true, closeToTray: true }), JSON.stringify(await sets()));
+  await page.keyboard.press('Escape');
+
+  // The tray's Quit, with a change not yet saved.
+  await page.fill('[data-title]', 'Changed before quitting');
+  const listening = await page.waitForFunction(() => window.__listeners.some((l) => l.event === 'notex-quit-requested'), null, { timeout: 5_000 }).then(() => true, () => false);
+  check('the page listens for the tray\'s Quit', listening);
+  await page.evaluate(() => window.__emit('notex-quit-requested'));
+  await page.waitForFunction(() => window.__calls.some((c) => c.cmd === 'quit_app'), null, { timeout: 5_000 }).catch(() => {});
+  const order = await page.evaluate(() => window.__calls.map((c) => c.cmd).filter((c) => c === 'save_draft' || c === 'quit_app'));
+  check('Quit keeps unsaved work in the draft, then quits', JSON.stringify(order.slice(-2)) === JSON.stringify(['save_draft', 'quit_app']), JSON.stringify(order));
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * A touchpad pinch reaches the page as Ctrl + wheel events, not touches: it zooms the note about the pointer —
  * previewed while the fingers move, committed when they stop, with the page point under the pointer kept where it
  * was — and draws nothing. Ctrl + a mouse wheel notch zooms by a sensible step; a plain wheel still scrolls. The
@@ -3608,6 +3695,7 @@ async function checkTouchpadPinch(browser) {
   await page.click('[data-palette-settings-trigger]');
   await page.waitForSelector('[data-zoom-pinch-speed]', { timeout: 5_000 });
   check('the settings have zoom settings', (await page.$('[data-zoom-pinch-threshold]')) !== null && (await page.$('[data-zoom-step]')) !== null);
+  check('and, in a browser, nothing about starting with Windows', (await page.$('[data-open-at-login]')) === null);
   await setSlider('[data-zoom-pinch-speed]', 2);
   await setSlider('[data-zoom-step]', 25);
   await page.keyboard.press('Escape');
@@ -3916,6 +4004,7 @@ try {
     checkAudioRecording,
     checkSaveAsBytes,
     checkTouchpadPinch,
+    checkBackgroundSettings,
   ];
   for (const run of checks) {
     if (only.length > 0 && !only.some((o) => run.name.toLowerCase().includes(o.toLowerCase()))) continue;

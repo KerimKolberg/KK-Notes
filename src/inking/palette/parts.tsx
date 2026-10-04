@@ -7,6 +7,7 @@ import { Tooltip } from '../../ui/Tooltip';
 import { Row, Switch } from '../../ui/SettingsRow';
 import { HandwritingSettings } from '../../handwriting/HandwritingSettings';
 import { ZoomSettings } from '../../document/components/ZoomSettings';
+import { BackgroundSettings } from '../../desktop/BackgroundSettings';
 import {
   AXIS_LABEL_PRESETS,
   COLOR_PALETTE,
@@ -1475,6 +1476,7 @@ export function PaletteSettings({
         fullscreen. Off by default; if pages go dark, switch it back off.
       </p>
       <ZoomSettings />
+      <BackgroundSettings />
       <HandwritingSettings />
       <Row label="Diagnostics">
         <Switch checked={settings.debugMode} onChange={(v) => onSettingsChange({ debugMode: v })}>

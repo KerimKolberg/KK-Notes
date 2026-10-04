@@ -16,6 +16,7 @@ import type { Document, Recording, RecordingMark } from '../document/types';
 import { createStrokeId } from '../inking/engine/ids';
 import type { Stroke } from '../inking/types';
 import { closePlayer } from './player';
+import { closesToTray, prepareToQuit } from '../desktop/background';
 import { errorMessage } from '../lib/errors';
 
 export type RecorderStatus = 'idle' | 'starting' | 'recording' | 'stopping';
@@ -354,22 +355,24 @@ async function saveIntoFile(recording: Recording, released: Released, path: stri
   }
 }
 
-/** On the desktop, closing the window while recording saves the recording first. */
+/** On the desktop, closing the window while recording saves the recording first (unless it only goes to the tray). */
 async function guardWindowClose(): Promise<() => void> {
   if (!isTauri()) return () => {};
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
     const win = getCurrentWindow();
     return await win.onCloseRequested(async (event) => {
+      // Kept running in the tray: the shell hides the window, and the recording goes on. (Not prevented here, the
+      // close would be finished by destroying the window, the tray or not.)
+      if (closesToTray()) {
+        event.preventDefault();
+        return;
+      }
       if (!session) return;
       event.preventDefault();
-      await stopRecording();
-      // A note with no file yet keeps it in the draft, which the next start opens.
-      const state = useDocumentStore.getState();
-      if (selectIsDirty(state)) {
-        const { saveDraft } = await import('../desktop/fileService');
-        await saveDraft(state.document).catch(() => {});
-      }
+      // Otherwise it is finished and put in its note first; a note with no file yet keeps it in the draft, which
+      // the next start opens.
+      await prepareToQuit();
       await win.destroy();
     });
   } catch {
