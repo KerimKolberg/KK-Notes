@@ -9,19 +9,18 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::data_dir::{HISTORY_DIR, RECENT_FILE};
 use notes_sync::{history, is_content_uri};
 use serde::{Deserialize, Serialize};
 use tauri::{
     ipc::{InvokeBody, Request},
-    AppHandle, Manager, State,
+    AppHandle, State,
 };
 
 pub const NOTEX_EXTENSION: &str = "notex";
 const MAX_RECENT: usize = 5;
 const DRAFT_DIR: &str = "drafts";
-const HISTORY_DIR: &str = "history";
 const DRAFT_FILE: &str = "autosave.notex";
-const RECENT_FILE: &str = "recent.json";
 /// Refuse to read documents larger than this (bytes) to keep the UI responsive.
 const MAX_DOCUMENT_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -131,10 +130,7 @@ fn read_document_file(path: &Path) -> Result<OpenedDocument, String> {
 }
 
 fn app_data_path(app: &AppHandle, parts: &[&str]) -> Result<PathBuf, String> {
-    let mut path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("No application data directory: {e}"))?;
+    let mut path = crate::data_dir::get(app)?;
     for part in parts {
         path.push(part);
     }

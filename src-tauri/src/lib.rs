@@ -15,6 +15,7 @@
 
 mod background;
 mod commands;
+mod data_dir;
 mod drive_commands;
 mod handwriting;
 mod library_commands;
@@ -74,13 +75,18 @@ pub fn run() {
             background::background_settings,
             background::set_background_settings,
             background::quit_app,
+            data_dir::library_moved,
         ])
         .setup(|app| {
-            // First: whether the window shows at all, before anything slower can keep it from showing.
+            // Before anything reads or writes the app's folders, or the window's web view opens its own.
+            data_dir::setup(app.handle());
+            #[cfg(windows)]
+            data_dir::create_main_window(app.handle())?;
+            // Then whether the window shows at all, before anything slower can keep it from showing.
             background::setup(app.handle());
 
             // Make sure the per-user data directory exists before the first autosave.
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = data_dir::get(app.handle()).map_err(std::io::Error::other)?;
             std::fs::create_dir_all(&data_dir)?;
 
             // The library, its persisted sync records and the watcher over it.

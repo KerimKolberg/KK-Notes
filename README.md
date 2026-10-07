@@ -92,7 +92,25 @@ blob URLs and the IPC origin; `.notex` registered as a file association.
 On Windows `src-tauri/tauri.windows.conf.json` repeats the window with `visible: false`
 (a platform file replaces the `windows` array rather than merging into it, so the whole entry
 is there), so a start in the tray never flashes the window up; `setup` shows and maximizes it
-otherwise. `src-tauri/capabilities/default.json` grants `dialog:default`, `fs:default`
+otherwise. It also says `create: false` — `setup` builds the window itself, to give its web
+view a data folder of the app's choosing (below) — names the program `KK-Notes.exe`
+(`mainBinaryName`; it was `notes-taking-app.exe`, which the installer removes when it updates
+over it), and adds an uninstaller hook (`src-tauri/windows/hooks.nsh`).
+
+**Folders named like the app** (`src-tauri/src/data_dir.rs`). Tauri names an app's folders after
+its bundle identifier, so on Windows the notes lived in `%APPDATA%\com.notex.app`. They are in
+`%APPDATA%\KK-Notes` now — the library, drafts, version history, settings and the Drive account
+— and the web view's own data (the page's storage: preferences, favourites, the passcode) in
+`%LOCALAPPDATA%\KK-Notes\EBWebView`, beside the program. The first start of this version moves
+both; three things that remembered absolute paths follow (`notes-sync/src/relocate.rs`): the
+recent-documents list, each library note's version history (its folder is named by a hash of the
+note's path), and the favourites and tags the page keeps by path (`library/libraryMove.ts`, told
+the old and new library folders by `library_moved`). A folder an older copy still running holds
+open is used where it is and moved on the next start. *Delete the application data* in the
+uninstaller removes the new folders too. Android keeps `com.notex.app`: there it is the package
+name — the app itself, which its Google sign-in is registered to — and its folders are private.
+The login entry for *Open when Windows starts* is written again at every start, so it names the
+program as it is now called. `src-tauri/capabilities/default.json` grants `dialog:default`, `fs:default`
 with read/write scope under `$APPDATA`, and the window permissions used for
 fullscreen, maximize and title updates.
 
@@ -103,11 +121,12 @@ rename writes:
 | --- | --- |
 | `save_document` / `open_document(path)` | `.notex` JSON on disk; saved from the raw IPC body (the file's UTF-8 bytes), destination in the percent-encoded `x-path` header |
 | `write_binary_file` | raw IPC body → file (PDF export lands on disk without a blob download); destination in the percent-encoded `x-path` header |
-| `save_draft` / `load_draft` / `clear_draft` | autosave in `app_data_dir/drafts/autosave.notex`; the draft is the raw IPC body too |
-| `list_recent` / `add_recent` / `remove_recent` | last five documents in `app_data_dir/recent.json`, de-duplicated, pruned when files vanish |
+| `save_draft` / `load_draft` / `clear_draft` | autosave in `<data folder>/drafts/autosave.notex`; the draft is the raw IPC body too |
+| `list_recent` / `add_recent` / `remove_recent` | last five documents in `<data folder>/recent.json`, de-duplicated, pruned when files vanish |
 | `get_startup_file` | the `.notex` passed on the command line (file association), handed out once |
-| `background_settings` / `set_background_settings` | opening when Windows starts, starting in the tray, closing to the tray (`app_data_dir/background.json`); `supported: false` on Android |
+| `background_settings` / `set_background_settings` | opening when Windows starts, starting in the tray, closing to the tray (`<data folder>/background.json`); `supported: false` on Android |
 | `quit_app` | the page's answer to the tray's Quit, once it has saved |
+| `library_moved` | the library's old and new folders after the data folder was renamed, so the page's favourites and tags follow |
 
 **`.notex` format** (`src/desktop/notex.ts`). A versioned envelope
 `{ format: 'notex', version: 1, savedAt, app, document }` around the document
@@ -178,7 +197,7 @@ starts* registers the app with the autostart plugin (a `Run` entry), launched wi
 so a login start can be told from one the user made; *…in the tray, without a window* (which
 waits for the first) makes that start show only the tray icon; *Keep running in the tray when
 closed* turns closing the window into hiding it. They are kept by the shell in
-`app_data_dir/background.json`, not with the preferences, because the shell needs them before the
+`background.json` in its data folder, not with the preferences, because the shell needs them before the
 page has loaded; the first switch is read back from Windows' own login entry, not from the
 file, so it shows what Windows will actually do. The tray icon is there
 while either tray setting is on: a click opens the window (maximized, the first time), and its
@@ -2684,9 +2703,12 @@ Two details exist because they fail *silently* otherwise, and both are pinned
 by tests:
 
 - **The Android adaptive foreground leaves the folio body out** and is drawn at
-  72/108 of the tile. The launcher paints the background layer (the same navy,
-  from `colors.xml`) and masks the edges to whatever shape it likes, so a
-  circular mask crops navy rather than the monogram. The `<monochrome>` layer
+  58/108 of the tile. The launcher paints the background layer (the same navy,
+  from `colors.xml`) and masks the edges to whatever shape it likes — on most
+  phones a circle 72 dp across, which cut the page's corners off when the mark
+  filled the whole 72 dp square (its corners reached 40.8 dp from the centre).
+  Now every pixel is inside the 66 dp *safe zone* that no mask crops (32.9 dp),
+  and the test renders the foreground and checks exactly that, pixel by pixel. The `<monochrome>` layer
   is deliberately absent: a themed icon is drawn from the foreground's *alpha*
   alone, and this foreground is a filled page, so as a silhouette it would be
   a featureless rounded rectangle.

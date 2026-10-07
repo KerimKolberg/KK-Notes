@@ -19,6 +19,7 @@ pub mod loopback;
 pub mod manager;
 pub mod oauth;
 pub mod provider;
+pub mod relocate;
 pub mod text;
 pub mod thumb;
 

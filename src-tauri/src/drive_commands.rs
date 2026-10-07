@@ -164,6 +164,12 @@ fn describe(tokens: Option<&TokenSet>) -> DriveAccountInfo {
 // Token storage
 // ---------------------------------------------------------------------------
 
+/// The token store, in the app's data folder (an absolute path: the store plugin would otherwise put it in the
+/// folder Tauri names after the bundle identifier, which on Windows is not where the app keeps its data).
+fn store_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    crate::data_dir::get(app).ok().map(|dir| dir.join(STORE_FILE))
+}
+
 /// Read the stored token set.
 ///
 /// A store that will not open, or holds something from an older shape, is
@@ -171,14 +177,15 @@ fn describe(tokens: Option<&TokenSet>) -> DriveAccountInfo {
 /// start because a cache is unreadable would be far worse.
 fn load_tokens(app: &AppHandle) -> Option<TokenSet> {
     use tauri_plugin_store::StoreExt;
-    let store = app.store(STORE_FILE).ok()?;
+    let store = app.store(store_path(app)?).ok()?;
     let value = store.get(TOKENS_KEY)?;
     serde_json::from_value::<TokenSet>(value).ok()
 }
 
 fn save_tokens(app: &AppHandle, tokens: Option<&TokenSet>) {
     use tauri_plugin_store::StoreExt;
-    let Ok(store) = app.store(STORE_FILE) else { return };
+    let Some(path) = store_path(app) else { return };
+    let Ok(store) = app.store(path) else { return };
     match tokens {
         Some(tokens) => {
             if let Ok(value) = serde_json::to_value(tokens) {

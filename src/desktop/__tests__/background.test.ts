@@ -64,8 +64,11 @@ describe('the Windows window config', () => {
     const windows = JSON.parse(windowsConfig).app.windows;
     expect(windows).toHaveLength(main.length);
     expect(windows[0].visible).toBe(false);
-    const { visible: _visible, ...rest } = windows[0];
+    // Made in `setup` instead, so its web view keeps its data in the folder named like the app (`data_dir.rs`).
+    expect(windows[0].create).toBe(false);
+    const { visible: _visible, create: _create, ...rest } = windows[0];
     void _visible;
+    void _create;
     expect(rest).toEqual(main[0]);
   });
 });

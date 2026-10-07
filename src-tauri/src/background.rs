@@ -107,7 +107,7 @@ pub fn file_argument(args: &[String], cwd: &str) -> Option<String> {
 }
 
 fn settings_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|dir| dir.join(SETTINGS_FILE))
+    crate::data_dir::get(app).ok().map(|dir| dir.join(SETTINGS_FILE))
 }
 
 fn load(app: &AppHandle) -> BackgroundSettings {
@@ -205,6 +205,11 @@ mod desktop {
     }
 
     pub fn start(app: &AppHandle, settings: &BackgroundSettings, at_login: bool) {
+        // The login entry names the program it starts; write it again, so it is this one — the program was
+        // renamed (`notes-taking-app.exe` to `KK-Notes.exe`), and an installer can put it somewhere else.
+        if login_enabled(app).unwrap_or(false) {
+            let _ = set_login(app, true);
+        }
         let in_tray = at_login && settings.open_at_login && settings.start_in_tray;
         if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
             if in_tray {

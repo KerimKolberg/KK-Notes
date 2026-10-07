@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { resolveBootTarget } from '../desktop/boot';
+import { followLibraryMove } from './libraryMove';
 import { useRouteStore } from './routeStore';
 
 /**
@@ -13,6 +14,7 @@ export function useBoot(): boolean {
 
   useEffect(() => {
     let cancelled = false;
+    void followLibraryMove();
     void resolveBootTarget().then((target) => {
       if (cancelled) return;
       if (target.view === 'document') useRouteStore.getState().openDocument(target.path);

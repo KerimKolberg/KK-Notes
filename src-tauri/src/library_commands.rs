@@ -18,13 +18,12 @@ use notes_sync::{
     thumb::{self, ThumbnailSource},
     ConflictResolution, LibraryListing,
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::atomic_write;
 
 /// The library lives beside the drafts and the recents list, so a fresh
 /// install has somewhere to put documents without asking first.
-const LIBRARY_DIR: &str = "library";
 const SYNC_STATE_FILE: &str = "sync-state.json";
 /// Emitted whenever a pass finishes, so the status pill follows along without
 /// the frontend polling for it.
@@ -47,11 +46,7 @@ impl Library {
 
 /// Where documents live: `<app data>/library`.
 pub fn library_root(app: &AppHandle) -> Result<PathBuf, String> {
-    let root = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("No application data directory: {e}"))?
-        .join(LIBRARY_DIR);
+    let root = crate::data_dir::get(app)?.join(crate::data_dir::LIBRARY_DIR);
     fs::create_dir_all(&root).map_err(|e| format!("Cannot create {}: {e}", root.display()))?;
     Ok(root)
 }
@@ -175,11 +170,7 @@ pub fn read_document_text(library: State<'_, Library>, path: String) -> Result<D
 // ---------------------------------------------------------------------------
 
 fn sync_state_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("No application data directory: {e}"))?
-        .join(SYNC_STATE_FILE))
+    Ok(crate::data_dir::get(app)?.join(SYNC_STATE_FILE))
 }
 
 /// Load the per-file base hashes recorded by earlier runs.
@@ -272,7 +263,7 @@ mod tests {
     fn the_library_root_sits_under_the_app_data_directory() {
         // The command layer only ever joins; the guard against escaping lives
         // in `notes-sync` and is tested there against real directories.
-        let root = Path::new("/data/app").join(LIBRARY_DIR);
+        let root = Path::new("/data/app").join(crate::data_dir::LIBRARY_DIR);
         assert!(root.ends_with("library"));
     }
 }
