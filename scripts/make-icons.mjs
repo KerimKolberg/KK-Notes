@@ -251,8 +251,9 @@ function sampling(size) {
  * Paint the shapes and box-filter down to `size`.
  *
  * `scale`/`offset` place the mark inside the tile: an Android adaptive
- * foreground draws at 108 dp for a 72 dp visible area, so its mark is shrunk
- * into the middle and the launcher's mask only ever crops empty space.
+ * foreground draws at 108 dp and masks to a circle at most 72 dp across, so its
+ * mark is shrunk into the middle and the launcher's mask only ever crops empty
+ * space ({@link ADAPTIVE_SCALE}).
  */
 export function rasterize(size, shapes, { scale = 1, offset = 0 } = {}) {
   const ss = sampling(size);
@@ -429,12 +430,18 @@ const DENSITIES = [
 ];
 
 /**
- * The visible fraction of an Android adaptive icon: the foreground is drawn at
- * 108 dp and the launcher shows the middle 72 dp, masked to whatever shape it
- * prefers. Drawing the mark at that scale means a circular mask crops navy,
- * never the monogram.
+ * How large the mark is drawn on an Android adaptive foreground.
+ *
+ * The foreground is 108 dp and the launcher shows the middle 72 dp, masked to
+ * whatever shape it prefers — on most phones a circle 72 dp across, which cuts
+ * the corners off anything that fills the 72 dp square (the mark used to, and
+ * its page lost its corners). The one area no mask crops is the *safe zone*, a
+ * circle 66 dp across; the splash screen on Android 12+ masks to about the same.
+ * At 58/108 the mark's farthest corner is 32.8 dp from the centre, inside it.
  */
-export const ADAPTIVE_SCALE = 72 / 108;
+export const ADAPTIVE_SCALE = 58 / 108;
+/** The safe zone's radius as a fraction of the foreground tile: 33 dp of 108. */
+export const ADAPTIVE_SAFE_RADIUS = 33 / 108;
 export const ADAPTIVE_OFFSET = (1 - ADAPTIVE_SCALE) / 2;
 
 function writeAndroidIcons(full, foreground) {

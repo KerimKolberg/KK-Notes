@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 // writes anything unless run as a script.
 import {
   ADAPTIVE_OFFSET,
+  ADAPTIVE_SAFE_RADIUS,
   ADAPTIVE_SCALE,
   MARK,
   PALETTE,
@@ -120,15 +121,25 @@ describe('the mark', () => {
   });
 
   it('fits inside the Android adaptive safe zone once scaled', () => {
-    // The launcher draws the foreground at 108 dp and shows the middle 72 dp,
-    // masked to a circle on some devices. Anything outside that is cropped,
-    // and it is cropped on a stranger's phone rather than here.
-    const foreground = bounds(shapes({ body: false }));
-    const place = (v: number): number => v * ADAPTIVE_SCALE + ADAPTIVE_OFFSET;
-    for (const edge of [place(foreground.minX), place(foreground.maxX), place(foreground.minY), place(foreground.maxY)]) {
-      expect(edge).toBeGreaterThanOrEqual(ADAPTIVE_OFFSET - 1e-9);
-      expect(edge).toBeLessThanOrEqual(1 - ADAPTIVE_OFFSET + 1e-9);
+    // The launcher draws the foreground at 108 dp and masks it — on most phones
+    // to a circle 72 dp across, which crops the corners of anything filling the
+    // 72 dp square. Only the safe zone, a circle 66 dp across, is never cropped,
+    // so every painted pixel has to be inside it. It is cropped on a stranger's
+    // phone rather than here otherwise; the page's corners were.
+    const size = 432;
+    const buffer = render(size, shapes({ body: false }), { scale: ADAPTIVE_SCALE, offset: ADAPTIVE_OFFSET });
+    const centre = size / 2;
+    let farthest = 0;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        if (buffer[(y * size + x) * 4 + 3] === 0) continue;
+        farthest = Math.max(farthest, Math.hypot(x + 0.5 - centre, y + 0.5 - centre));
+      }
     }
+    // Within the safe radius, give or take the half pixel an antialiased edge reaches.
+    expect(farthest).toBeLessThanOrEqual(ADAPTIVE_SAFE_RADIUS * size + 0.75);
+    // …and not so small that the launcher shows a dot: it still reaches most of the way.
+    expect(farthest).toBeGreaterThan(ADAPTIVE_SAFE_RADIUS * size * 0.9);
   });
 
   it('leaves the folio out of the adaptive foreground', () => {
