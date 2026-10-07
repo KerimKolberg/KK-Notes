@@ -48,6 +48,19 @@ body {
   }
 }
 
+/*
+ * No pen handwriting into the note's text fields. Windows turns pen writing in a text field into typed text
+ * (Edge's "handwriting to text", which the app's web view has), and it takes a stroke that only *starts near* a
+ * field as writing in it: a line drawn at the top of a page came out as letters in the note's title. A field
+ * that allows no touch action takes no handwriting; a tap, a finger and the keyboard work in it as before.
+ * A note's or a table's fields on the page are out of the pen's way already (the media layer takes no pointer
+ * while the pen is out), and typed text there (`.rt`) keeps handwriting: with the select tool, writing into a
+ * text box is typing.
+ */
+[data-document-view] input {
+  touch-action: none;
+}
+
 /* Snipping: a crosshair over every page while it is on, the page a snip is being carried over, and the tab it rests on. */
 html[data-snipping] [data-page-index],
 html[data-snipping] [data-page-index] *,

@@ -2189,6 +2189,12 @@ left off. The grab strip above it is measured in screen px (`textGrabStrip`), so
 at any zoom, and its other actions — lock, front, back, delete — are in the format bar, which never covers the
 box the way a toolbar floating over it near the top of a page did.
 
+**No pen handwriting in the note's fields.** Windows turns pen writing in a text field into typed text (Edge's
+*handwriting to text*, which the app's web view has), and takes a stroke that only starts *near* a field as
+writing in it: a line drawn at the top of a page came out as letters in the note's title. The note view's inputs
+allow no touch action (`index.css`), which takes them out of it; a tap, a finger and the keyboard work in them
+as before. Typed text on the page keeps it.
+
 ## Tools
 
 | Tool | Gesture | Output |
@@ -2884,7 +2890,7 @@ hit-testing can answer:
   item ends the list and `[] ` starts a checklist; the bar counts the words, and a selection as "1 of 10"; its
   buttons format the selection and leave the caret in the text; Ctrl+Z takes back a burst of typing as one;
   Ctrl+Shift+G shows the note's count and Ctrl+/ the shortcuts; with the box only selected, a format applies to
-  all of it.
+  all of it; the note's title takes no pen handwriting.
 - **typing on the page**: a new typed document has the caret on its page; text that does not fit goes on to a
   new page, a paragraph split where its lines break, with the caret; Ctrl+Enter starts a page and Backspace at
   its top takes it away, the text coming back; Undo puts it back; the word count is all the pages' text.

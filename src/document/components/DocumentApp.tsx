@@ -380,7 +380,7 @@ export function DocumentApp() {
   }, []);
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100" data-document-view>
       <TopBar />
       {tabCount >= 2 && (
         <Suspense fallback={null}>

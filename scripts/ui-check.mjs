@@ -3541,7 +3541,7 @@ if (!(await isListening(PORT))) {
  * Typing like a word processor: a new text box takes the keyboard straight away; Word's and Docs' shortcuts
  * format what is typed (bold, italic, subscript, headings, lists, a checklist from "[] "); the format bar acts on
  * a selection; Undo takes a burst of typing back as one; the word count, the count dialog and the shortcuts
- * sheet answer their keys.
+ * sheet answer their keys; and the note's title takes no pen handwriting.
  */
 async function checkTyping(browser) {
   console.log('typing in a text box, 1280x800:');
@@ -3550,6 +3550,7 @@ async function checkTyping(browser) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await openDocument(page);
+  check('the title takes no pen handwriting', (await page.$eval('[data-title]', (e) => getComputedStyle(e).touchAction)) === 'none');
   await page.click('[data-insert-trigger]');
   await page.click('[data-insert-text]');
   await page.waitForSelector('[data-text-content]', { timeout: 10_000 });
