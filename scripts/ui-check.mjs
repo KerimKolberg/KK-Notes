@@ -1285,12 +1285,12 @@ async function checkLasso(browser) {
 }
 
 /**
- * The floating toolbar over a text box. It wraps to two or three rows, and anchored by
- * its top (as it was) it grew down over the text it was formatting; near the top of
- * the page it has to go underneath, and it can be pulled aside by its grip.
+ * The floating toolbar over a placed object (a sticky note; a text box's controls are in the format bar). It
+ * wraps to two or three rows, and anchored by its top (as it was) it grew down over the object it was for; near
+ * the top of the page it has to go underneath, and it can be pulled aside by its grip.
  */
 async function checkTextToolbar(browser) {
-  console.log('text box toolbar, 1280x800:');
+  console.log('floating toolbar over a note, 1280x800:');
   const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
   const page = await ctx.newPage();
   const errors = [];
@@ -1298,23 +1298,22 @@ async function checkTextToolbar(browser) {
   await openDocument(page);
   await page.waitForSelector('[data-insert-trigger]', { timeout: 10_000 });
   await page.click('[data-insert-trigger]');
-  await page.click('[data-insert-text]');
-  await page.waitForSelector('[data-text-content]');
-  await page.type('[data-text-content]', 'Hello there');
+  await page.click('[data-insert-note]');
+  await page.waitForSelector('[data-media-toolbar]');
   const rects = () =>
     page.evaluate(() => {
       const r = (el) => { const b = el.getBoundingClientRect(); return { t: b.top, b: b.bottom, l: b.left, r: b.right }; };
       const tb = document.querySelector('[data-media-toolbar]');
-      return { toolbar: r(tb), placement: tb.getAttribute('data-media-toolbar-placement'), box: r(document.querySelector('[data-media-kind="text"]')), page: r(document.querySelector('[data-page-index="0"]')) };
+      return { toolbar: r(tb), placement: tb.getAttribute('data-media-toolbar-placement'), box: r(document.querySelector('[data-media-kind="note"]')), page: r(document.querySelector('[data-page-index="0"]')) };
     });
   const overlaps = (a, b) => a.l < b.r && a.r > b.l && a.t < b.b && a.b > b.t;
 
   const mid = await rects();
   check('in the middle of a page the toolbar stands above the box', mid.placement === 'above' && mid.toolbar.b <= mid.box.t, `${Math.round(mid.toolbar.b)} vs ${Math.round(mid.box.t)}`);
 
-  // Up to the top of the page by the strip above the box.
-  const t = await (await page.$('[data-media-kind="text"]')).boundingBox();
-  await page.mouse.move(t.x + t.width / 2, t.y - 20);
+  // Up to the top of the page by its grip.
+  const t = await (await page.$('[data-media-kind="note"]')).boundingBox();
+  await page.mouse.move(t.x + t.width / 2, t.y - 12);
   await page.mouse.down();
   await page.mouse.move(t.x + t.width / 2, 150, { steps: 10 });
   await page.mouse.up();
@@ -1875,10 +1874,11 @@ async function checkSearch(browser) {
 
   await page.fill('[data-search-input]', 'lemon');
   await page.waitForSelector('[data-search-hit]');
-  // Each result brings its own object under the selection: the note has a shape picker in its toolbar, the text box has not.
+  // Each result brings its own object under the selection: a text box's tools are the format bar, the note has
+  // a shape picker in its toolbar.
   const noteTools = "[data-media-toolbar] [data-note-shape-option]";
   await page.click('[data-search-hit][data-search-hit-kind="text"]');
-  await page.waitForSelector('[data-media-toolbar]', { timeout: 3_000 });
+  await page.waitForSelector('[data-format-bar]', { timeout: 3_000 });
   check('choosing the text box result selects the text box', (await page.$(noteTools)) === null);
   await page.click('[data-search-hit][data-search-hit-kind="note"]');
   await page.waitForSelector(noteTools, { timeout: 3_000 });
@@ -2857,7 +2857,7 @@ async function checkTextSelect(browser) {
  * overlaps or runs off the edge, and what has no room is in the More menu, which works.
  */
 async function checkTopBarNarrow(browser) {
-  for (const size of [{ width: PHONE.width, height: PHONE.height, name: 'phone', inMenu: 9 }, { width: 800, height: 1280, name: 'tablet', inMenu: 4 }]) {
+  for (const size of [{ width: PHONE.width, height: PHONE.height, name: 'phone', inMenu: 10 }, { width: 800, height: 1280, name: 'tablet', inMenu: 4 }]) {
     console.log(`the top bar on a ${size.name}, ${size.width}x${size.height}:`);
     const ctx = await browser.newContext({ viewport: { width: size.width, height: size.height }, hasTouch: true });
     const page = await ctx.newPage();
@@ -3538,6 +3538,164 @@ if (!(await isListening(PORT))) {
 }
 
 /**
+ * Typing like a word processor: a new text box takes the keyboard straight away; Word's and Docs' shortcuts
+ * format what is typed (bold, italic, subscript, headings, lists, a checklist from "[] "); the format bar acts on
+ * a selection; Undo takes a burst of typing back as one; the word count, the count dialog and the shortcuts
+ * sheet answer their keys.
+ */
+async function checkTyping(browser) {
+  console.log('typing in a text box, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.click('[data-insert-trigger]');
+  await page.click('[data-insert-text]');
+  await page.waitForSelector('[data-text-content]', { timeout: 10_000 });
+  await page.waitForFunction(() => document.activeElement?.hasAttribute('data-text-content'), null, { timeout: 5_000 }).catch(() => {});
+  check('a new text box takes the keyboard straight away', await page.evaluate(() => document.activeElement?.hasAttribute('data-text-content')));
+  check('the format bar is there', (await page.$('[data-format-bar]')) !== null);
+
+  await page.keyboard.type('# Plan');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Water is H');
+  await page.keyboard.press('Control+,');
+  await page.keyboard.type('2');
+  await page.keyboard.press('Control+,');
+  await page.keyboard.type('O and ');
+  await page.keyboard.press('Control+b');
+  await page.keyboard.type('bold');
+  await page.keyboard.press('Control+b');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('1. first');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('second');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('inner');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('[] task');
+  const dom = () =>
+    page.$eval('[data-text-content]', (el) => ({
+      blocks: [...el.children].map((p) => ({ kind: p.dataset.rtKind ?? 'p', list: p.dataset.list ?? null, marker: p.dataset.marker ?? null, text: p.textContent })),
+      bold: [...el.querySelectorAll('strong')].map((b) => b.textContent),
+      sub: [...el.querySelectorAll('sub')].map((b) => b.textContent),
+    }));
+  const typed = await dom();
+  check('"# " makes a heading', typed.blocks[0]?.kind === 'h1' && typed.blocks[0]?.text === 'Plan', JSON.stringify(typed.blocks[0]));
+  check('Ctrl+B and Ctrl+, make bold and subscript', typed.bold.includes('bold') && typed.sub.includes('2'), JSON.stringify(typed));
+  check('"1. " numbers a list, Tab makes a sub-list', JSON.stringify(typed.blocks.slice(2, 5).map((b) => b.marker)) === JSON.stringify(['1.', '2.', 'a.']), JSON.stringify(typed.blocks));
+  check('Enter on an empty item ends the list, and "[] " starts a checklist', typed.blocks[5]?.list === 'check' && typed.blocks[5]?.text === 'task', JSON.stringify(typed.blocks));
+  const words = await page.textContent('[data-word-count-button]');
+  check('the format bar counts the words', /^\s*10 words\s*$/.test(words ?? ''), words);
+
+  // The format bar on a selection: select "task" and make it italic and red.
+  await page.keyboard.press('Shift+Home');
+  await page.waitForFunction(() => /1 of 10 words/.test(document.querySelector('[data-word-count-button]')?.textContent ?? ''), null, { timeout: 2_000 }).catch(() => {});
+  check('a selection is counted as part of the whole', /1 of 10 words/.test((await page.textContent('[data-word-count-button]')) ?? ''), await page.textContent('[data-word-count-button]'));
+  await page.click('[data-format-toggle="italic"]');
+  await page.click('[data-format-color-open]');
+  await page.click('[data-format-swatch="#dc2626"]');
+  const styled = await page.$eval('[data-text-content]', (el) => {
+    const em = el.querySelector('em');
+    const red = [...el.querySelectorAll('span')].find((s) => s.style.color === 'rgb(220, 38, 38)');
+    return { em: em?.textContent, red: red?.textContent, focused: document.activeElement === el };
+  });
+  check('the format bar formats the selection', styled.em === 'task' && styled.red === 'task', JSON.stringify(styled));
+  check('and the caret stays in the text', styled.focused);
+
+  // Undo: the colour, then the italic, then the burst of typing before.
+  await page.keyboard.press('End');
+  await page.keyboard.type(' more');
+  await page.waitForTimeout(1100);
+  await page.keyboard.type(' again');
+  await page.keyboard.press('Control+z');
+  const undone = await page.$eval('[data-text-content]', (el) => el.textContent);
+  check('Ctrl+Z takes back the last burst of typing as one', undone.endsWith('task more'), undone);
+
+  // Keys for the count and the shortcuts.
+  await page.keyboard.press('Control+Shift+G');
+  const counted = await page.waitForSelector('[data-word-count]', { timeout: 3_000 }).then(() => true, () => false);
+  check('Ctrl+Shift+G shows the word count', counted);
+  if (counted) {
+    const n = await page.textContent('[data-word-count-section="note"] [data-count="Words"]');
+    check('which counts the note\'s words', n === '11', n);
+    await page.keyboard.press('Escape');
+  }
+  await page.keyboard.press('Control+/');
+  const sheet = await page.waitForSelector('[data-shortcut-sheet]', { timeout: 3_000 }).then(() => true, () => false);
+  check('Ctrl+/ lists the typing shortcuts', sheet && (await page.$$('[data-shortcut-group]')).length >= 5);
+  if (sheet) await page.keyboard.press('Escape');
+
+  // Selected but not being typed in: the format bar formats the whole box.
+  await page.keyboard.press('Escape');
+  await page.click('[data-format-toggle="underline"]');
+  const underlined = await page.$eval('[data-text-content]', (el) => [...el.querySelectorAll('u')].map((u) => u.textContent).join(''));
+  check('with the box selected, a format applies to all of it', underlined.includes('Plan') && underlined.includes('task'), underlined);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
+ * Typing on the page, as in a word processor: a new typed document has the caret in its page; text that does not
+ * fit goes on to a new page, mid-paragraph if it has to, with the caret following; Ctrl+Enter starts a page;
+ * Backspace at the top of it takes the break away and the text comes back; and Undo puts it all back.
+ */
+async function checkPageText(browser) {
+  console.log('typing on the page, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-new-typed-document]', { timeout: 20_000 });
+  await page.click('[data-new-typed-document]');
+  await page.waitForSelector('[data-text-flow] [data-text-content]', { timeout: 20_000 });
+  await page.waitForFunction(() => document.activeElement?.closest('[data-text-flow]') !== null, null, { timeout: 5_000 }).catch(() => {});
+  check('a new typed document has the caret on its page', await page.evaluate(() => document.activeElement?.closest('[data-text-flow]') !== null));
+  const state = () =>
+    page.evaluate(() => {
+      const pages = [...document.querySelectorAll('[data-page-index]')];
+      const caretPage = document.activeElement?.closest('[data-page-index]');
+      return { pages: pages.length, caretPage: caretPage ? Number(caretPage.getAttribute('data-page-index')) : -1 };
+    });
+  const paragraph = 'The quick brown fox jumps over the lazy dog and keeps on running through the field. '.repeat(3).trim();
+  for (let i = 0; i < 14; i++) {
+    await page.keyboard.insertText(paragraph);
+    await page.keyboard.press('Enter');
+  }
+  await page.keyboard.type('The end.');
+  await page.waitForTimeout(300);
+  const full = await state();
+  check('text that does not fit goes on to a new page', full.pages === 2, JSON.stringify(full));
+  check('and the caret goes with it', full.caretPage === 1, JSON.stringify(full));
+  const second = await page.$eval('[data-page-index="1"] [data-text-content]', (el) => el.firstElementChild?.textContent ?? '');
+  check('a paragraph is split between the pages where its lines break', second.length > 0 && !paragraph.startsWith(second.slice(0, 20)), second.slice(0, 40));
+
+  await page.keyboard.press('Control+Enter');
+  await page.keyboard.type('Chapter two');
+  await page.waitForTimeout(300);
+  const broken = await state();
+  check('Ctrl+Enter starts a new page', broken.pages === 3 && broken.caretPage === 2, JSON.stringify(broken));
+  await page.keyboard.press('Home');
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(300);
+  const joined = await state();
+  check('Backspace at its top takes the break away, and the text comes back', joined.pages === 2 && joined.caretPage === 1, JSON.stringify(joined));
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  check('Undo puts the page back', (await state()).pages === 3, JSON.stringify(await state()));
+  const count = await page.textContent('[data-word-count-button]');
+  // 14 paragraphs of 48 words and "The end." ("Chapter two" went with the Undo, typed in the same breath).
+  check('the word count is the whole text, every page of it', /^\s*674 words/.test(count ?? ''), count);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Starting with Windows and the tray, with the shell faked: the settings show the section only where the shell has it,
  * each switch sends the settings it should ("in the tray" only once "open when Windows starts" is on), and the tray's
  * Quit keeps unsaved work in the draft before it asks the shell to quit.
@@ -4005,6 +4163,8 @@ try {
     checkSaveAsBytes,
     checkTouchpadPinch,
     checkBackgroundSettings,
+    checkTyping,
+    checkPageText,
   ];
   for (const run of checks) {
     if (only.length > 0 && !only.some((o) => run.name.toLowerCase().includes(o.toLowerCase()))) continue;

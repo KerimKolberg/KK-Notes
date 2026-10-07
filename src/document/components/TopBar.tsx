@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
+import { showWordCount } from '../../typing/typingStore';
 import {
   AudioLines,
+  BookOpenText,
   Bookmark,
   ListTree,
   BookmarkCheck,
@@ -165,6 +167,7 @@ export function TopBar() {
           { id: 'recordings', tier: 'md', icon: AudioLines, label: 'Recordings', hint: recording ? 'not while recording' : recordingCount === 1 ? 'play it with the writing' : `${recordingCount} recordings`, active: playerOpen, disabled: recording, onClick: togglePlayer, data: { 'data-recordings-toggle': '' } },
         ] satisfies BarAction[])
       : []),
+    { id: 'word-count', tier: 'md', icon: BookOpenText, label: 'Word count', hint: 'Ctrl+Shift+G', onClick: () => showWordCount(), data: { 'data-word-count-toggle': '' } },
     { id: 'bookmarks', tier: 'lg', icon: pageBookmarked ? BookmarkCheck : Bookmark, label: 'Bookmarks', hint: pageBookmarked ? 'this page is bookmarked' : 'Ctrl+D', active: bookmarksOpen, onClick: toggleBookmarks, data: { 'data-bookmarks-toggle': '' } },
     { id: 'lock', tier: 'lg', icon: readOnly ? Lock : LockOpen, label: 'Read-only lock', hint: readOnly ? 'on' : 'off', active: readOnly, onClick: toggleReadOnly, data: { 'data-lock-toggle': '' } },
     { id: 'import', tier: 'lg', icon: FileUp, label: 'Import PDF', disabled: readOnly, onClick: () => setImportDialogOpen(true), data: { 'data-import-pdf': '' } },

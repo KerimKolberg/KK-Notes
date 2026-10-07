@@ -27,10 +27,9 @@ import {
   tableCell,
   trackEdges,
   wrapText,
-  TEXT_LINE_HEIGHT,
-  fontById,
-  textStyleOf,
 } from '../media';
+import { canvasMeasure, canvasPainter, layoutRich, paintRich } from '../richLayout';
+import { isRichEmpty, richBaseOf, richOf } from '../richText';
 import { drawTemplate } from '../templates';
 import type { ImageLayer, MediaObject, PageDimensions, PageVisual, StickyNote, TableLayer, TextBox } from '../types';
 
@@ -138,34 +137,18 @@ function drawNote(ctx: InkContext, note: StickyNote): void {
  * offsets, so a card, a page snapshot and an exported page agree.
  */
 function drawTextBox(ctx: InkContext, item: TextBox): void {
-  if (item.text === '') return;
-  const style = textStyleOf(item);
-  const family = fontById(style.fontFamily).css;
-  const weight = style.bold ? '700' : '400';
-  const slant = style.italic ? 'italic ' : '';
-  ctx.font = `${slant}${weight} ${style.fontSize}px ${family}`;
-  ctx.fillStyle = style.color;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-
-  const lineHeight = style.fontSize * TEXT_LINE_HEIGHT;
-  const measure = (t: string): number => ctx.measureText(t).width;
-  const lines = wrapText(item.text, item.width, measure);
+  const rich = richOf(item);
+  if (isRichEmpty(rich)) return;
+  const base = richBaseOf(item);
   ctx.save();
-  // The live box hides its overflow; a snapshot has no scrollbar either.
-  ctx.beginPath();
-  ctx.rect(0, 0, item.width, item.height);
-  ctx.clip();
-  const thickness = Math.max(0.5, style.fontSize * 0.06);
-  lines.forEach((line, i) => {
-    const lineWidth = measure(line);
-    const offset =
-      style.align === 'center' ? (item.width - lineWidth) / 2 : style.align === 'right' ? item.width - lineWidth : 0;
-    const baseline = lineHeight * (i + 0.8);
-    ctx.fillText(line, offset, baseline);
-    if (style.underline) ctx.fillRect(offset, baseline + style.fontSize * 0.12, lineWidth, thickness);
-    if (style.strikethrough) ctx.fillRect(offset, baseline - style.fontSize * 0.28, lineWidth, thickness);
-  });
+  // A box from before text could be formatted in parts kept its size and hid what overflowed it, and still
+  // does until it is edited; one that can be formatted grows with its text instead.
+  if (!item.rich) {
+    ctx.beginPath();
+    ctx.rect(0, 0, item.width, item.height);
+    ctx.clip();
+  }
+  paintRich(layoutRich(rich, base, item.width, canvasMeasure(ctx)), canvasPainter(ctx), base);
   ctx.restore();
 }
 

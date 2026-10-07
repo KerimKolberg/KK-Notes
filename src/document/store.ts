@@ -78,6 +78,7 @@ import type {
   PageTarget,
   PageTemplate,
   TemplateConfig,
+  TextBox,
   ViewMode,
 } from './types';
 
@@ -182,6 +183,18 @@ export interface DocumentStore {
   /** The same, as a change Undo can take back (see `structureHistory.ts`), named for the notice that says so. */
   addMediaUndoable: (pageId: string, item: MediaObject, label: string) => void;
   updateMedia: (pageId: string, mediaId: string, patch: Partial<MediaObject>) => void;
+  /**
+   * Typed text changed in a box: a step of Undo, and a burst of typing (letters typed and deleted without a pause)
+   * one step however many letters it was.
+   */
+  editText: (pageId: string, mediaId: string, patch: Partial<TextBox>, kind: TextEditKind) => void;
+  /** The same for several boxes at once — the text of every page, formatted together — as one step of Undo. */
+  editTexts: (edits: readonly TextEdit[], kind: TextEditKind) => void;
+  /**
+   * The pages after typed text has flowed from page to page (`flow.ts`): part of the edit that made it flow, so
+   * not a step of Undo of its own.
+   */
+  setFlowedPages: (pages: readonly Page[]) => void;
   removeMedia: (pageId: string, mediaId: string) => void;
   bringMediaToFront: (pageId: string, mediaId: string) => void;
   sendMediaToBack: (pageId: string, mediaId: string) => void;
@@ -280,6 +293,24 @@ function updateTargets(doc: Document, target: PageTarget, fn: (page: Page) => Pa
 /**
  * A change to the pages, with what it replaced kept for Undo. Any new change ends what could have been redone.
  */
+/** A change to one text box. */
+export interface TextEdit {
+  readonly pageId: string;
+  readonly mediaId: string;
+  readonly patch: Partial<TextBox>;
+}
+
+/** What kind of change to typed text: typing and deleting letters, a format, or a paste (or a cut, or a drop). */
+export type TextEditKind = 'type' | 'format' | 'paste';
+
+const TEXT_EDIT_LABELS: Readonly<Record<TextEditKind, string>> = { type: 'typing', format: 'formatting', paste: 'pasting' };
+
+/** A pause in typing longer than this starts a new step of Undo. */
+const TYPING_PAUSE_MS = 1000;
+
+/** The burst of typing the newest step of Undo is, to add to while it goes on. */
+let typing: { readonly mediaId: string; readonly at: number; readonly entry: StructureEntry } | null = null;
+
 function structured(s: DocumentStore, label: string, document: Document): Pick<DocumentStore, 'document' | 'structureUndo' | 'structureRedo'> {
   return {
     document,
@@ -533,6 +564,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
     const top = s.structureUndo[s.structureUndo.length - 1];
     if (top && undoesStructureFirst(top, page)) {
       const { pages, activePageIndex } = top.before;
+      typing = null;
       set({
         document: { ...doc, pages, activePageIndex: clampIndex(activePageIndex, pages.length) },
         structureUndo: s.structureUndo.slice(0, -1),
@@ -541,10 +573,10 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
           after: { pages: doc.pages, activePageIndex: doc.activePageIndex },
           restored: pages,
           depths: top.depths,
+          ...(top.text ? { text: true as const } : {}),
         }),
-        scrollRequest: s.scrollRequest + 1,
-        selectedMedia: null,
-        lassoSelection: null,
+        // Typing is undone where it was typed: no jump to the page, and the box stays selected.
+        ...(top.text ? {} : { scrollRequest: s.scrollRequest + 1, selectedMedia: null, lassoSelection: null }),
       });
       return top.label;
     }
@@ -565,6 +597,7 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
     const top = s.structureRedo[s.structureRedo.length - 1];
     if (!top || !canRedoStructure(top, doc.pages)) return null;
     const { pages, activePageIndex } = top.after;
+    typing = null;
     set({
       document: { ...doc, pages, activePageIndex: clampIndex(activePageIndex, pages.length) },
       structureRedo: s.structureRedo.slice(0, -1),
@@ -572,10 +605,9 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
         label: top.label,
         before: { pages: doc.pages, activePageIndex: doc.activePageIndex },
         depths: top.depths,
+        ...(top.text ? { text: true as const } : {}),
       }),
-      scrollRequest: s.scrollRequest + 1,
-      selectedMedia: null,
-      lassoSelection: null,
+      ...(top.text ? {} : { scrollRequest: s.scrollRequest + 1, selectedMedia: null, lassoSelection: null }),
     });
     return top.label;
   },
@@ -594,6 +626,39 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       const next = updatePageById(s.document, pageId, (page) => withMedia(page, addMediaToList(page.media, item)));
       return next === s.document ? s : structured(s, label, next);
     })),
+
+  editText: (pageId, mediaId, patch, kind) => get().editTexts([{ pageId, mediaId, patch }], kind),
+
+  editTexts: (edits, kind) =>
+    set(edit((s) => {
+      let next = s.document;
+      for (const { pageId, mediaId, patch } of edits) {
+        next = updatePageById(next, pageId, (page) => withMedia(page, updateMediaInList(page.media, mediaId, patch)));
+      }
+      if (next === s.document) return s;
+      const mediaId = edits.length === 1 ? edits[0]!.mediaId : '';
+      const now = Date.now();
+      const top = s.structureUndo[s.structureUndo.length - 1];
+      if (kind === 'type' && typing && typing.mediaId === mediaId && top === typing.entry && now - typing.at < TYPING_PAUSE_MS) {
+        typing = { ...typing, at: now };
+        return { document: next };
+      }
+      const entry: StructureEntry = {
+        label: TEXT_EDIT_LABELS[kind],
+        before: { pages: s.document.pages, activePageIndex: s.document.activePageIndex },
+        depths: depthsOf(next.pages),
+        text: true,
+      };
+      typing = kind === 'type' ? { mediaId, at: now, entry } : null;
+      return { document: next, structureUndo: pushEntry(s.structureUndo, entry), structureRedo: [] };
+    })),
+
+  setFlowedPages: (pages) =>
+    set(edit((s) =>
+      pages === s.document.pages
+        ? s
+        : { document: { ...s.document, pages, activePageIndex: clampIndex(s.document.activePageIndex, pages.length) } },
+    )),
 
   updateMedia: (pageId, mediaId, patch) =>
     set(edit((s) => ({

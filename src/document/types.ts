@@ -174,10 +174,78 @@ export interface TextStyle {
   readonly align: TextAlign;
 }
 
+/** Paragraph styles, as Word and Docs name them: normal text and three levels of heading. */
+export type RichBlockKind = 'p' | 'h1' | 'h2' | 'h3';
+export type RichList = 'bullet' | 'number' | 'check';
+export type RichAlign = TextAlign | 'justify';
+export type RichScript = 'sup' | 'sub';
+
+/** How a stretch of typed text differs from its box's own style; what is absent is the box's. */
+export interface RichMarks {
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: boolean;
+  readonly strike?: boolean;
+  /** CSS colour of the letters. */
+  readonly color?: string;
+  /** CSS colour behind them, as a highlighter would. */
+  readonly highlight?: string;
+  /** Page px. */
+  readonly size?: number;
+  readonly font?: TextFontId;
+  readonly script?: RichScript;
+}
+
+/** A stretch of text in one style. A `\n` in it is a line break within the paragraph (Shift+Enter). */
+export interface RichRun extends RichMarks {
+  readonly text: string;
+}
+
+/** A paragraph: its style, whether it is an item of a list, and its runs of text. */
+export interface RichBlock {
+  /** Absent is normal text. */
+  readonly kind?: RichBlockKind;
+  readonly list?: RichList;
+  /** How far in it is: a list's nesting level, or a paragraph's indent, in steps (0 to `MAX_INDENT`). */
+  readonly indent?: number;
+  /** A checklist item that is ticked. */
+  readonly checked?: boolean;
+  /** Absent is the box's alignment. */
+  readonly align?: RichAlign;
+  /**
+   * Page text only (`TextBox.flow`): the rest of the previous page's last paragraph, which did not fit there.
+   * It has no list marker and no space above, and it joins that paragraph again when the text flows back.
+   */
+  readonly cont?: boolean;
+  /** Page text only: the paragraph starts a new page, whatever room is left on the one before (Ctrl+Enter). */
+  readonly pageBreak?: boolean;
+  readonly runs: readonly RichRun[];
+}
+
+/** Typed text with its formatting: paragraphs, headings and lists of runs of styled text. */
+export interface RichText {
+  readonly blocks: readonly RichBlock[];
+}
+
 /** Typed text on the page: no card, no border, just the words. */
 export interface TextBox extends MediaBox, TextStyle {
   readonly kind: 'text';
+  /**
+   * The words, as plain text: one line per paragraph. Always kept, even when `rich` holds the text — it is what
+   * search reads (here and in the library, which reads files without this app's model) and what an older
+   * version of the app shows.
+   */
   readonly text: string;
+  /**
+   * The text with its formatting (`document/richText.ts`). Absent in boxes written before text could be
+   * formatted in parts: those are one style throughout, the box's, and read as such.
+   */
+  readonly rich?: RichText;
+  /**
+   * The page's own text, filling the page inside its margins and flowing on to the next page when it is full,
+   * as a word processor's does (`document/flow.ts`). At most one per page; it is not moved or resized.
+   */
+  readonly flow?: boolean;
 }
 
 export type MediaObject = ImageLayer | StickyNote | TableLayer | TextBox;

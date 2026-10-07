@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, ChevronRight, Cloud, FolderOpen, FolderPlus, Grid2x2, House, List, Plus, Search, ShieldCheck, Star, X } from 'lucide-react';
+import { ArrowUp, ChevronRight, Cloud, FileText, FolderOpen, FolderPlus, Grid2x2, House, List, Plus, Search, ShieldCheck, Star, X } from 'lucide-react';
+import { useDocumentStore } from '../document/store';
+import { useToolStore } from '../document/toolStore';
+import { typeOnPage } from '../typing/flow/engine';
 import { openDocumentFromLibrary } from './openDocument';
 import { CloudSyncPanel } from './CloudSyncPanel';
 import { ConflictDialog } from './ConflictDialog';
@@ -179,6 +182,22 @@ export function LibraryView() {
     void guard(async () => {
       const path = await createDocumentInLibrary(folder, 'Untitled note');
       await openDocumentFromLibrary(path);
+      openDocument(path);
+    });
+  }, [folder, guard, openDocument]);
+
+  /**
+   * A note to type in, like a word processor's document: a plain page with page text on it, the caret in it
+   * (`typing/flow/`). Ink still goes on it as on any note.
+   */
+  const newTypedDocument = useCallback(() => {
+    void guard(async () => {
+      const path = await createDocumentInLibrary(folder, 'Untitled document');
+      await openDocumentFromLibrary(path);
+      const store = useDocumentStore.getState();
+      store.setPageTemplate('all', 'blank');
+      useToolStore.getState().update({ tool: 'select' });
+      typeOnPage(0);
       openDocument(path);
     });
   }, [folder, guard, openDocument]);
@@ -435,6 +454,17 @@ export function LibraryView() {
         >
           <Plus size={16} aria-hidden="true" />
           New note
+        </button>
+        <button
+          type="button"
+          onClick={newTypedDocument}
+          disabled={busy}
+          data-new-typed-document
+          title="A document to type in with the keyboard, like Word: the text fills each page and goes on to the next"
+          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
+        >
+          <FileText size={16} aria-hidden="true" />
+          New typed document
         </button>
         <button
           type="button"

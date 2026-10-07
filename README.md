@@ -2069,28 +2069,113 @@ viewer hosts. `InkingCanvas` fills its parent. `ref` exposes `undo()`,
 
 Keyboard: `Ctrl/⌘+Z` undo, `Ctrl/⌘+Shift+Z` or `Ctrl+Y` redo.
 
-## Typed text (`TextBox`)
+## Typed text: text boxes and page text (`src/typing/`, `document/richText.ts`)
 
-A text box is a `textarea` positioned on the page, not text drawn onto a
-canvas — because the point of the tool is the *keyboard*. An editable field is
-what gives a caret, a selection, IME composition for non-Latin input,
-autocorrect on a phone and the system's own text handles, none of which are
-worth reimplementing and all of which are what typing into a page should feel
-like. It has no card and no border, so an empty one shows a dashed outline
-while the media layer is live and is otherwise invisible; a strip along its top
-edge is what picks it up, since a box that is all text would otherwise have no
-dead space to grab.
+Typing works as in a word processor, in two places:
 
-**The style applies to the whole box**, not to a selection inside it. That is
-a deliberate limit rather than a missing feature: PDF has no bold attribute —
-bold *is* a different font — so a box that is one style throughout resolves to
-exactly one font and round-trips perfectly. Mixed runs within a box would need
-a different data model, an editor to match, and a much harder export.
+- a **text box** (*Insert → Text box*), placed anywhere — on a PDF's page to fill it in, beside a drawing —
+  and as tall as its text;
+- **page text** (*Insert → Type on the page*, or *New typed document* in the library), which fills the page
+  inside 2 cm margins and **flows on to the next page** when it is full, a new page added at the end, the way
+  Word's body text does.
 
-**The font catalogue is closed, at three families**, because every entry has
-to be true in two worlds at once: a CSS stack the screen can render, *and* a
-base-14 name the PDF export can embed. They are declared together in one table
-so the two cannot drift.
+Both take formatting in parts — bold, italic, underline, strikethrough, superscript and subscript, a colour, a
+highlight, a size and a font for any stretch of text; a style (normal text, heading 1–3), an alignment
+(including justified), an indent, and bulleted, numbered and checklist lists for any paragraph — from the
+**format bar** docked above the pages while a box is being typed in, or from the keyboard. Ink still goes over
+all of it with the pen; the select tool is the one that types.
+
+**The model** (`richText.ts`). A box's text is a list of paragraphs (*blocks*), each a list of *runs* of text in
+one style. It is flat, as Google Docs keeps it rather than as HTML nests it: a list item is a paragraph that says
+which list it is in and how deep, a heading a paragraph that says so. That is what keeps everything after it
+simple — laying it out on a canvas and into a PDF, cutting it where a page is full and joining it again,
+counting it. A run's marks are *differences* from the box's own style, so changing the box's size changes every
+run that has none of its own. The plain words are kept beside it (`TextBox.text`), always in step: search reads
+those, here and in the library. A box written before text could be formatted in parts — one style throughout,
+in `bold`/`italic`/… on the box — is read as runs that all have it, and is stored the new way once it is edited;
+until then it keeps the size it was given and hides what overflowed it, as it did.
+
+**The editor** (`typing/editor/`) is ProseMirror, in a chunk of its own (about 66 kB gzipped) loaded the first
+time a note shows a text box; until then a box shows its text as the editor will (`richDom.ts`). The editor has
+no history of its own: the note's store is the one copy of the text, every change goes there
+(`store.editText`), and a change that comes back from the store — an Undo, text flowing in from the next page —
+replaces the editor's document with the caret kept where it was relative to the text around it. So Undo is the
+note's Undo: a burst of typing (no pause over a second) is one step, a format or a paste one step each, undone
+where it was made without a jump to the page, and text that flowed between pages comes back with the keystroke
+that moved it.
+
+**One style sheet for three renderings** (`richDom.ts`, `.rt` in `index.css`). The editor, the static view and
+the measurer that decides page breaks draw paragraphs with the same CSS — spacing in `em`, indents in
+multiples of the box's size (`--rt-base`), list markers as `::before` from `data-marker`, the checklist's box and
+tick — so they agree to the line. The canvas and PDF layout (`document/richLayout.ts`, below) follows the same
+numbers.
+
+**Keyboard** (`typing/shortcuts.ts`, the sheet behind Ctrl+/ and the format bar's keyboard button). One table
+builds both the keymap and the sheet, so the sheet cannot promise a key that does nothing:
+
+| | |
+| --- | --- |
+| Bold, italic, underline | Ctrl+B, Ctrl+I, Ctrl+U |
+| Strikethrough | Alt+Shift+5, Ctrl+Shift+X |
+| Superscript, subscript | Ctrl+. or Ctrl+Shift+=, Ctrl+, or Ctrl+= |
+| Bigger, smaller text | Ctrl+Shift+> or Ctrl+], Ctrl+Shift+< or Ctrl+[ |
+| Clear formatting | Ctrl+\\, Ctrl+Space |
+| Normal text, headings 1–3 | Ctrl+Alt+0 … Ctrl+Alt+3 |
+| Align left, centre, right, justify | Ctrl+L, Ctrl+E, Ctrl+R, Ctrl+J |
+| Indent, indent less | Ctrl+M, Ctrl+Shift+M (Tab, Shift+Tab in a list) |
+| Numbered, bulleted list, checklist | Ctrl+Shift+7, Ctrl+Shift+8 or Ctrl+Shift+L, Ctrl+Shift+9 |
+| Tick an item | Ctrl+Alt+Enter, or click its box |
+| Line break, new page | Shift+Enter, Ctrl+Enter (page text) |
+| Undo, redo | Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z |
+| Word count, shortcuts | Ctrl+Shift+G or Ctrl+Shift+C, Ctrl+/ |
+| Stop typing | Esc (the box stays selected: the format bar then formats all of it) |
+
+As you type, `- ` or `* ` starts a bulleted list, `1. ` a numbered one, `[] ` a checklist, `# `/`## `/`### ` a
+heading, `--` a dash and `...` an ellipsis, and quotes curl; Backspace straight after undoes any of them. Enter on
+an empty item ends the list (a level at a time), Backspace at the start of an item takes its marker off, Enter at
+the end of a heading starts normal text. A key the editor takes is not also the app's: Ctrl+E centres in a text
+box and exports outside one (`useDesktopIntegration` skips a key already handled).
+
+**Counting words** (`richText.countWords`, `typing/wordCount.ts`). A word is anything between spaces with a
+letter or a digit in it — a dash standing alone is not one — and each character of Chinese or Japanese, which
+put no spaces between words, as Word counts them. The format bar shows the box's words, or "12 of 340 words"
+with a selection (page text counts all its pages); *Word count* (Ctrl+Shift+G, or the top bar) gives the
+note's words, characters with and without spaces, paragraphs and pages with text, the box's and the
+selection's, and — apart — the words of handwriting the recogniser has read.
+
+**Page text flowing from page to page** (`typing/flow/`). Each page with page text has one box inside its
+margins (`TextBox.flow`: no frame, no grips, beneath anything else placed on the page). Consecutive pages with
+one make a chain, and the chain's text is one text. After each change (`engine.ts`, once a frame) it flows
+again from the page before the one changed (`paginate.ts`): each page is filled, text is pulled back from the
+page after while there is room and pushed on where there is not, a paragraph split between lines where it
+has to be — the part on the next page is its *continuation* (`cont`), with no marker and no space above, and
+joins it again when it flows back — until a page is reached that needs nothing. Past the last page a new page
+is added (like the last, in the same style); a page the text has left, with nothing else on it, goes. Where the
+text breaks is decided by the browser, not by estimating font metrics: `measure.ts` lays the paragraphs out with
+the editor's own DOM and styles in a hidden box as wide as the page's text, takes whole paragraphs by where they
+end, and finds the first character of the first line that does not fit by bisecting character positions by the
+top of their rectangles. The caret is followed through it all, so typing at the bottom of a page carries on at
+the top of the next. Backspace at the top of a page's text joins it to the page before (deleting the last
+character there, if the paragraph continues), Delete at the end the mirror; the arrows, Page Up and Page Down
+cross between pages; Ctrl+Enter marks the rest of the paragraph to start a page of its own (`pageBreak`), and
+Backspace at its start takes the mark off. Formatting with the box selected but not being typed in applies to
+the whole text, every page of it, as one step of Undo. Not crossed: a selection, and Ctrl+A, stay within one
+page's text.
+
+**On paper and in thumbnails** (`document/richLayout.ts`). A canvas and a PDF have no text layout of their own,
+so the paragraphs are laid out here — words to lines across runs of different fonts and sizes, a word in two
+styles kept together and one longer than a line broken by characters, CSS's margins collapsing between
+paragraphs, a line as tall as 1.35 × its largest text with the paragraph's own size always counted (CSS's
+strut), superscript and subscript taking no height, justified lines stretched at their spaces — and drawn
+through one painter interface, a canvas for the raster and pdf-lib for the export. Markers are drawn as shapes
+(a bullet, a ring, a square, the checklist's box and tick), not as glyphs the base-14 fonts may not have; a
+ticked item is struck through and faded, as on screen. Underline and strikethrough are drawn rules: neither
+PDF text nor canvas text has decoration. Text the base-14 fonts can set is kept — Latin-1 and the punctuation a
+phone's keyboard adds by itself (curly quotes, dashes, the ellipsis) — and anything else is a question mark.
+
+**The font catalogue is closed, at three families**, because every entry has to be true in two worlds at once:
+a CSS stack the screen can render, *and* a base-14 name the PDF export can embed. They are declared together in
+one table so the two cannot drift.
 
 | id | screen | PDF (regular / bold / italic / bold italic) |
 | --- | --- | --- |
@@ -2098,33 +2183,11 @@ so the two cannot drift.
 | `serif` | Georgia, Times | Times-Roman, `-Bold`, `-Italic`, `-BoldItalic` |
 | `mono` | ui-monospace, Menlo | Courier, `-Bold`, `-Oblique`, `-BoldOblique` |
 
-A fourth family would mean shipping a font file in the bundle for something
-that only looks right on screen. A test checks every name against pdf-lib's
-own `StandardFonts` — the first version used the enum's *key* names
-(`HelveticaBold`) rather than its values (`Helvetica-Bold`), which pdf-lib
-takes for a custom font and refuses outright for want of a fontkit instance.
-
-**Underline and strikethrough are drawn, not typeset.** Neither PDF text nor
-canvas text has a decoration property; an underline in a viewer is a line
-somebody drew. Both the exporter and the rasteriser draw them as filled rules
-at the same offsets from the baseline — under at `0.12em`, through at `0.28em`
-above it, thickness `0.06em` so a rule under 48pt text is not a hairline — so
-a page on screen, its thumbnail and its export agree.
-
-Text is wrapped with the same `wrapText` the notes and tables use, measured
-with the font that will actually draw it, and clipped to the box: the live box
-hides its overflow and paper cannot scroll.
-
-**Grabbing it is measured in screen px, not page px.** A box full of text has
-no dead space to press, so it is moved by a strip above its top edge — and the
-first version sized that strip in *page* units, which meant it shrank with the
-zoom and the gesture that worked on one page was unusable on the overview.
-`textGrabStrip` divides by the zoom instead, so the target stays `TOUCH_TARGET`
-(44 px — the size Android's 48dp and Apple's 44pt guidance agree on) under the
-finger whatever the page is doing. The shared grip pill above every media
-object is sized the same way and for the same reason: it is the only way to
-move something that is full of inputs, so it has to be hittable without
-aiming.
+**A text box is moved by its grip**, not by pressing its text: a press in a text box puts the caret there
+straight away, as a word processor's does, so the shield every other placed object has for its first press is
+left off. The grab strip above it is measured in screen px (`textGrabStrip`), so it stays a finger-sized target
+at any zoom, and its other actions — lock, front, back, delete — are in the format bar, which never covers the
+box the way a toolbar floating over it near the top of a page did.
 
 ## Tools
 
@@ -2816,6 +2879,17 @@ hit-testing can answer:
   twice as far, a 25 % step makes + and a notch 25 %, a pinch inside a 20 % threshold does not zoom and one
   past it carries on without a jump, and Reset zoom puts them back; a plain wheel still scrolls; over the
   reading pane it zooms the pane and leaves the note alone.
+- **typing in a text box**: a new box takes the keyboard at once and the format bar appears; `# ` makes a
+  heading, Ctrl+B bold, Ctrl+, a subscript, `1. ` a numbered list and Tab a sub-list (`a.`), Enter on an empty
+  item ends the list and `[] ` starts a checklist; the bar counts the words, and a selection as "1 of 10"; its
+  buttons format the selection and leave the caret in the text; Ctrl+Z takes back a burst of typing as one;
+  Ctrl+Shift+G shows the note's count and Ctrl+/ the shortcuts; with the box only selected, a format applies to
+  all of it.
+- **typing on the page**: a new typed document has the caret on its page; text that does not fit goes on to a
+  new page, a paragraph split where its lines break, with the caret; Ctrl+Enter starts a page and Backspace at
+  its top takes it away, the text coming back; Undo puts it back; the word count is all the pages' text.
+- **floating toolbar over a note**: it stands above the note mid-page and goes underneath near the top, never
+  over the note, and moves by its grip.
 - **starting with Windows and the tray** (desktop shell faked): the settings offer the three switches, the
   tray start waiting for the login start; each switch sends the shell the settings it should; the tray's Quit,
   with an edit not yet saved, writes the draft before `quit_app`; in a browser none of it shows.

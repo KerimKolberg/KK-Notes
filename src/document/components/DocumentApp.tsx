@@ -58,6 +58,11 @@ import { TopBar } from './TopBar';
 import { useTabStore } from '../tabStore';
 import { errorMessage } from '../../lib/errors';
 import { isEditableTarget } from '../../lib/dom';
+import { FormatBar } from '../../typing/FormatBar';
+import { typeOnPage } from '../../typing/flow/engine';
+import { ShortcutSheet } from '../../typing/ShortcutSheet';
+import { requestFocus, showWordCount } from '../../typing/typingStore';
+import { WordCountDialog } from '../../typing/WordCountDialog';
 
 /**
  * A panel that failed to draw is put away and the reason given, instead of taking the screen with it. Deferred a tick:
@@ -117,7 +122,16 @@ export function DocumentApp() {
     (init: NoteInit) => insertMedia((page, z) => createStickyNote(page.dimensions, z, undefined, init)),
     [insertMedia],
   );
-  const insertText = useCallback(() => insertMedia((page, z) => createTextBox(page.dimensions, z)), [insertMedia]);
+  const insertText = useCallback(
+    () =>
+      insertMedia((page, z) => {
+        const box = createTextBox(page.dimensions, z);
+        // Typed into straight away, as a word processor's new text box is.
+        requestFocus(box.id, 'end');
+        return box;
+      }),
+    [insertMedia],
+  );
   /**
    * A dropped text file, as a text box holding its contents.
    *
@@ -139,6 +153,13 @@ export function DocumentApp() {
       }),
     [insertMedia],
   );
+  /** Type on the page in view, word-processor style (`typing/flow/`). */
+  const typeOnActivePage = useCallback(() => {
+    const state = useDocumentStore.getState();
+    if (state.readOnly) return;
+    updateSettings({ tool: 'select' });
+    typeOnPage(state.document.activePageIndex);
+  }, [updateSettings]);
   const insertTable = useCallback(
     (init: TableInit) => insertMedia((page, z) => createTable(page.dimensions, z, undefined, init)),
     [insertMedia],
@@ -286,6 +307,12 @@ export function DocumentApp() {
         return;
       }
       if (isEditableTarget(e.target)) return;
+      // Ctrl+Shift+G (Word) or Ctrl+Shift+C (Docs): the note's word count. In a text box the editor has them.
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key.toLowerCase() === 'g' || e.key.toLowerCase() === 'c')) {
+        e.preventDefault();
+        showWordCount();
+        return;
+      }
       // Ctrl+D bookmarks the page in view, or takes its bookmark away.
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'd') {
         e.preventDefault();
@@ -369,6 +396,9 @@ export function DocumentApp() {
           onDrop={onDrop}
         >
             <DocumentViewer settingsRef={settingsRef} currentTool={settings.tool} />
+          <ErrorBoundary what="the text formatting" fallback={null} onError={(e) => panelFailed('The text formatting', e, () => useDocumentStore.getState().selectMedia(null))}>
+            <FormatBar />
+          </ErrorBoundary>
           {searchOpen && (
             <ErrorBoundary what="the search" fallback={null} onError={(e) => panelFailed('The search', e, () => useSearchStore.getState().close())}>
               <Suspense fallback={null}>
@@ -422,6 +452,7 @@ export function DocumentApp() {
                 onInsertImage={pickImage}
                 onInsertNote={insertNote}
                 onInsertText={insertText}
+                onTypeOnPage={typeOnActivePage}
                 onInsertTable={insertTable}
                 onDone={onInsertDone}
               />
@@ -492,6 +523,8 @@ export function DocumentApp() {
         </Suspense>
       )}
       <PageArranger />
+      <WordCountDialog />
+      <ShortcutSheet />
       {importDialogOpen && (
         <Suspense fallback={null}>
           <ImportPdfDialog />

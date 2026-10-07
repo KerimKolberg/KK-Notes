@@ -76,6 +76,8 @@ export function useDesktopIntegration(): void {
   // File shortcuts and (desktop) fullscreen.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      // Taken already: Ctrl+E in a text box centres the paragraph rather than exporting.
+      if (e.defaultPrevented) return;
       const mod = e.ctrlKey || e.metaKey;
       if (e.key === 'F11') {
         e.preventDefault();

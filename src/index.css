@@ -97,3 +97,66 @@ html[data-tap-to-seek] [data-page-index],
 html[data-tap-to-seek] [data-page-index] * {
   cursor: pointer !important;
 }
+
+/*
+ * Typed text (`src/typing/richDom.ts` sets the rest inline). The same rules for the editor, a box not being
+ * edited, and the measurer that decides where text flowing from page to page breaks — they have to agree to
+ * the line. The white-space and ligature rules are ProseMirror's own, here so the other two follow them too.
+ */
+.rt {
+  position: relative;
+  display: flow-root;
+  white-space: pre-wrap;
+  white-space: break-spaces;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  tab-size: 4;
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0;
+  outline: none;
+}
+.rt .rt-block {
+  position: relative;
+}
+.rt .rt-block:first-child {
+  margin-top: 0 !important;
+}
+/* A bullet or a number, right-aligned in the indent before the paragraph. */
+.rt .rt-block[data-marker]::before {
+  content: attr(data-marker);
+  position: absolute;
+  left: 0;
+  width: calc(var(--rt-pad) - var(--rt-base) * var(--rt-gap));
+  display: flex;
+  justify-content: flex-end;
+  white-space: nowrap;
+  font-style: normal;
+  text-decoration: none;
+}
+/* A box to tick, and the tick. */
+.rt .rt-block[data-list='check']::before {
+  content: '';
+  position: absolute;
+  box-sizing: border-box;
+  left: calc(var(--rt-pad) - var(--rt-base) * var(--rt-gap) - 0.8em);
+  top: 0.36em;
+  width: 0.8em;
+  height: 0.8em;
+  border: max(1px, calc(var(--rt-base) * 0.07)) solid #71717a;
+  border-radius: 0.12em;
+  cursor: pointer;
+}
+.rt .rt-block[data-list='check'][data-checked]::before {
+  border-color: #2563eb;
+  background: center / 90% no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 5.5 4.2 7.8 8.2 2.5' fill='none' stroke='%232563eb' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+/* What an empty box says while it waits for its first word. */
+.rt[data-empty]::after {
+  content: attr(data-placeholder);
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: #a1a1aa;
+  pointer-events: none;
+}

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { makeStroke } from '../../inking/__tests__/testUtils';
+import { createTextBox } from '../media';
 import { createPage } from '../operations';
+import { MAX_STRUCTURE_ENTRIES } from '../structureHistory';
 import { useDocumentStore } from '../store';
 import { captureSession, restoreSession } from '../tabStore';
 import { selectCanRedo, selectCanUndo } from '../undo';
@@ -174,8 +176,8 @@ describe('undoing a change to a note\'s pages', () => {
   });
 
   it('keeps only the most recent changes', () => {
-    for (let i = 0; i < 40; i++) s().addPage('after', doc().pages.length - 1);
-    expect(s().structureUndo.length).toBe(30);
+    for (let i = 0; i < MAX_STRUCTURE_ENTRIES + 10; i++) s().addPage('after', doc().pages.length - 1);
+    expect(s().structureUndo.length).toBe(MAX_STRUCTURE_ENTRIES);
   });
 });
 
@@ -214,5 +216,62 @@ describe('a snip placed on a page', () => {
     s().addMediaUndoable('nope', { kind: 'image', id: 'x', src: '', mime: '', x: 0, y: 0, width: 1, height: 1, rotation: 0, zIndex: 1, naturalWidth: 1, naturalHeight: 1 }, 'x');
     expect(doc()).toBe(before);
     expect(s().structureUndo.length).toBe(0);
+  });
+});
+
+describe('typing', () => {
+  beforeEach(() => {
+    store.getState().setReadOnly(false);
+    store.getState().newDocument();
+  });
+
+  const setup = () => {
+    const page = doc().pages[0]!;
+    const box = createTextBox(page.dimensions, 1);
+    s().addMedia(page.id, box);
+    return { pageId: page.id, id: box.id };
+  };
+  const text = (id: string) => doc().pages[0]!.media.find((m) => m.id === id)?.kind === 'text'
+    ? (doc().pages[0]!.media.find((m) => m.id === id) as { text: string }).text
+    : null;
+
+  it('is one step of Undo for a burst of typing, and keeps the box selected and the page where it is', () => {
+    const { pageId, id } = setup();
+    const scroll = s().scrollRequest;
+    for (const t of ['H', 'He', 'Hel', 'Hell', 'Hello']) s().editText(pageId, id, { text: t }, 'type');
+    expect(s().structureUndo.filter((e) => e.text)).toHaveLength(1);
+    expect(s().undoLast()).toBe('typing');
+    expect(text(id)).toBe('');
+    expect(s().selectedMedia).toEqual({ pageId, mediaId: id });
+    expect(s().scrollRequest).toBe(scroll);
+    expect(s().redoLast()).toBe('typing');
+    expect(text(id)).toBe('Hello');
+  });
+
+  it('makes a format a step of its own, and starts a new step of typing after it', () => {
+    const { pageId, id } = setup();
+    s().editText(pageId, id, { text: 'a' }, 'type');
+    s().editText(pageId, id, { bold: true }, 'format');
+    s().editText(pageId, id, { text: 'ab' }, 'type');
+    expect(s().structureUndo.filter((e) => e.text).map((e) => e.label)).toEqual(['typing', 'formatting', 'typing']);
+  });
+
+  it('starts a new step after a pause', async () => {
+    const { pageId, id } = setup();
+    s().editText(pageId, id, { text: 'a' }, 'type');
+    await new Promise((r) => setTimeout(r, 1050));
+    s().editText(pageId, id, { text: 'ab' }, 'type');
+    expect(s().structureUndo.filter((e) => e.text)).toHaveLength(2);
+  });
+
+  it('lets text that flowed from page to page ride along with the typing that made it flow', () => {
+    const { pageId, id } = setup();
+    s().editText(pageId, id, { text: 'a' }, 'type');
+    const before = s().structureUndo.length;
+    s().setFlowedPages([...doc().pages, createPage({}, 2)]);
+    expect(doc().pages).toHaveLength(2);
+    expect(s().structureUndo.length).toBe(before);
+    s().undoLast();
+    expect(doc().pages).toHaveLength(1);
   });
 });

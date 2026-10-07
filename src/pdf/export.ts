@@ -47,10 +47,10 @@ import {
   trackEdges,
   wrapText,
   TEXT_FONTS,
-  TEXT_LINE_HEIGHT,
   pdfFontName,
-  textStyleOf,
 } from '../document/media';
+import { layoutRich, paintRich, type RichPainter, type RunStyle } from '../document/richLayout';
+import { isRichEmpty, richBaseOf, richOf } from '../document/richText';
 import {
   DEFAULT_TABLE_LINE_OPACITY,
   DEFAULT_TABLE_LINE_WIDTH,
@@ -361,68 +361,79 @@ function drawNote(target: PDFPage, note: StickyNote, projection: PdfProjection, 
 }
 
 /**
- * A text box: its words, wrapped the way the page wrapped them, in the font
- * the box was set in, with any rules drawn underneath or through.
+ * A text box: its paragraphs laid out as the page lays them out (`document/richLayout.ts`), measured with the
+ * PDF's own fonts, each run in the base-14 font its family, weight and slant resolve to, with list markers,
+ * highlights and rules.
  *
- * Underline and strikethrough are *drawn*, not typeset. PDF text has no
- * decoration property at all — a viewer that shows you an underline is looking
- * at a line someone drew — so each one is a thin filled rectangle at a
- * measured offset from the baseline, rotated with the box like everything
- * else.
+ * Underline and strikethrough are *drawn*, not typeset. PDF text has no decoration property at all — a viewer
+ * that shows you an underline is looking at a line someone drew — so each one is a thin filled rectangle at a
+ * measured offset from the baseline, rotated with the box like everything else.
  */
 function drawTextBox(target: PDFPage, item: TextBox, projection: PdfProjection, fonts: Fonts): void {
-  if (item.text === '') return;
-  const style = textStyleOf(item);
-  const font = fonts.text.get(pdfFontName(style)) ?? fonts.regular;
+  const rich = richOf(item);
+  if (isRichEmpty(rich)) return;
+  const base = richBaseOf(item);
   const box = placeBox(item, projection);
   const rad = (box.rotateDeg * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
-  /** A point in the box's own frame, in PDF units (x right, y down from its top). */
+  const rotate = degrees(box.rotateDeg);
+  const k = projection.scale;
+  /** A point in the box's own frame, page px (x right, y down from its top), in PDF units. */
   const at = (localX: number, localY: number): { x: number; y: number } => {
-    const fromBottom = box.height - localY;
-    return { x: box.x + localX * cos - fromBottom * sin, y: box.y + localX * sin + fromBottom * cos };
+    const fromBottom = box.height - localY * k;
+    return { x: box.x + localX * k * cos - fromBottom * sin, y: box.y + localX * k * sin + fromBottom * cos };
   };
+  const fontFor = (style: RunStyle): PDFFont => fonts.text.get(pdfFontName(style)) ?? fonts.regular;
+  const paint = (color: string, opacity: number) => {
+    const c = cssColorToPdf(color);
+    return { color: toColor(c), opacity: Math.max(0, Math.min(1, opacity * c.alpha)) };
+  };
+  // Laid out in page px, measured at page-px sizes, so it wraps where the page does and scales on the way out.
+  const layout = layoutRich(rich, base, item.width, (text, style) => fontFor(style).widthOfTextAtSize(sanitizeText(text), style.size));
+  // A box from before text could be formatted in parts hid what overflowed it: only the lines that fit.
+  const limit = item.rich ? Infinity : item.height;
 
-  const size = style.fontSize * projection.scale;
-  const lineHeight = size * TEXT_LINE_HEIGHT;
-  const width = box.width;
-  const measure = (t: string): number => font.widthOfTextAtSize(sanitizeText(t), size);
-  const lines = wrapText(item.text, width, measure);
-  // Only what fits. The live box hides its overflow; paper cannot scroll.
-  const maxLines = Math.max(0, Math.floor(box.height / lineHeight));
-  const colour = toColor(cssColorToPdf(style.color));
-
-  lines.slice(0, maxLines).forEach((line, i) => {
-    const clean = sanitizeText(line);
-    if (clean === '') return;
-    const lineWidth = measure(line);
-    // The same three cases the DOM's `text-align` covers.
-    const offset = style.align === 'center' ? (width - lineWidth) / 2 : style.align === 'right' ? width - lineWidth : 0;
-    // 0.8 of the line box puts the baseline where a browser puts it closely
-    // enough that a page and its export line up when laid side by side.
-    const baseline = lineHeight * (i + 0.8);
-    const p = at(offset, baseline);
-    target.drawText(clean, { x: p.x, y: p.y, size, font, color: colour, rotate: degrees(box.rotateDeg) });
-
-    const rule = (fromBaseline: number, thickness: number): void => {
-      const start = at(offset, baseline + fromBaseline);
-      target.drawRectangle({
-        x: start.x,
-        y: start.y,
-        width: lineWidth,
-        height: thickness,
-        rotate: degrees(box.rotateDeg),
-        color: colour,
-      });
-    };
-    // Proportional to the size, so a rule under 48pt text is not a hairline.
-    const thickness = Math.max(0.5, size * 0.06);
-    if (style.underline) rule(size * 0.12, thickness);
-    // Through the middle of the x-height rather than the line box, or it cuts
-    // descenders instead of the letters.
-    if (style.strikethrough) rule(-size * 0.28, thickness);
-  });
+  const painter: RichPainter = {
+    text: (text, x, baseline, style, opacity, anchor = 'left') => {
+      const clean = sanitizeText(text);
+      if (clean === '' || baseline > limit) return;
+      const font = fontFor(style);
+      const size = style.size * k;
+      const left = anchor === 'right' ? x - font.widthOfTextAtSize(clean, size) / k : x;
+      const p = at(left, baseline);
+      target.drawText(clean, { x: p.x, y: p.y, size, font, rotate, ...paint(style.color, opacity) });
+    },
+    rect: (x, top, width, height, color, opacity) => {
+      if (top > limit) return;
+      // Anchored at its bottom-left corner, as pdf-lib rotates about it.
+      const p = at(x, top + height);
+      target.drawRectangle({ x: p.x, y: p.y, width: width * k, height: height * k, rotate, ...paint(color, opacity) });
+    },
+    circle: (cx, cy, r, color, filled, line, opacity) => {
+      const p = at(cx, cy);
+      const { color: c, opacity: o } = paint(color, opacity);
+      target.drawCircle(
+        filled
+          ? { x: p.x, y: p.y, size: r * k, color: c, opacity: o }
+          : { x: p.x, y: p.y, size: r * k, borderColor: c, borderWidth: line * k, borderOpacity: o },
+      );
+    },
+    polyline: (points, color, line, opacity) => {
+      const { color: c, opacity: o } = paint(color, opacity);
+      for (let i = 1; i < points.length; i++) {
+        const [ax, ay] = points[i - 1]!;
+        const [bx, by] = points[i]!;
+        target.drawLine({ start: at(ax, ay), end: at(bx, by), thickness: line * k, color: c, opacity: o, lineCap: LineCapStyle.Round });
+      }
+    },
+    square: (x, top, side, color, line, opacity) => {
+      const p = at(x, top + side);
+      const { color: c, opacity: o } = paint(color, opacity);
+      target.drawRectangle({ x: p.x, y: p.y, width: side * k, height: side * k, rotate, borderColor: c, borderWidth: line * k, borderOpacity: o });
+    },
+  };
+  paintRich(layout, painter, base);
 }
 
 /** A table: its frame, every grid line, and one clipped line of text per cell. */
@@ -494,9 +505,14 @@ function drawTable(target: PDFPage, table: TableLayer, projection: PdfProjection
  * cannot encode — which would fail the whole export over one emoji in one
  * note. Anything outside the range becomes '?' instead.
  */
+/**
+ * Text the base-14 fonts can set: they encode WinAnsi, which is Latin-1 and the typographer's punctuation a
+ * phone's keyboard puts in by itself — curly quotes, dashes, the ellipsis — so those are kept, a tab is four
+ * spaces, and anything else is a question mark.
+ */
 function sanitizeText(text: string): string {
   // eslint-disable-next-line no-control-regex
-  return text.replace(/[^\x20-\x7E\xA0-\xFF]/g, '?');
+  return text.replace(/\t/g, '    ').replace(/[^\x20-\x7E\xA0-\xFF€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ]/g, '?');
 }
 
 async function drawMedia(
