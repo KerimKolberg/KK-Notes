@@ -69,7 +69,8 @@ export function setTags(map: MetaMap, path: string, tags: readonly string[]): Me
 
 const SEPARATORS = ['/', '\\'];
 
-function isUnder(path: string, folder: string): boolean {
+/** Whether `path` is inside the folder `folder`, at any depth, with either kind of separator. */
+export function isUnder(path: string, folder: string): boolean {
   return SEPARATORS.some((sep) => path.startsWith(folder + sep));
 }
 
@@ -90,6 +91,28 @@ export function movePath(map: MetaMap, from: string, to: string): MetaMap {
     }
   }
   return changed ? next : map;
+}
+
+/**
+ * A note's entry and, for a folder, those of everything in it, by what follows its path: `''` for its own. What goes
+ * into the recycle bin takes these with it, and a copy is given them.
+ */
+export function entriesUnder(map: MetaMap, path: string): Record<string, NoteMeta> {
+  const out: Record<string, NoteMeta> = {};
+  for (const [p, meta] of Object.entries(map)) {
+    if (p === path) out[''] = meta;
+    else if (isUnder(p, path)) out[p.slice(path.length)] = meta;
+  }
+  return out;
+}
+
+/** Entries taken with {@link entriesUnder}, given to the note or folder at `path`. */
+export function putUnder(map: MetaMap, path: string, entries: Readonly<Record<string, NoteMeta>>): MetaMap {
+  const pairs = Object.entries(entries);
+  if (pairs.length === 0) return map;
+  const next: Record<string, NoteMeta> = { ...map };
+  for (const [suffix, meta] of pairs) next[path + suffix] = meta;
+  return next;
 }
 
 /** After a note or folder is deleted. */
@@ -177,6 +200,8 @@ export interface NoteMetaStore {
   setTags: (path: string, tags: readonly string[]) => void;
   moved: (from: string, to: string) => void;
   removed: (path: string) => void;
+  /** Entries from `entriesUnder`, given to `path`: a note back from the recycle bin, or a copy. */
+  put: (path: string, entries: Readonly<Record<string, NoteMeta>>) => void;
 }
 
 export const useNoteMetaStore = create<NoteMetaStore>()((set, get) => {
@@ -191,5 +216,6 @@ export const useNoteMetaStore = create<NoteMetaStore>()((set, get) => {
     setTags: (path, tags) => apply(setTags(get().map, path, tags)),
     moved: (from, to) => apply(movePath(get().map, from, to)),
     removed: (path) => apply(removePath(get().map, path)),
+    put: (path, entries) => apply(putUnder(get().map, path, entries)),
   };
 });

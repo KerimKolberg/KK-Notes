@@ -4,10 +4,13 @@ import {
   MAX_TAGS,
   MAX_TAG_LENGTH,
   cleanTag,
+  entriesUnder,
   favouriteCount,
+  isUnder,
   matchesFilter,
   movePath,
   parseTags,
+  putUnder,
   removePath,
   setTags,
   tagCounts,
@@ -92,6 +95,25 @@ describe('moving and deleting', () => {
   it('drops a deleted note, or a deleted folder and what was in it', () => {
     expect(Object.keys(removePath(map, '/lib/a.notex')).length).toBe(4);
     expect(Object.keys(removePath(map, '/lib/Work')).sort()).toEqual(['/lib/Workshop/d.notex', '/lib/a.notex', 'C:\\lib\\Work\\e.notex']);
+  });
+
+  it('knows what is inside a folder, and not what only begins with its name', () => {
+    expect(isUnder('/lib/Work/Deep/c.notex', '/lib/Work')).toBe(true);
+    expect(isUnder('/lib/Workshop/d.notex', '/lib/Work')).toBe(false);
+    expect(isUnder('/lib/Work', '/lib/Work')).toBe(false);
+    expect(isUnder('C:\\lib\\Work\\e.notex', 'C:\\lib\\Work')).toBe(true);
+  });
+
+  it('takes the entries of a note or a folder to keep, and gives them to wherever it goes back to', () => {
+    const kept = entriesUnder(map, '/lib/Work');
+    expect(kept).toEqual({ '/b.notex': { tags: ['w'] }, '/Deep/c.notex': { tags: ['d'] } });
+    expect(entriesUnder(map, '/lib/a.notex')).toEqual({ '': { favourite: true } });
+    expect(entriesUnder(map, '/lib/nothing')).toEqual({});
+
+    const back = putUnder(removePath(map, '/lib/Work'), '/lib/Work (2)', kept);
+    expect(back['/lib/Work (2)/b.notex']).toEqual({ tags: ['w'] });
+    expect(back['/lib/Work (2)/Deep/c.notex']).toEqual({ tags: ['d'] });
+    expect(putUnder(map, '/x', {})).toBe(map);
   });
 });
 

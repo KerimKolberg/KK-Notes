@@ -5,7 +5,7 @@ import { blockText } from '../../../document/richText';
 import { useDocumentStore } from '../../../document/store';
 import type { Page, RichBlock, TextBox } from '../../../document/types';
 import { useTypingStore } from '../../typingStore';
-import { setAboveInk, typeOnPage } from '../engine';
+import { setAboveInk, trimEnd, typeOnPage } from '../engine';
 import { createFlowBox } from '../geometry';
 import { flowBoxOf } from '../paginate';
 
@@ -108,5 +108,40 @@ describe('typed text in front of the drawings or behind them', () => {
     store.getState().setReadOnly(true);
     setAboveInk(page.id, flowBoxOf(page)!.id, true);
     expect(flowBoxOf(pages()[0])?.aboveInk).toBeUndefined();
+  });
+});
+
+describe('empty lines at the end of page text', () => {
+  const blocks = (i: number) => flowBoxOf(pages()[i])!.rich!.blocks.map((b) => blockText(b));
+
+  it('go when the caret leaves, and are not a step of Undo', () => {
+    load(['Hello', 'World', '', '', '']);
+    const undos = store.getState().structureUndo.length;
+    trimEnd(pages()[0]!.id);
+    expect(blocks(0)).toEqual(['Hello', 'World']);
+    expect(store.getState().structureUndo.length).toBe(undos);
+    expect(flowBoxOf(pages()[0])!.text).toBe('Hello\nWorld');
+  });
+
+  it('stay between lines of text, and the first line stays even when empty', () => {
+    load(['Hello', '', '', 'World']);
+    trimEnd(pages()[0]!.id);
+    expect(blocks(0)).toEqual(['Hello', '', '', 'World']);
+    load(['', '', '']);
+    trimEnd(pages()[0]!.id);
+    expect(blocks(0)).toEqual(['']);
+  });
+
+  it('stay where the text goes on to the next page: there they are lines of it', () => {
+    load(['Hello', '', ''], ['more']);
+    trimEnd(pages()[0]!.id);
+    expect(blocks(0)).toEqual(['Hello', '', '']);
+  });
+
+  it('go before a page that starts a page of its own', () => {
+    load(['Hello', '', ''], null);
+    typeOnPage(1);
+    trimEnd(pages()[0]!.id);
+    expect(blocks(0)).toEqual(['Hello']);
   });
 });

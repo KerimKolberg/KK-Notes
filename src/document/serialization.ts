@@ -5,6 +5,7 @@
 import { DEFAULT_TEMPLATE_CONFIG, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM } from './constants';
 import { normalizeInkText } from '../handwriting/inkText';
 import { base64Ascii, decodeBase64, encodeBase64 } from '../lib/base64';
+import { pageTextFrame } from './media';
 import { clampIndex, renumber } from './operations';
 import type {
   Document,
@@ -63,7 +64,8 @@ function cachedBase64Bytes(buffer: ArrayBuffer): Uint8Array {
  * tagged on the way in; nothing else about them changed.
  */
 function mediaOf(page: SerializedPage): MediaObject[] {
-  if (page.media) return [...page.media];
+  // Page text fills its page inside the margins, wherever the version that wrote the file put them.
+  if (page.media) return page.media.map((m) => (m.kind === 'text' && m.flow ? { ...m, ...pageTextFrame(page.dimensions) } : m));
   return (page.images ?? []).map((image) => ({ ...image, kind: 'image' }) as MediaObject);
 }
 

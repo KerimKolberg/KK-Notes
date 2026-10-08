@@ -30,7 +30,7 @@ export function NoticeToast() {
     <div
       role="status"
       data-notice-toast
-      className={`absolute left-1/2 top-2 z-40 flex max-w-[min(32rem,calc(100%-1.5rem))] -translate-x-1/2 items-center gap-2 rounded-xl bg-zinc-900/95 px-3 py-2 text-xs text-white shadow-lg ${notice.action ? '' : 'xl:hidden'}`}
+      className={`absolute left-1/2 top-[calc(0.5rem+var(--dock-top,0px))] z-40 flex max-w-[min(32rem,calc(100%-1.5rem))] -translate-x-1/2 items-center gap-2 rounded-xl bg-zinc-900/95 px-3 py-2 text-xs text-white shadow-lg ${notice.action ? '' : 'xl:hidden'}`}
     >
       <span className="min-w-0 flex-1">{notice.text}</span>
       {notice.action && (

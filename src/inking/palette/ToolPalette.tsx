@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
 import {
   Axis3d,
   ChevronDown,
@@ -34,7 +34,8 @@ import { Popover, type PopoverSide } from '../../ui/Popover';
 import { TooltipSideProvider, Tooltip, type TooltipSide } from '../../ui/Tooltip';
 import { isVerticalDock, verticalCapacity } from '../../ui/dock';
 import { useIdleHide } from '../../ui/idleHide';
-import { NO_INSETS, type Insets } from '../../ui/safeArea';
+import { NO_INSETS, insetsEqual, type Insets } from '../../ui/safeArea';
+import { FloatingProvider } from '../../ui/floating';
 import { SlideStrip } from '../../ui/SlideStrip';
 import { PANEL_MARGIN, useDraggablePanel } from '../../ui/useDraggablePanel';
 import { useSafeAreaInsets } from '../../ui/useSafeAreaInsets';
@@ -274,12 +275,55 @@ export const ToolPalette = memo(function ToolPalette({
   }, [dragging]);
   const away = hidden || concealed;
   const vertical = isVerticalDock(dock);
+  // Docked to an edge, the toolbar is a band along it, flush against it and its whole length, as Samsung Notes'
+  // is. Carried by its grip, it is the floating panel it is when free, so it can be put down anywhere.
+  const band = dock !== 'free' && !dragging;
   /** Flyouts open away from the edge the toolbar is against, not always upwards. */
   const popSide: PopoverSide = dock === 'top' ? 'bottom' : dock === 'left' ? 'right' : dock === 'right' ? 'left' : 'top';
   const tipSide: TooltipSide = popSide;
   // A standing toolbar cannot be taller than the room it stands in, so its column
   // of tools wraps into a second one instead of running off the screen.
   const capacity = vertical && container ? verticalCapacity(container, PANEL_MARGIN, insets) : undefined;
+
+  // The system bars at the screen's edges, for a band that reaches one: its own padding keeps its buttons clear of
+  // them (a phone's gesture bar under a band along the bottom), where a floating toolbar keeps its distance instead.
+  const [screenEdges, setScreenEdges] = useState<Insets>(NO_INSETS);
+  useLayoutEffect(() => {
+    const host = panelRef.current?.offsetParent;
+    if (!(host instanceof HTMLElement)) return;
+    const r = host.getBoundingClientRect();
+    const next: Insets = {
+      top: r.top <= 1 ? insets.top : 0,
+      right: r.right >= window.innerWidth - 1 ? insets.right : 0,
+      bottom: r.bottom >= window.innerHeight - 1 ? insets.bottom : 0,
+      left: r.left <= 1 ? insets.left : 0,
+    };
+    setScreenEdges((current) => (insetsEqual(current, next) ? current : next));
+  }, [insets, container]);
+
+  // Pinned to an edge, the band is part of the screen rather than over it: the pages, and the panels that open over
+  // them, keep clear of it (`--dock-top` and the others, on the stage it is in). Unpinned, it slips away and comes
+  // back over the page. Left as it was while the toolbar is carried, so the pages do not jump about under it.
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    const host = panel?.offsetParent;
+    if (!panel || !(host instanceof HTMLElement) || dragging) return;
+    const write = (): void => {
+      const reserve = band && palettePinned && !hidden;
+      const thickness = reserve ? (vertical ? panel.offsetWidth : panel.offsetHeight) : 0;
+      for (const side of DOCK_SIDES) host.style.setProperty(`--dock-${side}`, `${side === dock ? thickness : 0}px`);
+    };
+    write();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(write);
+    observer?.observe(panel);
+    return () => observer?.disconnect();
+  }, [band, palettePinned, hidden, vertical, dock, dragging]);
+  useEffect(() => {
+    const host = panelRef.current?.offsetParent;
+    return () => {
+      if (host instanceof HTMLElement) for (const side of DOCK_SIDES) host.style.removeProperty(`--dock-${side}`);
+    };
+  }, []);
 
   const noSelect = useCallback(() => {}, []);
   const { drag, getItemProps } = usePointerReorder({
@@ -628,135 +672,202 @@ export const ToolPalette = memo(function ToolPalette({
       </>
     ) : null;
 
-  // A bar along the top or the bottom is never wider than the room it is in, so a sliding one slides rather than
-  // running off the side; a bar on a side never taller.
+  // Floating, a bar is never wider than the room it is in, so a sliding one slides rather than running off the side
+  // (standing on end, `capacity` keeps it from being taller). A band is exactly as long as its edge.
   const across = !vertical && container ? Math.max(120, container.width - PANEL_MARGIN * 2 - insets.left - insets.right) : undefined;
+  const length: React.CSSProperties = band
+    ? {
+        maxWidth: 'none',
+        maxHeight: 'none',
+        ...(container ? (vertical ? { height: container.height } : { width: container.width }) : {}),
+        ...bandPadding(dock, screenEdges, paletteSlide ? 2 : 4),
+      }
+    : {
+        ...(capacity ? { maxHeight: capacity } : {}),
+        ...(paletteSlide && across !== undefined ? { maxWidth: across } : {}),
+      };
+
+  const stripContent = (
+    <>
+      {textControls ?? (
+        <>
+          {tools}
+          {DIVIDER}
+          <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} compact={vertical} strip={!vertical} />
+        </>
+      )}
+      {DIVIDER}
+      {settingsControl}
+    </>
+  );
 
   return (
     <TooltipSideProvider value={tipSide}>
-      {dockPreview && <DockTarget edge={dockPreview} />}
-      {concealed && !hidden && <RevealTab edge={dock === 'free' ? 'bottom' : dock} insets={insets} onReveal={onReveal} />}
-      <div
-        ref={panelRef}
-        role="toolbar"
-        aria-label={typingActive ? 'Text tools' : 'Drawing tools'}
-        aria-orientation={vertical ? 'vertical' : 'horizontal'}
-        aria-hidden={away}
-        data-tool-palette
-        data-dock={dock}
-        data-vertical={vertical ? 'true' : 'false'}
-        data-pinned={palettePinned ? 'true' : 'false'}
-        data-slide={paletteSlide ? 'true' : 'false'}
-        data-typing={typingActive ? 'true' : undefined}
-        data-concealed={concealed ? 'true' : undefined}
-        data-dragging={dragging ? 'true' : undefined}
-        onPointerEnter={() => setHovered(true)}
-        onPointerLeave={() => setHovered(false)}
-        onFocus={onFocus}
-        onBlur={onBlur}
-        // Typing, a press on the toolbar must not take the caret out of the text — nor, on a tablet, the keyboard
-        // away with it. Lists and fields in its flyouts still take the focus they need.
-        onMouseDown={(e) => {
-          if (typingActive && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
-            e.preventDefault();
-          }
-        }}
-        // No backdrop blur. It looked like little, and it made the browser
-        // re-blur the page behind the toolbar on every frame it moved — the
-        // costliest thing on the screen, over the largest canvas, on the
-        // biggest display. A near-opaque panel reads the same.
-        className={`group/palette absolute z-30 flex max-w-[calc(100vw-1.5rem-var(--safe-left)-var(--safe-right))] ${
-          paletteSlide
-            ? // One line: the handle, the pin and the keyboard (or the pen) where they always are, and everything
-              // else in a strip that slides.
-              `${vertical ? 'flex-col' : 'flex-row'} items-center gap-0.5 p-0.5`
-            : // The tools stand against the edge the bar is docked to and the colours
-              // on the side facing the page, so the right dock and the top dock are the
-              // left and bottom docks seen in a mirror.
-              `${dock === 'right' ? 'flex-row-reverse items-start' : vertical ? 'flex-row items-start' : dock === 'bottom' ? 'flex-col-reverse' : 'flex-col'} gap-1 p-1`
-        } rounded-2xl border border-zinc-200/80 bg-white/95 shadow-2xl data-[dragging=true]:will-change-transform dark:border-zinc-700/80 dark:bg-zinc-900/95 ${
-          away ? 'pointer-events-none opacity-0' : 'opacity-100'
-        }`}
-        style={{
-          left: position?.x ?? 16,
-          top: position?.y ?? 16,
-          // Concealed is `hidden` rather than merely see-through, so its buttons
-          // cannot be tabbed to. Going away, `visibility` waits for the fade to
-          // finish; coming back it flips at once, so the toolbar can be focused and
-          // tapped the moment it is asked for rather than a frame or two later.
-          visibility: position === null || concealed ? 'hidden' : 'visible',
-          transition: concealed ? 'opacity 200ms, visibility 0s 200ms' : 'opacity 200ms, visibility 0s',
-          touchAction: 'none',
-          ...(capacity ? { maxHeight: capacity } : {}),
-          ...(paletteSlide && across !== undefined ? { maxWidth: across } : {}),
-        }}
-      >
-        {paletteSlide ? (
-          <>
-            {handle}
-            {pin}
-            {modeButton}
-            <SlideStrip vertical={vertical} dragToSlide={!arranging} className="flex-1">
-              {textControls ?? (
-                <>
-                  {tools}
-                  {DIVIDER}
-                  <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} compact={vertical} strip={!vertical} />
-                </>
-              )}
-              {DIVIDER}
-              {settingsControl}
-            </SlideStrip>
-          </>
-        ) : (
-          <>
-            {/* The tools. Wraps onto further lines rather than growing past the panel
-                — on a phone the full set is far wider than the screen, and standing on
-                end it is taller than a tablet in landscape. */}
-            <div
-              className={`flex items-center gap-0.5 ${
-                vertical ? `flex-col content-start ${dock === 'right' ? 'flex-wrap-reverse' : 'flex-wrap'}` : 'flex-wrap'
-              }`}
-              style={vertical && capacity ? { maxHeight: capacity - 12 } : undefined}
-            >
+      {/* Tooltips and flyouts placed on the screen and kept on it: a band reaches the screen's edges, and a
+          button at the end of one would hang its tooltip off them. */}
+      <FloatingProvider value="fixed">
+        {dockPreview && <DockTarget edge={dockPreview} />}
+        {concealed && !hidden && <RevealTab edge={dock === 'free' ? 'bottom' : dock} insets={insets} onReveal={onReveal} />}
+        <div
+          ref={panelRef}
+          role="toolbar"
+          aria-label={typingActive ? 'Text tools' : 'Drawing tools'}
+          aria-orientation={vertical ? 'vertical' : 'horizontal'}
+          aria-hidden={away}
+          data-tool-palette
+          data-dock={dock}
+          data-vertical={vertical ? 'true' : 'false'}
+          data-pinned={palettePinned ? 'true' : 'false'}
+          data-slide={paletteSlide ? 'true' : 'false'}
+          data-band={band ? 'true' : undefined}
+          data-typing={typingActive ? 'true' : undefined}
+          data-concealed={concealed ? 'true' : undefined}
+          data-dragging={dragging ? 'true' : undefined}
+          onPointerEnter={() => setHovered(true)}
+          onPointerLeave={() => setHovered(false)}
+          onFocus={onFocus}
+          onBlur={onBlur}
+          // Typing, a press on the toolbar must not take the caret out of the text — nor, on a tablet, the keyboard
+          // away with it. Lists and fields in its flyouts still take the focus they need.
+          onMouseDown={(e) => {
+            if (typingActive && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
+              e.preventDefault();
+            }
+          }}
+          // No backdrop blur. It looked like little, and it made the browser
+          // re-blur the page behind the toolbar on every frame it moved — the
+          // costliest thing on the screen, over the largest canvas, on the
+          // biggest display. A near-opaque panel reads the same.
+          className={`group/palette absolute z-30 flex max-w-[calc(100vw-1.5rem-var(--safe-left)-var(--safe-right))] ${
+            paletteSlide
+              ? // One line: the handle, the pin and the keyboard (or the pen) where they always are, and everything
+                // else in a strip that slides.
+                `${vertical ? 'flex-col' : 'flex-row'} items-center gap-0.5 p-0.5`
+              : // The tools stand against the edge the bar is docked to and the colours
+                // on the side facing the page, so the right dock and the top dock are the
+                // left and bottom docks seen in a mirror.
+                `${dock === 'right' ? 'flex-row-reverse items-start' : vertical ? 'flex-row items-start' : dock === 'bottom' ? 'flex-col-reverse' : 'flex-col'} gap-1 p-1`
+          } ${
+            band ? `rounded-none shadow-md ${BAND_EDGE[dock]}` : 'rounded-2xl border shadow-2xl'
+          } border-zinc-200/80 bg-white/95 data-[dragging=true]:will-change-transform dark:border-zinc-700/80 dark:bg-zinc-900/95 ${
+            away ? 'pointer-events-none opacity-0' : 'opacity-100'
+          }`}
+          style={{
+            left: position?.x ?? 16,
+            top: position?.y ?? 16,
+            // Concealed is `hidden` rather than merely see-through, so its buttons
+            // cannot be tabbed to. Going away, `visibility` waits for the fade to
+            // finish; coming back it flips at once, so the toolbar can be focused and
+            // tapped the moment it is asked for rather than a frame or two later.
+            visibility: position === null || concealed ? 'hidden' : 'visible',
+            transition: concealed ? 'opacity 200ms, visibility 0s 200ms' : 'opacity 200ms, visibility 0s',
+            touchAction: 'none',
+            ...length,
+          }}
+        >
+          {paletteSlide ? (
+            <>
               {handle}
               {pin}
-              {modeButton}
-              {textControls ?? tools}
-              {(!vertical || textControls) && (
+              {band ? (
+                // In a band the grip and the pin stay at its end, where the band is picked up from, and the tools are
+                // in the middle of what is left of it — sliding along it when there are more than fit.
+                <div className={`flex min-h-0 min-w-0 flex-1 items-center justify-center gap-0.5 ${vertical ? 'flex-col' : 'flex-row'}`}>
+                  {modeButton}
+                  <SlideStrip vertical={vertical} dragToSlide={!arranging} className="flex-initial">
+                    {stripContent}
+                  </SlideStrip>
+                </div>
+              ) : (
                 <>
-                  {DIVIDER}
-                  {settingsControl}
+                  {modeButton}
+                  <SlideStrip vertical={vertical} dragToSlide={!arranging} className="flex-1">
+                    {stripContent}
+                  </SlideStrip>
                 </>
               )}
-            </div>
-
-            {/* Colours and thickness. Standing on end they share one column with the
-                settings button, which heads it, so the column beside the tools is
-                the whole of the rest of the bar; in a row they sit on the side of the
-                tools that faces the page. Typing, there are none: the text toolbar has
-                its own. */}
-            {textControls ? null : vertical ? (
+            </>
+          ) : (
+            <>
+              {/* The tools. Wraps onto further lines rather than growing past the panel
+                  — on a phone the full set is far wider than the screen, and standing on
+                  end it is taller than a tablet in landscape. */}
               <div
-                className="flex shrink-0 flex-col items-center gap-0.5"
-                data-palette-inner
-                {...(capacity ? { style: { maxHeight: capacity - 12 } } : {})}
+                className={`flex items-center gap-0.5 ${
+                  vertical ? `flex-col content-start ${dock === 'right' ? 'flex-wrap-reverse' : 'flex-wrap'}` : 'flex-wrap'
+                }`}
+                style={vertical && capacity ? { maxHeight: capacity - 12 } : undefined}
               >
-                {settingsControl}
-                {DIVIDER}
-                <div className="min-h-0 overflow-y-auto">
-                  <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} compact />
-                </div>
+                {handle}
+                {pin}
+                {modeButton}
+                {textControls ?? tools}
+                {(!vertical || textControls) && (
+                  <>
+                    {DIVIDER}
+                    {settingsControl}
+                  </>
+                )}
               </div>
-            ) : (
-              <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} />
-            )}
-          </>
-        )}
-      </div>
+
+              {/* Colours and thickness. Standing on end they share one column with the
+                  settings button, which heads it, so the column beside the tools is
+                  the whole of the rest of the bar; in a row they sit on the side of the
+                  tools that faces the page. Typing, there are none: the text toolbar has
+                  its own. */}
+              {textControls ? null : vertical ? (
+                <div
+                  className="flex shrink-0 flex-col items-center gap-0.5"
+                  data-palette-inner
+                  {...(capacity ? { style: { maxHeight: capacity - 12 } } : {})}
+                >
+                  {settingsControl}
+                  {DIVIDER}
+                  <div className="min-h-0 overflow-y-auto">
+                    <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} compact />
+                  </div>
+                </div>
+              ) : (
+                <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} />
+              )}
+            </>
+          )}
+        </div>
+      </FloatingProvider>
     </TooltipSideProvider>
   );
 });
+
+const DOCK_SIDES = ['top', 'right', 'bottom', 'left'] as const;
+
+/** A band's one border: on the side facing the page. */
+const BAND_EDGE: Readonly<Record<PaletteDock, string>> = {
+  bottom: 'border-t',
+  top: 'border-b',
+  left: 'border-r',
+  right: 'border-l',
+  free: 'border',
+};
+
+/**
+ * A band's padding: its own all round, and on the sides that reach the edge of the screen the system bars there
+ * too — the outer side, and the two ends.
+ */
+function bandPadding(dock: PaletteDock, edges: Insets, own: number): React.CSSProperties {
+  const pad = (n: number): number => own + n;
+  switch (dock) {
+    case 'bottom':
+      return { paddingBottom: pad(edges.bottom), paddingLeft: pad(edges.left), paddingRight: pad(edges.right) };
+    case 'top':
+      return { paddingTop: pad(edges.top), paddingLeft: pad(edges.left), paddingRight: pad(edges.right) };
+    case 'left':
+      return { paddingLeft: pad(edges.left), paddingTop: pad(edges.top), paddingBottom: pad(edges.bottom) };
+    case 'right':
+      return { paddingRight: pad(edges.right), paddingTop: pad(edges.top), paddingBottom: pad(edges.bottom) };
+    default:
+      return {};
+  }
+}
 
 /**
  * What an unpinned toolbar leaves behind: a small tab on the edge it is docked to.

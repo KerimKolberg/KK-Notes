@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { EditorEdges } from '../editor/RichEditor';
-import { backspaceAtStart, deleteAtEnd, leave, pageBreakAt, scheduleFlow } from './engine';
+import { backspaceAtStart, deleteAtEnd, leave, pageBreakAt, scheduleFlow, trimEnd } from './engine';
 
 export interface PageFlowProps {
   readonly edges?: EditorEdges;
@@ -17,6 +17,7 @@ export function usePageFlow(pageId: string): PageFlowProps {
         deleteAtEnd: () => deleteAtEnd(pageId),
         leave: (direction, how) => leave(pageId, direction, how),
         pageBreak: (pos) => pageBreakAt(pageId, pos),
+        trimEnd: () => trimEnd(pageId),
       },
     }),
     [pageId],

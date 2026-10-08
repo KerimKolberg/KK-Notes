@@ -163,7 +163,7 @@ export const SearchPanel = memo(function SearchPanel() {
       role="search"
       aria-label="Search this note"
       data-search-panel
-      className="absolute right-3 top-3 z-40 flex max-h-[70%] w-[min(26rem,calc(100%-1.5rem))] flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+      className="absolute right-[calc(0.75rem+var(--dock-right,0px))] top-[calc(0.75rem+var(--dock-top,0px))] z-40 flex max-h-[70%] w-[min(26rem,calc(100%-1.5rem))] flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
     >
       <div className="flex items-center gap-2 border-b border-zinc-200 px-3 py-2 dark:border-zinc-700">
         <Search size={16} className="shrink-0 text-zinc-500" aria-hidden="true" />

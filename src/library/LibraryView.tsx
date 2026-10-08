@@ -1,12 +1,37 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, ChevronRight, Cloud, FolderOpen, FolderPlus, Grid2x2, House, List, Plus, Search, ShieldCheck, Star, X } from 'lucide-react';
+import {
+  ArrowUp,
+  ChevronRight,
+  Cloud,
+  Copy,
+  Download,
+  FolderOpen,
+  FolderPlus,
+  Grid2x2,
+  House,
+  List,
+  Plus,
+  Search,
+  ShieldCheck,
+  SquareCheckBig,
+  Star,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { openDocumentFromLibrary } from './openDocument';
 import { CloudSyncPanel } from './CloudSyncPanel';
 import { ConflictDialog } from './ConflictDialog';
-import { DocumentCard } from './DocumentCard';
+import { DocumentCard, type SelectHow } from './DocumentCard';
+import { describeEntries, selectionRange } from './selection';
+import { exportNotes, type ExportFormat } from './exportNotes';
 import { LibrarySearchResults } from './LibrarySearchResults';
+import { RecycleBin } from './RecycleBin';
 import { SecurityPanel } from './SecurityPanel';
 import { TagsDialog } from './TagsDialog';
+import { copyNotes, listRecycleBin, moveToTrash, restoreFromTrash } from './trash';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { Popover } from '../ui/Popover';
+import { isEditableTarget } from '../lib/dom';
 import { useAllNotes } from './useAllNotes';
 import { ALL_NOTES, favouriteCount, matchesFilter, tagCounts, useNoteMetaStore, type LibraryFilter } from './noteMeta';
 import { sortEntries } from './sorting';
@@ -18,7 +43,6 @@ import { SyncIndicator } from './SyncIndicator';
 import {
   createDocumentInLibrary,
   createFolder,
-  deleteEntry,
   listLibrary,
   moveEntry,
   resolveConflict,
@@ -34,7 +58,9 @@ import {
   DEFAULT_SORT,
   OFFLINE_STATUS,
   SORT_KEYS,
+  TRASH_KEEP_DAYS,
   type ConflictResolution,
+  type LibraryEntry,
   type LibraryLayout,
   type LibraryListing,
   type LibrarySort,
@@ -114,6 +140,19 @@ export function LibraryView() {
    */
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
+  /**
+   * Selecting notes and folders, to copy, export or delete them together. Entered with the Select button, a
+   * right-click, a Ctrl- or Shift-click, or a press held on a card; while it lasts a click on a card selects it.
+   */
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  /** The card selected last, the far end of a Shift-click. */
+  const lastSelected = useRef<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  /** Entries waiting on "move to the recycle bin?". */
+  const [deleting, setDeleting] = useState<readonly LibraryEntry[] | null>(null);
+  const [showBin, setShowBin] = useState(false);
+  const [binCount, setBinCount] = useState(0);
 
   useEffect(() => store(LAYOUT_KEY, layout), [layout]);
   useEffect(() => store(SORT_KEY, sort), [sort]);
@@ -203,16 +242,16 @@ export function LibraryView() {
     [guard, openDocument, openFolder],
   );
 
-  const remove = useCallback(
-    (path: string, name: string) => {
-      if (!window.confirm(`Delete “${name}”? This cannot be undone.`)) return;
-      void guard(async () => {
-        await deleteEntry(path);
-        useNoteMetaStore.getState().removed(path);
-      });
-    },
-    [guard],
-  );
+  const refreshBin = useCallback(async () => {
+    try {
+      setBinCount((await listRecycleBin()).length);
+    } catch {
+      // The count on the button is a hint; the bin itself says what went wrong.
+    }
+  }, []);
+  useEffect(() => {
+    void refreshBin();
+  }, [refreshBin]);
 
   const onResolve = useCallback(
     async (path: string, choice: ConflictResolution) => {
@@ -341,6 +380,112 @@ export function LibraryView() {
     if (filter.kind === 'favourites' && favourites === 0) setFilter(ALL_NOTES);
   }, [filter, tags, favourites]);
 
+  const stopSelecting = useCallback(() => {
+    setSelecting(false);
+    setSelected(new Set());
+    setExportOpen(false);
+    lastSelected.current = null;
+  }, []);
+  // Selecting is of what is in front of you: going somewhere else, or searching, ends it.
+  useEffect(() => stopSelecting(), [folder, filter, searching, stopSelecting]);
+  // What went from the library meanwhile — a sync, a move — goes from the selection.
+  useEffect(() => {
+    if (selected.size === 0) return;
+    const here = new Set(shown.map((e) => e.path));
+    if ([...selected].some((path) => !here.has(path))) setSelected(new Set([...selected].filter((path) => here.has(path))));
+  }, [shown, selected]);
+
+  const select = (path: string, how: SelectHow): void => {
+    const next = new Set(selected);
+    if (how === 'range') {
+      for (const p of selectionRange(shown.map((e) => e.path), lastSelected.current, path)) next.add(p);
+    } else if (how === 'toggle' && next.has(path)) {
+      next.delete(path);
+    } else {
+      next.add(path);
+    }
+    lastSelected.current = path;
+    // Taking the last one out of the selection ends it, as it began: with a card.
+    if (next.size === 0 && how === 'toggle') {
+      stopSelecting();
+      return;
+    }
+    setSelected(next);
+    setSelecting(true);
+  };
+  const chosen = shown.filter((e) => selected.has(e.path));
+  const chosenNotes = chosen.filter((e) => !e.isFolder);
+  const allSelected = shown.length > 0 && chosen.length === shown.length;
+  const selectAll = (): void => {
+    setSelected(new Set(shown.map((e) => e.path)));
+    setSelecting(true);
+  };
+
+  const copySelected = (): void => {
+    const entries = chosen;
+    void guard(async () => {
+      await copyNotes(entries.map((e) => e.path));
+      stopSelecting();
+      const where = entries.length === 1 ? 'The copy is beside it' : 'The copies are beside them';
+      setNotice({ text: `Copied ${describeEntries(entries)}. ${where}, with a number after the name.` });
+    });
+  };
+
+  const exportSelected = (format: ExportFormat): void => {
+    setExportOpen(false);
+    const notes = chosenNotes.map((e) => ({ path: e.path, name: e.name }));
+    void guard(async () => {
+      const done = await exportNotes(notes, format);
+      if (!done) return;
+      stopSelecting();
+      const what = `${done.written === 1 ? 'a note' : `${done.written} notes`} as ${format === 'pdf' ? 'PDF' : 'KK-Notes files'}`;
+      setNotice({ text: done.where ? `Exported ${what} to ${done.where}.` : `Downloaded ${what}.` });
+    });
+  };
+
+  const deleteSelected = (entries: readonly LibraryEntry[]): void => {
+    setDeleting(null);
+    void guard(async () => {
+      const items = await moveToTrash(entries.map((e) => e.path));
+      stopSelecting();
+      await refreshBin();
+      const ids = items.map((item) => item.id);
+      setNotice({
+        text: `Moved ${describeEntries(entries)} to the recycle bin.`,
+        action: {
+          label: 'Undo',
+          run: () => {
+            setNotice(null);
+            void guard(async () => {
+              await restoreFromTrash(ids);
+              await refreshBin();
+            });
+          },
+        },
+      });
+    });
+  };
+
+  // The keys of selecting: Escape to stop, Ctrl+A for everything here, Delete for the recycle bin.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || isEditableTarget(e.target) || showBin || deleting || tagging || exportOpen || showConflicts || showCloud || showSecurity) return;
+      if (e.key === 'Escape' && selecting) {
+        e.preventDefault();
+        stopSelecting();
+      } else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'a' && !searching && shown.length > 0) {
+        e.preventDefault();
+        setSelected(new Set(shown.map((entry) => entry.path)));
+        setSelecting(true);
+      } else if (e.key === 'Delete' && selecting && selected.size > 0) {
+        e.preventDefault();
+        setDeleting(shown.filter((entry) => selected.has(entry.path)));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selecting, selected, shown, searching, showBin, deleting, tagging, exportOpen, showConflicts, showCloud, showSecurity, stopSelecting]);
+
   /** A note picked from the search results, opened at the place the words were found. */
   const openFound = useCallback(
     (path: string, hit: SearchHit | null) => {
@@ -423,128 +568,252 @@ export function LibraryView() {
         >
           <ShieldCheck size={16} aria-hidden="true" />
         </button>
+        <button
+          type="button"
+          onClick={() => setShowBin(true)}
+          aria-label={binCount > 0 ? `Recycle bin, ${binCount} item${binCount === 1 ? '' : 's'}` : 'Recycle bin'}
+          title="Recycle bin"
+          data-recycle-open
+          className="relative inline-flex h-9 w-9 shrink-0 touch-manipulation items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        >
+          <Trash2 size={16} aria-hidden="true" />
+          {binCount > 0 && (
+            <span
+              className="absolute right-0.5 top-0.5 min-w-4 rounded-full bg-zinc-500 px-1 text-center text-[10px] font-semibold leading-4 text-white dark:bg-zinc-400 dark:text-zinc-900"
+              data-recycle-count={binCount}
+              aria-hidden="true"
+            >
+              {binCount > 99 ? '99+' : binCount}
+            </span>
+          )}
+        </button>
       </header>
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
-        <button
-          type="button"
-          onClick={newDocument}
-          disabled={busy}
-          data-new-document
-          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+      {selecting ? (
+        <div
+          className="flex shrink-0 flex-wrap items-center gap-2 border-b border-blue-200 bg-blue-50 px-3 py-2 dark:border-blue-900 dark:bg-blue-950/40"
+          role="toolbar"
+          aria-label="Selected notes"
+          data-library-selection-bar
         >
-          <Plus size={16} aria-hidden="true" />
-          New note
-        </button>
-        <button
-          type="button"
-          onClick={openFile}
-          disabled={busy}
-          data-open-file
-          title="Open a PDF, a document or a GoodNotes notebook from this device"
-          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
-        >
-          <FolderOpen size={16} aria-hidden="true" />
-          Open
-        </button>
-        <button
-          type="button"
-          onClick={newFolder}
-          disabled={busy}
-          data-new-folder
-          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
-        >
-          <FolderPlus size={16} aria-hidden="true" />
-          New folder
-        </button>
-        {listing?.parentPath !== null && listing !== null && (
           <button
             type="button"
-            onClick={() => openFolder(listing.parentPath)}
-            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
-            data-library-up
+            onClick={stopSelecting}
+            aria-label="Stop selecting"
+            title="Stop selecting (Esc)"
+            data-library-select-done
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-600 hover:bg-blue-100 dark:text-zinc-300 dark:hover:bg-blue-900/60"
           >
-            <ArrowUp size={16} aria-hidden="true" />
-            Up
+            <X size={16} aria-hidden="true" />
           </button>
-        )}
-
-        <div className="relative min-w-[8rem] max-w-xs flex-1 basis-40">
-          <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') setQuery('');
-            }}
-            placeholder="Search all notes"
-            aria-label="Search all notes"
-            data-library-search
-            className="h-8 w-full rounded-lg border border-zinc-300 bg-white pl-8 pr-7 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-blue-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 [&::-webkit-search-cancel-button]:hidden"
-          />
-          {query && (
+          <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100" data-library-selected-count={chosen.length} aria-live="polite">
+            {chosen.length === 0 ? 'Select notes' : `${chosen.length} selected`}
+          </span>
+          <button
+            type="button"
+            onClick={allSelected ? () => setSelected(new Set()) : selectAll}
+            disabled={shown.length === 0}
+            data-library-select-all
+            className="rounded-lg px-2 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-40 dark:text-blue-300 dark:hover:bg-blue-900/60"
+          >
+            {allSelected ? 'Select none' : 'Select all'}
+          </button>
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={copySelected}
+            disabled={busy || chosen.length === 0}
+            aria-label="Copy"
+            title="Make a copy of each, beside it"
+            data-library-copy
+            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-zinc-700 hover:bg-blue-100 disabled:opacity-40 sm:px-3 dark:text-zinc-200 dark:hover:bg-blue-900/60"
+          >
+            <Copy size={16} aria-hidden="true" />
+            <span className="hidden sm:inline">Copy</span>
+          </button>
+          <div className="relative">
             <button
               type="button"
-              aria-label="Clear the search"
-              data-library-search-clear
-              onClick={() => setQuery('')}
-              className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700"
+              onClick={() => setExportOpen((o) => !o)}
+              disabled={busy || chosenNotes.length === 0}
+              aria-expanded={exportOpen}
+              aria-label="Export"
+              title={chosen.length > 0 && chosenNotes.length === 0 ? 'Folders are not exported: select the notes in them' : 'Save as PDF or as KK-Notes files'}
+              data-library-export
+              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-zinc-700 hover:bg-blue-100 disabled:opacity-40 sm:px-3 dark:text-zinc-200 dark:hover:bg-blue-900/60"
             >
-              <X size={13} aria-hidden="true" />
+              <Download size={16} aria-hidden="true" />
+              <span className="hidden sm:inline">Export</span>
+            </button>
+            <Popover open={exportOpen} onClose={() => setExportOpen(false)} label="Export as" side="bottom" align="end">
+              <div className="flex flex-col">
+                {(
+                  [
+                    { format: 'pdf', label: 'PDF', hint: 'To open, print and share anywhere' },
+                    { format: 'notex', label: 'KK-Notes file (.notex)', hint: 'To keep, or open in KK-Notes on another device' },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    key={option.format}
+                    type="button"
+                    onClick={() => exportSelected(option.format)}
+                    data-library-export-as={option.format}
+                    className="flex flex-col items-start rounded-lg px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{option.label}</span>
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400">{option.hint}</span>
+                  </button>
+                ))}
+              </div>
+            </Popover>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDeleting(chosen)}
+            disabled={busy || chosen.length === 0}
+            aria-label="Delete"
+            title="Move to the recycle bin (Delete)"
+            data-library-delete
+            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-100 disabled:opacity-40 sm:px-3 dark:text-rose-300 dark:hover:bg-rose-950/60"
+          >
+            <Trash2 size={16} aria-hidden="true" />
+            <span className="hidden sm:inline">Delete</span>
+          </button>
+        </div>
+      ) : (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
+          <button
+            type="button"
+            onClick={newDocument}
+            disabled={busy}
+            data-new-document
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+          >
+            <Plus size={16} aria-hidden="true" />
+            New note
+          </button>
+          <button
+            type="button"
+            onClick={openFile}
+            disabled={busy}
+            data-open-file
+            title="Open a PDF, a document or a GoodNotes notebook from this device"
+            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            <FolderOpen size={16} aria-hidden="true" />
+            Open
+          </button>
+          <button
+            type="button"
+            onClick={newFolder}
+            disabled={busy}
+            data-new-folder
+            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            <FolderPlus size={16} aria-hidden="true" />
+            New folder
+          </button>
+          {listing?.parentPath !== null && listing !== null && (
+            <button
+              type="button"
+              onClick={() => openFolder(listing.parentPath)}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              data-library-up
+            >
+              <ArrowUp size={16} aria-hidden="true" />
+              Up
             </button>
           )}
-        </div>
-
-        <div className="ml-auto flex items-center gap-2">
-          <label className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-            <span className="sr-only sm:not-sr-only">Sort by</span>
-            <select
-              className="h-8 rounded-lg border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-              value={sort.key}
-              aria-label="Sort by"
-              data-library-sort
-              onChange={(e) => setSort((s) => ({ ...s, key: e.target.value as SortKey }))}
-            >
-              {SORT_KEYS.map((option) => (
-                <option key={option.key} value={option.key}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+          {!searching && shown.length > 0 && (
             <button
               type="button"
-              aria-label={sort.order === 'ascending' ? 'Sort descending' : 'Sort ascending'}
-              data-library-sort-order={sort.order}
-              onClick={() => setSort((s) => ({ ...s, order: s.order === 'ascending' ? 'descending' : 'ascending' }))}
-              className="h-8 rounded-lg px-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              onClick={() => setSelecting(true)}
+              title="Select notes to copy, export or delete them"
+              data-library-select
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
             >
-              {sort.order === 'ascending' ? '↑' : '↓'}
+              <SquareCheckBig size={16} aria-hidden="true" />
+              Select
             </button>
-          </label>
+          )}
 
-          <div className="flex items-center rounded-lg border border-zinc-300 dark:border-zinc-600" role="group" aria-label="Layout">
-            {([
-              { id: 'grid' as const, icon: Grid2x2, label: 'Grid view' },
-              { id: 'list' as const, icon: List, label: 'List view' },
-            ]).map(({ id, icon: Icon, label }) => (
+          <div className="relative min-w-[8rem] max-w-xs flex-1 basis-40">
+            <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setQuery('');
+              }}
+              placeholder="Search all notes"
+              aria-label="Search all notes"
+              data-library-search
+              className="h-8 w-full rounded-lg border border-zinc-300 bg-white pl-8 pr-7 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-blue-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 [&::-webkit-search-cancel-button]:hidden"
+            />
+            {query && (
               <button
-                key={id}
                 type="button"
-                aria-pressed={layout === id}
-                aria-label={label}
-                data-library-layout={id}
-                onClick={() => setLayout(id)}
-                className={`inline-flex h-8 w-8 items-center justify-center first:rounded-l-lg last:rounded-r-lg ${
-                  layout === id ? 'bg-blue-600 text-white' : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
-                }`}
+                aria-label="Clear the search"
+                data-library-search-clear
+                onClick={() => setQuery('')}
+                className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700"
               >
-                <Icon size={16} aria-hidden="true" />
+                <X size={13} aria-hidden="true" />
               </button>
-            ))}
+            )}
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+              <span className="sr-only sm:not-sr-only">Sort by</span>
+              <select
+                className="h-8 rounded-lg border border-zinc-300 bg-white px-2 text-xs text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                value={sort.key}
+                aria-label="Sort by"
+                data-library-sort
+                onChange={(e) => setSort((s) => ({ ...s, key: e.target.value as SortKey }))}
+              >
+                {SORT_KEYS.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                aria-label={sort.order === 'ascending' ? 'Sort descending' : 'Sort ascending'}
+                data-library-sort-order={sort.order}
+                onClick={() => setSort((s) => ({ ...s, order: s.order === 'ascending' ? 'descending' : 'ascending' }))}
+                className="h-8 rounded-lg px-2 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                {sort.order === 'ascending' ? '↑' : '↓'}
+              </button>
+            </label>
+
+            <div className="flex items-center rounded-lg border border-zinc-300 dark:border-zinc-600" role="group" aria-label="Layout">
+              {([
+                { id: 'grid' as const, icon: Grid2x2, label: 'Grid view' },
+                { id: 'list' as const, icon: List, label: 'List view' },
+              ]).map(({ id, icon: Icon, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={layout === id}
+                  aria-label={label}
+                  data-library-layout={id}
+                  onClick={() => setLayout(id)}
+                  className={`inline-flex h-8 w-8 items-center justify-center first:rounded-l-lg last:rounded-r-lg ${
+                    layout === id ? 'bg-blue-600 text-white' : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                  }`}
+                >
+                  <Icon size={16} aria-hidden="true" />
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {error && (
         <p className="shrink-0 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/50 dark:text-rose-300" role="alert">
@@ -643,10 +912,9 @@ export function LibraryView() {
                 entry={entry}
                 layout={layout}
                 onOpen={() => open(entry.path, entry.isFolder)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  remove(entry.path, entry.name);
-                }}
+                onSelect={(how) => select(entry.path, how)}
+                selecting={selecting}
+                selected={selected.has(entry.path)}
                 {...(entry.isFolder
                   ? {
                       onDropEntry: (from: string) =>
@@ -667,12 +935,39 @@ export function LibraryView() {
         )}
         {!searching && shown.length > 0 && !filtering && (
           <p className="pt-4 text-center text-xs text-zinc-400 dark:text-zinc-500">
-            Drag a note onto a folder to file it. Right-click to delete. The star and the tag on a note are for finding it again.
+            Drag a note onto a folder to file it. Right-click a note, or press and hold it, to select notes to copy, export or
+            delete. The star and the tag on a note are for finding it again.
           </p>
         )}
       </div>
 
       {tagging && <TagsDialog path={tagging.path} name={tagging.name} onClose={() => setTagging(null)} />}
+
+      {deleting && deleting.length > 0 && (
+        <ConfirmDialog
+          title={`Move ${describeEntries(deleting)} to the recycle bin?`}
+          confirmLabel="Move to the recycle bin"
+          danger
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => deleteSelected(deleting)}
+        >
+          {`You can put ${deleting.length === 1 ? 'it' : 'them'} back from the recycle bin for ${TRASH_KEEP_DAYS} days.`}
+          {deleting.some((e) => e.isFolder) ? ' A folder goes with everything in it.' : ''}
+        </ConfirmDialog>
+      )}
+
+      {showBin && (
+        <RecycleBin
+          onClose={() => {
+            setShowBin(false);
+            void refreshBin();
+          }}
+          onChanged={() => {
+            void refresh();
+            void refreshBin();
+          }}
+        />
+      )}
 
       {showConflicts && status.conflicts.length > 0 && (
         <ConflictDialog conflicts={status.conflicts} onResolve={onResolve} onClose={() => setShowConflicts(false)} />

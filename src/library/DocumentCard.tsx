@@ -1,14 +1,29 @@
-import { memo, useEffect, useState } from 'react';
-import { FileText, Folder, Star, Tag } from 'lucide-react';
+import { memo, useEffect, useRef, useState } from 'react';
+import { Check, FileText, Folder, Star, Tag } from 'lucide-react';
 import { readThumbnailSource } from './libraryService';
 import { cardAspect, renderCardImage } from './thumbnail';
 import type { LibraryEntry, LibraryLayout } from './types';
+
+/**
+ * How a card is selected: `toggle` for a click on it while selecting (or a Ctrl-click), `add` for a right-click or a
+ * press held on it — which starts selecting with it — and `range` for a Shift-click, everything from the card
+ * selected last to this one.
+ */
+export type SelectHow = 'toggle' | 'add' | 'range';
+
+/** How long a finger or a pen is held on a card before it is selected rather than opened. */
+const LONG_PRESS_MS = 500;
+/** How far it may wander meanwhile, px: further is a scroll or a drag. */
+const LONG_PRESS_SLOP = 8;
 
 export interface DocumentCardProps {
   entry: LibraryEntry;
   layout: LibraryLayout;
   onOpen: () => void;
-  onContextMenu: (event: React.MouseEvent) => void;
+  onSelect: (how: SelectHow) => void;
+  /** Notes are being selected: a click selects the card rather than opening it. */
+  selecting?: boolean;
+  selected?: boolean;
   /** Dropping a document onto a folder files it there. */
   onDropEntry?: (fromPath: string) => void;
   /** Documents only: marked as a favourite, their tags, and the two ways to change them. */
@@ -73,6 +88,20 @@ function TagChips({ tags }: { tags: readonly string[] }) {
   );
 }
 
+/** The round tick of a selected card, and the empty ring of one that is not. */
+function SelectMark({ selected }: { selected: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 shadow-sm ${
+        selected ? 'border-blue-600 bg-blue-600 text-white' : 'border-zinc-400 bg-white/90 dark:border-zinc-500 dark:bg-zinc-900/90'
+      }`}
+    >
+      {selected && <Check size={13} strokeWidth={3} />}
+    </span>
+  );
+}
+
 function formatDate(ms: number): string {
   if (!ms) return '';
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -95,7 +124,9 @@ export const DocumentCard = memo(function DocumentCard({
   entry,
   layout,
   onOpen,
-  onContextMenu,
+  onSelect,
+  selecting = false,
+  selected = false,
   onDropEntry,
   favourite = false,
   tags = [],
@@ -109,6 +140,19 @@ export const DocumentCard = memo(function DocumentCard({
   const [title, setTitle] = useState(entry.name);
   const [pages, setPages] = useState<number | null>(null);
   const [dropping, setDropping] = useState(false);
+  const press = useRef<{ id: number; x: number; y: number; timer: number } | null>(null);
+  /** A held press selected the card: the click its release brings does not undo that. */
+  const held = useRef(false);
+  /** The kind of pointer last pressed on the card. */
+  const pressedWith = useRef<string | null>(null);
+  /** A drag the browser began from a finger held on the card. */
+  const fingerDrag = useRef(false);
+
+  const letGo = (): void => {
+    if (press.current) window.clearTimeout(press.current.timer);
+    press.current = null;
+  };
+  useEffect(() => letGo, []);
 
   useEffect(() => {
     if (!node || entry.isFolder || visible) return;
@@ -174,12 +218,54 @@ export const DocumentCard = memo(function DocumentCard({
   const common = {
     ref: setNode as unknown as React.Ref<HTMLButtonElement>,
     type: 'button' as const,
-    onClick: onOpen,
-    onContextMenu,
+    onClick: (e: React.MouseEvent) => {
+      if (held.current) {
+        held.current = false;
+        return;
+      }
+      if (e.shiftKey) onSelect('range');
+      else if (selecting || e.ctrlKey || e.metaKey) onSelect('toggle');
+      else onOpen();
+    },
+    // A right-click selects, as a press held with a finger does — Android sends this for that press too. It used to
+    // delete the note, behind a question the app's web view did not always show.
+    onContextMenu: (e: React.MouseEvent) => {
+      e.preventDefault();
+      onSelect('add');
+    },
+    onPointerDown: (e: React.PointerEvent) => {
+      held.current = false;
+      pressedWith.current = e.pointerType;
+      letGo();
+      if (e.pointerType === 'mouse' || e.button !== 0) return;
+      const timer = window.setTimeout(() => {
+        press.current = null;
+        held.current = true;
+        onSelect('add');
+      }, LONG_PRESS_MS);
+      press.current = { id: e.pointerId, x: e.clientX, y: e.clientY, timer };
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      const at = press.current;
+      if (at && e.pointerId === at.id && Math.hypot(e.clientX - at.x, e.clientY - at.y) > LONG_PRESS_SLOP) letGo();
+    },
+    onPointerUp: letGo,
+    onPointerCancel: letGo,
+    onPointerLeave: letGo,
+    ...(selecting ? { 'aria-pressed': selected } : {}),
+    'data-library-selected': selecting ? String(selected) : undefined,
     draggable: true,
     onDragStart: (e: React.DragEvent) => {
+      // A finger held still is where a touch drag starts, and Android starts one sooner than the press above
+      // selects; one that ends without being dropped on a folder was the press, and selects as it would have.
+      fingerDrag.current = pressedWith.current === 'touch' && !held.current;
+      letGo();
       e.dataTransfer.setData('text/notes-entry', entry.path);
       e.dataTransfer.effectAllowed = 'move';
+    },
+    onDragEnd: (e: React.DragEvent) => {
+      if (fingerDrag.current && e.dataTransfer.dropEffect === 'none') onSelect('add');
+      fingerDrag.current = false;
     },
     'data-library-entry': entry.path,
     'data-library-kind': entry.isFolder ? 'folder' : 'document',
@@ -191,10 +277,11 @@ export const DocumentCard = memo(function DocumentCard({
       <li className="list-none">
         <button
           {...common}
-          className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-blue-500 dark:hover:bg-zinc-800 ${
-            dropping ? 'ring-2 ring-blue-500' : ''
-          }`}
+          className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-blue-500 ${
+            selected ? 'bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/50 dark:hover:bg-blue-950' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          } ${dropping ? 'ring-2 ring-blue-500' : ''}`}
         >
+          {selecting && <SelectMark selected={selected} />}
           {entry.isFolder ? (
             <Folder size={20} className="shrink-0 text-blue-500" aria-hidden="true" />
           ) : (
@@ -212,7 +299,7 @@ export const DocumentCard = memo(function DocumentCard({
             <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{subtitle}</span>
             {!entry.isFolder && <TagChips tags={tags} />}
           </span>
-          {!entry.isFolder && onToggleFavourite && onEditTags && (
+          {!entry.isFolder && !selecting && onToggleFavourite && onEditTags && (
             <>
               <CardAction label="Edit tags" onAct={onEditTags} className="text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 dark:hover:bg-zinc-700" data-card-tags-button="">
                 <Tag size={15} aria-hidden="true" />
@@ -235,7 +322,7 @@ export const DocumentCard = memo(function DocumentCard({
 
   return (
     <li className="list-none">
-      <button {...common} className={`${CARD} ${dropping ? 'ring-2 ring-blue-500' : ''}`}>
+      <button {...common} className={`${CARD} ${selected || dropping ? 'ring-2 ring-blue-500' : ''}`}>
         {entry.isFolder ? (
           <span
             className="flex w-full items-center justify-center bg-zinc-50 dark:bg-zinc-800"
@@ -253,7 +340,22 @@ export const DocumentCard = memo(function DocumentCard({
             {image && <img src={image} alt="" className="h-full w-full object-cover object-top" />}
           </span>
         )}
-        {!entry.isFolder && onToggleFavourite && onEditTags && (
+        {selecting ? (
+          <span className="pointer-events-none absolute left-1.5 top-1.5">
+            <SelectMark selected={selected} />
+          </span>
+        ) : (
+          // With a mouse, the way into selecting shows on the card the pointer is over.
+          <CardAction
+            label="Select"
+            onAct={() => onSelect('add')}
+            className="pointer-events-none absolute left-1.5 top-1.5 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100"
+            data-card-select=""
+          >
+            <SelectMark selected={false} />
+          </CardAction>
+        )}
+        {!entry.isFolder && !selecting && onToggleFavourite && onEditTags && (
           // Over the corner of the picture, on a disc so they read against any page.
           <span className="absolute right-1.5 top-1.5 flex gap-1">
             <CardAction

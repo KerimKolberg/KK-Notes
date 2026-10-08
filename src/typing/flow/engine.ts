@@ -278,6 +278,35 @@ export function pageBreakAt(pageId: string, pos: number): boolean {
   return true;
 }
 
+/** A line with nothing on it: an empty plain paragraph, not a list item, a heading, a page break or a continuation. */
+function isBlankLine(block: RichBlock): boolean {
+  return blockLength(block) === 0 && !block.list && !block.pageBreak && !block.cont && (block.kind ?? 'p') === 'p';
+}
+
+/**
+ * The caret has left a page's text: empty lines at its end go — the ones a click under the text added for the caret
+ * (`editor/clickType.ts`) that nothing was typed on, or Enter pressed and nothing after. Only where the text ends
+ * there: on the last page of it, or before a page that starts a page of its own; further on they are lines of the
+ * text. The first line stays, empty or not. Not a step of Undo: nothing anyone typed goes.
+ */
+export function trimEnd(pageId: string): void {
+  const store = useDocumentStore.getState();
+  if (store.readOnly) return;
+  const { pages, index, box, next } = neighbours(pageId);
+  if (!box) return;
+  // Still being typed in — the caret came back, or the same text is being drawn again on its other layer.
+  const focused = typeof document === 'undefined' ? null : document.activeElement;
+  if (focused?.closest?.(`[data-media-id="${box.id}"]`)) return;
+  if (next && !blocksOf(next)[0]?.pageBreak) return;
+  const blocks = blocksOf(box);
+  let end = blocks.length;
+  while (end > 1 && isBlankLine(blocks[end - 1]!)) end--;
+  if (end === blocks.length) return;
+  const page = pages[index]!;
+  const trimmed = { ...page, media: page.media.map((m) => (m.id === box.id ? { ...box, ...withBlocks(blocks.slice(0, end)) } : m)) };
+  store.setFlowedPages(pages.map((p, i) => (i === index ? trimmed : p)));
+}
+
 // ---------------------------------------------------------------------------
 // Starting page text
 // ---------------------------------------------------------------------------

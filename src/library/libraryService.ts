@@ -12,15 +12,28 @@ import { encodeNotex } from '../desktop/notex';
 import { createDocument } from '../document/operations';
 import {
   BROWSER_ROOT,
+  copyBrowserEntries,
   createBrowserFolder,
-  deleteBrowserEntry,
+  deleteBrowserTrash,
+  emptyBrowserTrash,
   listBrowserLibrary,
+  listBrowserTrash,
   moveBrowserEntry,
   readBrowserDocument,
+  restoreBrowserTrash,
+  trashBrowserEntries,
   writeBrowserDocument,
 } from './browserLibrary';
 import type { DocumentText, PdfPagePiece } from './search';
-import { OFFLINE_STATUS, type ConflictResolution, type LibraryListing, type LibrarySort, type SyncStatus, type ThumbnailSource } from './types';
+import {
+  OFFLINE_STATUS,
+  type ConflictResolution,
+  type LibraryListing,
+  type LibrarySort,
+  type SyncStatus,
+  type ThumbnailSource,
+  type TrashItem,
+} from './types';
 
 export async function listLibrary(path: string | null, sort: LibrarySort): Promise<LibraryListing> {
   if (!isTauri()) return listBrowserLibrary(path, sort.key, sort.order);
@@ -48,12 +61,48 @@ export async function moveEntry(from: string, into: string | null): Promise<stri
   return tauriInvoke<string>('move_library_entry', { from, into });
 }
 
-export async function deleteEntry(path: string): Promise<void> {
+// ---------------------------------------------------------------------------
+// The recycle bin, and copies
+// ---------------------------------------------------------------------------
+
+/** Notes and folders to the recycle bin, beside the library: out of its listing, its search and its sync. */
+export async function trashEntries(paths: readonly string[]): Promise<TrashItem[]> {
+  if (!isTauri()) return trashBrowserEntries(paths);
+  return tauriInvoke<TrashItem[]>('trash_library_entries', { paths });
+}
+
+/** What is in the recycle bin, newest first; what has been there a month goes for good as it is looked at. */
+export async function listTrash(): Promise<TrashItem[]> {
+  if (!isTauri()) return listBrowserTrash();
+  return tauriInvoke<TrashItem[]>('list_library_trash');
+}
+
+/** Put things back where they were; returns where each went, in the order asked. */
+export async function restoreTrash(ids: readonly string[]): Promise<string[]> {
+  if (!isTauri()) return restoreBrowserTrash(ids);
+  return tauriInvoke<string[]>('restore_library_trash', { ids });
+}
+
+export async function deleteTrash(ids: readonly string[]): Promise<void> {
   if (!isTauri()) {
-    deleteBrowserEntry(path);
+    deleteBrowserTrash(ids);
     return;
   }
-  await tauriInvoke<void>('delete_library_entry', { path });
+  await tauriInvoke<void>('delete_library_trash', { ids });
+}
+
+export async function emptyTrash(): Promise<void> {
+  if (!isTauri()) {
+    emptyBrowserTrash();
+    return;
+  }
+  await tauriInvoke<void>('empty_library_trash');
+}
+
+/** Copy notes and folders beside themselves; returns the copies, in the order asked. */
+export async function copyEntries(paths: readonly string[]): Promise<string[]> {
+  if (!isTauri()) return copyBrowserEntries(paths);
+  return tauriInvoke<string[]>('copy_library_entries', { paths });
 }
 
 /**

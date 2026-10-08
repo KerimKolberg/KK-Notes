@@ -16,6 +16,7 @@ use notes_sync::{
     manager::{SyncManager, SyncState, SyncStatus},
     text::{self, DocumentText},
     thumb::{self, ThumbnailSource},
+    trash::{self, TrashItem},
     ConflictResolution, LibraryListing,
 };
 use tauri::{AppHandle, Emitter, State};
@@ -31,14 +32,21 @@ pub const SYNC_STATUS_EVENT: &str = "sync://status";
 
 pub struct Library {
     pub manager: Arc<SyncManager>,
+    /// The recycle bin: beside the library, not in it, so neither its listing nor its sync sees what is there.
+    bin: PathBuf,
     /// Kept alive so the watcher thread is not dropped on the floor.
     watching: Mutex<bool>,
 }
 
+/// The recycle bin's folder, next to the library's.
+pub const TRASH_DIR: &str = "trash";
+
 impl Library {
     pub fn new(root: PathBuf, device: String) -> Self {
+        let bin = root.parent().map(|parent| parent.join(TRASH_DIR)).unwrap_or_else(|| root.join(".trash"));
         Self {
             manager: Arc::new(SyncManager::new(root, device)),
+            bin,
             watching: Mutex::new(false),
         }
     }
@@ -110,15 +118,65 @@ pub fn move_library_entry(library: State<'_, Library>, from: String, into: Optio
         .map_err(|e| format!("Cannot move that: {e}"))
 }
 
+fn resolve_all(library: &Library, paths: Vec<String>) -> Result<Vec<PathBuf>, String> {
+    paths.into_iter().map(|path| resolve(library, Some(path))).collect()
+}
+
+/// Move notes and folders to the recycle bin.
 #[tauri::command]
-pub fn delete_library_entry(library: State<'_, Library>, path: String) -> Result<(), String> {
-    let target = resolve(&library, Some(path))?;
-    let result = if target.is_dir() {
-        fs::remove_dir_all(&target)
-    } else {
-        fs::remove_file(&target)
-    };
-    result.map_err(|e| format!("Cannot delete {}: {e}", target.display()))
+pub fn trash_library_entries(library: State<'_, Library>, paths: Vec<String>) -> Result<Vec<TrashItem>, String> {
+    let root = library.manager.root().to_path_buf();
+    let paths = resolve_all(&library, paths)?;
+    trash::trash_entries(&root, &library.bin, &paths, notes_sync::now_ms()).map_err(|e| format!("Cannot move that to the recycle bin: {e}"))
+}
+
+/// What is in the recycle bin; what has been there a month goes now.
+#[tauri::command]
+pub fn list_library_trash(library: State<'_, Library>) -> Result<Vec<TrashItem>, String> {
+    trash::list_trash(&library.bin, notes_sync::now_ms()).map_err(|e| format!("Cannot read the recycle bin: {e}"))
+}
+
+/// Put things in the recycle bin back where they were; returns where each went.
+#[tauri::command]
+pub fn restore_library_trash(library: State<'_, Library>, ids: Vec<String>) -> Result<Vec<String>, String> {
+    let root = library.manager.root().to_path_buf();
+    trash::restore(&root, &library.bin, &ids)
+        .map(|paths| paths.into_iter().map(|p| p.to_string_lossy().into_owned()).collect())
+        .map_err(|e| format!("Cannot put that back: {e}"))
+}
+
+/// Delete things in the recycle bin for good.
+#[tauri::command]
+pub fn delete_library_trash(library: State<'_, Library>, ids: Vec<String>) -> Result<(), String> {
+    trash::delete_forever(&library.bin, &ids).map_err(|e| format!("Cannot delete that: {e}"))
+}
+
+/// Delete everything in the recycle bin for good.
+#[tauri::command]
+pub fn empty_library_trash(library: State<'_, Library>) -> Result<(), String> {
+    trash::empty(&library.bin).map_err(|e| format!("Cannot empty the recycle bin: {e}"))
+}
+
+/// Copy notes and folders beside themselves; returns the copies.
+#[tauri::command]
+pub fn copy_library_entries(library: State<'_, Library>, paths: Vec<String>) -> Result<Vec<String>, String> {
+    let root = library.manager.root().to_path_buf();
+    let paths = resolve_all(&library, paths)?;
+    trash::copy_entries(&root, &paths)
+        .map(|copies| copies.into_iter().map(|p| p.to_string_lossy().into_owned()).collect())
+        .map_err(|e| format!("Cannot copy that: {e}"))
+}
+
+/// A free name for a file going into a folder the user chose (an export): `name`, or `name (2)`… — so an export
+/// never writes over a file already there.
+#[tauri::command]
+pub fn free_file_path(dir: String, name: String) -> Result<String, String> {
+    let dir = PathBuf::from(dir);
+    if !dir.is_dir() {
+        return Err(format!("{} is not a folder", dir.display()));
+    }
+    let clean = library::sanitise_name(&name);
+    Ok(library::unique_path(&dir.join(clean)).to_string_lossy().into_owned())
 }
 
 /// Create an empty document in the library and return its path.

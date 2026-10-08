@@ -17,7 +17,7 @@
  * nothing wrong with it. A check that actually runs and fails exits 1.
  */
 import { spawn } from 'node:child_process';
-import { readdirSync, existsSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createConnection } from 'node:net';
 
@@ -1093,6 +1093,7 @@ async function checkDocks(browser) {
         swatches,
         panel: box(document.querySelector('[data-tool-palette]')),
         stage: box(document.querySelector('[data-page-stage]')),
+        viewer: box(document.querySelector('[data-viewer]')),
         vw: window.innerWidth,
         vh: window.innerHeight,
         scroller: scroller ? { scrollW: scroller.scrollWidth, w: scroller.clientWidth, scrollH: scroller.scrollHeight, h: scroller.clientHeight } : null,
@@ -1115,7 +1116,11 @@ async function checkDocks(browser) {
     check(`sliding, ${dock}: it is one button thick`, thick <= 60, `${Math.round(thick)}px`);
     check(`sliding, ${dock}: it is inside the window`, g.panel.l >= 0 && g.panel.t >= 0 && g.panel.r <= g.vw && g.panel.b <= g.vh, JSON.stringify(g.panel));
     const edge = { bottom: g.stage.b - g.panel.b, top: g.panel.t - g.stage.t, left: g.panel.l - g.stage.l, right: g.stage.r - g.panel.r }[dock];
-    check(`sliding, ${dock}: against its edge`, edge < 24, `${Math.round(edge)}px away`);
+    check(`sliding, ${dock}: flush against its edge, no gap`, Math.abs(edge) <= 1, `${Math.round(edge)}px away`);
+    const ends = vertical ? [g.panel.t - g.stage.t, g.stage.b - g.panel.b] : [g.panel.l - g.stage.l, g.stage.r - g.panel.r];
+    check(`sliding, ${dock}: the whole length of it`, ends.every((gap) => Math.abs(gap) <= 1), JSON.stringify(ends.map(Math.round)));
+    const beside = { bottom: g.panel.t - g.viewer.b, top: g.viewer.t - g.panel.b, left: g.viewer.l - g.panel.r, right: g.panel.l - g.viewer.r }[dock];
+    check(`sliding, ${dock}: the pages beside it, not under it`, Math.abs(beside) <= 1, `${Math.round(beside)}px`);
   }
 
   const left = await geometry('left', false);
@@ -2460,14 +2465,229 @@ async function checkLibraryOrganising(browser) {
   await page.waitForFunction(() => document.querySelectorAll('[data-library-kind="document"]').length === 2);
   check('with no favourites left the view goes back to all the notes', (await cardCount()) === 2);
 
-  // Deleting a note takes its tags with it.
+  // Deleting a note takes its tags with it, into the recycle bin; putting it back brings them back.
   await cards.nth(0).click({ button: 'right' });
+  await page.click('[data-library-delete]');
+  await page.click('[data-confirm-ok]');
   await page.waitForFunction(() => document.querySelectorAll('[data-library-kind="document"]').length === 1);
   await page.waitForFunction(() => (document.querySelector('[data-library-filter="tag:school"]')?.textContent ?? '').includes('1'));
-  check('deleting a note takes its tags with it', true);
+  check('deleting a note takes its tags with it', (await page.$('[data-library-filter="tag:Maths"]')) === null);
+  await page.click('[data-recycle-open]');
+  await page.click('[data-recycle-item] input');
+  await page.click('[data-recycle-restore]');
+  await page.waitForSelector('[data-recycle-empty]');
+  await page.keyboard.press('Escape');
+  const back = await page
+    .waitForFunction(() => (document.querySelector('[data-library-filter="tag:school"]')?.textContent ?? '').includes('2') && document.querySelector('[data-library-filter="tag:Maths"]') !== null, null, { timeout: 5_000 })
+    .then(() => true, () => false);
+  check('put back from the recycle bin, it has its tags again', back);
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await ctx.close();
+}
+
+/**
+ * Selecting notes in the library, and the recycle bin. Reported: a right-click on a note made it vanish — "idk if
+ * deleted or what". It was deleted for good, behind a browser confirm() the app's web view did not always show. A
+ * right-click now selects; Ctrl- and Shift-click, Ctrl+A and Escape do what they do elsewhere; Copy makes copies
+ * beside them; Delete asks, in the app, and moves to the recycle bin, which Undo and the bin's Put back bring back
+ * from, and Delete for good and Empty ask again; Export downloads (in a browser) a PDF or a .notex of each note. A
+ * finger held on a card selects it, and a tap still opens one.
+ */
+async function checkLibrarySelection(browser) {
+  console.log('selecting notes, and the recycle bin, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height }, acceptDownloads: true });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const asked = [];
+  page.on('dialog', (d) => {
+    asked.push(d.type());
+    void d.accept();
+  });
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  for (let n = 0; n < 3; n++) {
+    await page.waitForSelector('[data-new-document]');
+    await page.click('[data-new-document]');
+    await page.waitForSelector('[data-back-to-library]', { timeout: 10_000 });
+    await page.click('[data-back-to-library]');
+    await page.waitForSelector('[data-library-view]');
+  }
+  // A folder too: its name is asked with a prompt.
+  await page.click('[data-new-folder]');
+  const count = () => page.$$eval('[data-library-kind]', (els) => els.length);
+  const until = (n) =>
+    page.waitForFunction((n) => document.querySelectorAll('[data-library-kind]').length === n, n, { timeout: 5_000 }).then(() => true, () => false);
+  await until(4);
+  // Folders first, then the notes.
+  const card = (i) => page.locator('[data-library-kind]').nth(i);
+  const selected = () => page.$$eval('[data-library-selected="true"]', (els) => els.length);
+  const bar = async () => (await page.$('[data-library-selection-bar]')) !== null;
+  const notice = async () => (await page.textContent('[data-library-notice]').catch(() => '')) ?? '';
+
+  await card(1).click({ button: 'right' });
+  check('a right-click on a note selects it', (await bar()) && (await selected()) === 1);
+  check('and deletes nothing, nor asks the browser anything', (await count()) === 4 && !asked.includes('confirm'), asked.join(','));
+  check('while selecting, the star and tag buttons stand aside', (await page.$$('[data-card-favourite]')).length === 0);
+  await card(2).click();
+  check('a click while selecting selects the note rather than opening it', (await selected()) === 2 && (await page.$('[data-library-view]')) !== null);
+  await card(2).click();
+  check('a second click takes it out again', (await selected()) === 1);
+  await card(3).click({ modifiers: ['Shift'] });
+  check('Shift-click selects everything from the last one to it', (await selected()) === 3, `${await selected()} selected`);
+  await page.keyboard.press('Escape');
+  check('Escape stops selecting', !(await bar()) && (await selected()) === 0);
+
+  await card(0).click({ modifiers: ['Control'] });
+  check('Ctrl-click starts selecting, a folder as well as a note', (await bar()) && (await selected()) === 1 && (await page.$('[data-library-view]')) !== null);
+  await card(0).click();
+  check('taking the last one out stops selecting', !(await bar()));
+  await page.keyboard.press('Control+a');
+  check('Ctrl+A selects everything here', (await selected()) === 4);
+  await page.click('[data-library-select-all]');
+  check('Select none empties the selection and keeps the bar', (await selected()) === 0 && (await bar()));
+  await page.click('[data-library-select-done]');
+  await card(2).hover();
+  await card(2).locator('[data-card-select]').click();
+  check('with a mouse, the ring on the card under it selects it', (await bar()) && (await card(2).getAttribute('data-library-selected')) === 'true');
+  await page.keyboard.press('Escape');
+  await page.click('[data-library-select]');
+  check('the Select button starts selecting, with nothing selected yet', (await bar()) && (await selected()) === 0);
+  await page.keyboard.press('Escape');
+
+  // Copy.
+  await card(1).click({ button: 'right' });
+  await page.click('[data-library-copy]');
+  check('Copy makes a copy beside the note', await until(5));
+  check('and stops selecting, saying what it did', !(await bar()) && (await notice()).includes('Copied'));
+
+  // Delete: asked about in the app, into the recycle bin, and Undo.
+  await card(1).click({ button: 'right' });
+  await card(2).click();
+  await page.click('[data-library-delete]');
+  const askedFirst = await page.waitForSelector('[data-confirm-dialog]', { timeout: 3_000 }).then(() => true, () => false);
+  check('Delete asks first, in the app', askedFirst && ((await page.textContent('[data-confirm-dialog]')) ?? '').includes('recycle bin'));
+  check('with Cancel the button Enter presses', await page.evaluate(() => document.activeElement?.hasAttribute('data-confirm-cancel') === true));
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(150);
+  check('Cancel deletes nothing and keeps the selection', (await count()) === 5 && (await page.$('[data-confirm-dialog]')) === null && (await selected()) === 2);
+  await page.click('[data-library-delete]');
+  await page.click('[data-confirm-ok]');
+  check('confirmed, the two leave the library', await until(3));
+  check('the recycle bin button counts them', (await page.getAttribute('[data-recycle-count]', 'data-recycle-count').catch(() => null)) === '2');
+  check('and the notice says where they went', (await notice()).includes('Moved 2 notes to the recycle bin'), await notice());
+  await page.click('[data-library-notice] >> text=Undo');
+  check('Undo puts them back', await until(5));
+  check('and the recycle bin is empty again', (await page.$('[data-recycle-count]')) === null);
+
+  // The Delete key; the bin, after a restart; Put back.
+  await card(4).click({ button: 'right' });
+  await page.keyboard.press('Delete');
+  await page.waitForSelector('[data-confirm-dialog]', { timeout: 3_000 }).catch(() => {});
+  await page.click('[data-confirm-ok]');
+  check('the Delete key asks too, then deletes', await until(4));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-library-view]');
+  await until(4);
+  await page.click('[data-recycle-open]');
+  const listed = await page.waitForSelector('[data-recycle-item]', { timeout: 5_000 }).then(() => true, () => false);
+  check('after a restart it is in the recycle bin', listed && (await page.getAttribute('[data-recycle-items]', 'data-recycle-items')) === '1');
+  await page.click('[data-recycle-item] input');
+  await page.click('[data-recycle-restore]');
+  check('Put back takes it out of the bin', await page.waitForSelector('[data-recycle-empty]', { timeout: 5_000 }).then(() => true, () => false));
+  check('and into the library again', await until(5));
+  await page.keyboard.press('Escape');
+  check('Escape closes the recycle bin', (await page.$('[data-recycle-bin]')) === null);
+
+  // Delete for good, and Empty, each asked about first.
+  await card(3).click({ button: 'right' });
+  await card(4).click();
+  await page.click('[data-library-delete]');
+  await page.click('[data-confirm-ok]');
+  await until(3);
+  await page.click('[data-recycle-open]');
+  await page.waitForSelector('[data-recycle-item]', { timeout: 5_000 }).catch(() => {});
+  await page.click('[data-recycle-item] >> nth=0 >> input');
+  await page.click('[data-recycle-delete]');
+  const sure = await page.waitForSelector('[data-confirm-dialog]', { timeout: 3_000 }).then(() => true, () => false);
+  check('Delete for good asks first', sure && ((await page.textContent('[data-confirm-dialog]')) ?? '').includes('cannot be undone'));
+  await page.click('[data-confirm-ok]');
+  const one = await page
+    .waitForFunction(() => document.querySelector('[data-recycle-items]')?.getAttribute('data-recycle-items') === '1', null, { timeout: 5_000 })
+    .then(() => true, () => false);
+  check('and then it is gone from the bin, the other still there', one);
+  await page.click('[data-recycle-empty-all]');
+  check('Empty the recycle bin asks too', await page.waitForSelector('[data-confirm-dialog]', { timeout: 3_000 }).then(() => true, () => false));
+  await page.click('[data-confirm-ok]');
+  check('and empties it', await page.waitForSelector('[data-recycle-empty]', { timeout: 5_000 }).then(() => true, () => false));
+  await page.keyboard.press('Escape');
+  check('what went for good stays out of the library', (await count()) === 3);
+
+  // Export, which in a browser downloads.
+  await card(1).click({ button: 'right' });
+  await page.click('[data-library-export]');
+  await page.waitForSelector('[data-library-export-as="pdf"]', { timeout: 3_000 }).catch(() => {});
+  const pdf = await Promise.all([page.waitForEvent('download', { timeout: 20_000 }), page.click('[data-library-export-as="pdf"]')]).then(([d]) => d, () => null);
+  const pdfHead = pdf ? readFileSync(await pdf.path()).subarray(0, 5).toString('latin1') : '';
+  check('Export as PDF downloads a PDF of the note', pdf !== null && pdf.suggestedFilename().endsWith('.pdf') && pdfHead === '%PDF-', pdf?.suggestedFilename() ?? 'no download');
+  const downloads = [];
+  page.on('download', (d) => downloads.push(d));
+  await card(1).click({ button: 'right' });
+  await card(2).click();
+  await page.click('[data-library-export]');
+  await page.click('[data-library-export-as="notex"]');
+  for (let waited = 0; downloads.length < 2 && waited < 10_000; waited += 100) await page.waitForTimeout(100);
+  const notex = downloads[0] ? readFileSync(await downloads[0].path(), 'utf8') : '';
+  check(
+    'as KK-Notes files, one for each note, that read back',
+    downloads.length === 2 && downloads.every((d) => d.suggestedFilename().endsWith('.notex')) && notex.includes('"pages"'),
+    downloads.map((d) => d.suggestedFilename()).join(', '),
+  );
+  await card(0).click({ button: 'right' });
+  check('a folder alone has nothing to export', await page.isDisabled('[data-library-export]'));
+  await page.keyboard.press('Escape');
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+
+  console.log('selecting with a finger, 412x915:');
+  const phone = await browser.newContext({ viewport: { width: PHONE.width, height: PHONE.height }, deviceScaleFactor: PHONE.deviceScaleFactor, hasTouch: true, isMobile: true });
+  const tab = await phone.newPage();
+  tab.on('pageerror', (e) => errors.push(e.message));
+  await tab.goto(BASE, { waitUntil: 'domcontentloaded' });
+  for (let n = 0; n < 2; n++) {
+    await tab.waitForSelector('[data-new-document]');
+    await tab.tap('[data-new-document]');
+    await tab.waitForSelector('[data-back-to-library]', { timeout: 10_000 });
+    await tab.tap('[data-back-to-library]');
+    await tab.waitForSelector('[data-library-view]');
+  }
+  await tab.waitForFunction(() => document.querySelectorAll('[data-library-kind]').length === 2, null, { timeout: 5_000 }).catch(() => {});
+  const cdp = await phone.newCDPSession(tab);
+  // A finger put down and lifted `ms` later, where Playwright's tap would lift it at once.
+  const hold = async (selector, ms) => {
+    const box = await tab.locator(selector).boundingBox();
+    const [x, y] = centre(box);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+    await tab.waitForTimeout(ms);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+  const fingers = () => tab.$$eval('[data-library-selected="true"]', (els) => els.length);
+  const phoneBar = async () => (await tab.$('[data-library-selection-bar]')) !== null;
+  await hold('[data-library-kind] >> nth=0', 700);
+  await tab.waitForTimeout(200);
+  check('a finger held on a note selects it', (await phoneBar()) && (await fingers()) === 1 && (await tab.$('[data-library-view]')) !== null);
+  await tab.tap('[data-library-kind] >> nth=1');
+  check('then a tap selects another', (await fingers()) === 2);
+  const barBox = await tab.locator('[data-library-selection-bar]').boundingBox();
+  check('the selection bar is one row on a phone', barBox !== null && barBox.height < 60, `${Math.round(barBox?.height ?? 0)}px`);
+  await tab.tap('[data-library-kind] >> nth=1');
+  await tab.tap('[data-library-kind] >> nth=0');
+  check('taking both out stops selecting', !(await phoneBar()));
+  await hold('[data-library-kind] >> nth=0', 80);
+  check('and a short tap still opens a note', await tab.waitForSelector('[data-back-to-library]', { timeout: 5_000 }).then(() => true, () => false));
+  check('no page errors with a finger', errors.length === 0, errors.join(' | '));
+  await phone.close();
 }
 
 /** A small valid PDF of `count` pages, each with a line of text, as bytes. */
@@ -3687,17 +3907,18 @@ async function checkPageText(browser) {
       const caretPage = document.activeElement?.closest('[data-page-index]');
       return { pages: pages.length, caretPage: caretPage ? Number(caretPage.getAttribute('data-page-index')) : -1 };
     });
-  const paragraph = 'The quick brown fox jumps over the lazy dog and keeps on running through the field. '.repeat(3).trim();
-  for (let i = 0; i < 14; i++) {
-    await page.keyboard.insertText(paragraph);
-    await page.keyboard.press('Enter');
-  }
+  // One paragraph longer than a page — so it has to be split between two, wherever the margins put the end of the
+  // first — and less than two. Only its first sentence begins "It begins here", so the part on the second page,
+  // which starts on a line of the rest, is told from a paragraph of its own.
+  const paragraph = `It begins here, at the start of one long paragraph. ${'The quick brown fox jumps over the lazy dog and keeps on running through the field. '.repeat(70).trim()}`;
+  await page.keyboard.insertText(paragraph);
+  await page.keyboard.press('Enter');
   await page.keyboard.type('The end.');
   await page.waitForTimeout(300);
   const full = await state();
   check('text that does not fit goes on to a new page', full.pages === 2, JSON.stringify(full));
   check('and the caret goes with it', full.caretPage === 1, JSON.stringify(full));
-  const second = await page.$eval('[data-page-index="1"] [data-text-content]', (el) => el.firstElementChild?.textContent ?? '');
+  const second = await page.$eval('[data-page-index="1"] [data-text-content]', (el) => el.firstElementChild?.textContent ?? '').catch(() => '');
   check('a paragraph is split between the pages where its lines break', second.length > 0 && !paragraph.startsWith(second.slice(0, 20)), second.slice(0, 40));
 
   await page.keyboard.press('Control+Enter');
@@ -3714,8 +3935,8 @@ async function checkPageText(browser) {
   await page.waitForTimeout(300);
   check('Undo puts the page back', (await state()).pages === 3, JSON.stringify(await state()));
   const count = await page.textContent('[data-word-count-button]');
-  // 14 paragraphs of 48 words and "The end." ("Chapter two" went with the Undo, typed in the same breath).
-  check('the word count is the whole text, every page of it', /^\s*674 words/.test(count ?? ''), count);
+  // The paragraph's 10 + 70 × 16 words and "The end." ("Chapter two" went with the Undo, typed in the same breath).
+  check('the word count is the whole text, every page of it', /^\s*1,?132 words/.test(count ?? ''), count);
   check('no page errors', errors.length === 0, errors.join(' | '));
   await ctx.close();
 }
@@ -3922,8 +4143,35 @@ async function checkKeyboardMode(browser) {
   const after = await page.$eval('[data-media-layer-above] [data-text-content]', (el) => el.textContent).catch(() => '');
   check('typing carries on where it was', after === 'Typed on the page bold!', after);
 
+  // Click and Type, as Word has it: a click down the page puts the caret on the line clicked, not at the end of the
+  // text far above — reported as having to press Enter line by line to write in the middle of a page.
+  const lines = () =>
+    page.$$eval('[data-media-layer-above] [data-text-content] > *', (els) =>
+      els.map((el) => {
+        const r = el.getBoundingClientRect();
+        return { top: r.top, bottom: r.bottom, text: el.textContent, align: getComputedStyle(el).textAlign };
+      }),
+    );
+  const sheet = await (await page.$('[data-page-index="0"]')).boundingBox();
+  const view = await (await page.$('[data-viewer]')).boundingBox();
+  const downY = Math.min(sheet.y + 360, Math.min(sheet.y + sheet.height, view.y + view.height) - 200);
+  await page.mouse.click(sheet.x + 70, downY);
+  await page.keyboard.type('Down here');
+  const down = (await lines()).find((l) => l.text === 'Down here');
+  check('click and type: a click down the page types on the line clicked', down !== undefined && down.top - 12 <= downY && downY <= down.bottom + 12, `${JSON.stringify(down)} for a click at ${Math.round(downY)}`);
+  check('with empty lines between it and the text above', (await lines()).filter((l) => l.text === '').length >= 2);
+  await page.mouse.click(sheet.x + sheet.width / 2, downY + 80);
+  await page.keyboard.type('In the middle');
+  const middle = (await lines()).find((l) => l.text === 'In the middle');
+  check('a click in the middle of the page centres its line', middle?.align === 'center', middle?.align ?? 'no line');
+  const typedLines = (await lines()).length;
+  await page.mouse.click(sheet.x + 70, downY + 160);
+  const clickedLines = (await lines()).length;
+  check('a click lower still adds the lines down to it', clickedLines > typedLines, `${typedLines} -> ${clickedLines}`);
+
   await page.click('[data-palette-draw]');
   await page.waitForTimeout(200);
+  check('and when the caret leaves, the empty lines nothing was typed on go again', (await lines()).length === typedLines, `${clickedLines} -> ${(await lines()).length}`);
   check('the pen button turns it back into the drawing tools', !(await typing()) && (await page.$('[data-palette-keyboard]')) !== null);
   check('with the tool that was writing before', (await tool()) === 'highlighter', await tool());
   check('and the caret out of the text', !(await caret()).inText);
@@ -4438,6 +4686,7 @@ try {
     checkAppLock,
     checkBookmarks,
     checkLibraryOrganising,
+    checkLibrarySelection,
     checkReadingDrop,
     checkContents,
     checkTextSelect,

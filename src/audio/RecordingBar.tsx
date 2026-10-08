@@ -6,7 +6,7 @@ import { closePlayer, openPlayer, PLAYBACK_RATES, recordingById, seek, setRate, 
 import { formatDuration, stopRecording, useRecorderStore } from './recorder';
 
 const CARD =
-  'absolute left-3 top-3 z-40 rounded-2xl border border-zinc-200 bg-white/95 shadow-xl dark:border-zinc-700 dark:bg-zinc-900/95';
+  'absolute left-[calc(0.75rem+var(--dock-left,0px))] top-[calc(0.75rem+var(--dock-top,0px))] z-40 rounded-2xl border border-zinc-200 bg-white/95 shadow-xl dark:border-zinc-700 dark:bg-zinc-900/95';
 
 /** While recording, how long it has run and a Stop button; while playing back, the player. */
 export function RecordingBar() {

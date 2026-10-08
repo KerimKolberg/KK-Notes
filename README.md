@@ -377,9 +377,47 @@ chip bar appears once there is anything to show, so a library without them is no
   note. Putting a word in a notebook would mean rewriting (and re-syncing) the whole file, PDF and all; the cost
   is that tags do not follow a note to another device. Moving a note or folder in the library moves its entries
   (the path rewrite understands both `/` and Windows' `\`, and does not catch a folder whose name merely begins
-  the same), deleting one drops them; a note moved from outside leaves a harmless orphan.
+  the same), deleting one takes them into the recycle bin with it (below); a note moved from outside leaves a
+  harmless orphan.
 - A tag that no note carries any more, or the last favourite going, puts the view back to *All notes*
   rather than leaving it empty.
+
+**Selecting notes: copy, export, delete** (`LibraryView.tsx`, `DocumentCard.tsx`, `selection.ts`). *Select* in
+the toolbar, a right-click on a card, a press held on one with a finger or a pen (half a second, not moving), a
+Ctrl-click or the ring that shows on the corner of a card under the mouse starts selecting; then a click or a tap
+on a card selects it or takes it out again, Shift-click selects everything from the card selected last to it,
+Ctrl+A everything shown, and Escape, the ✕, or taking the last one out stops. The toolbar becomes the selection
+bar — how many, *Select all*/*none*, **Copy**, **Export** and **Delete** (icons only on a phone, so it stays one
+row) — and while selecting the cards' star and tag buttons stand aside. Folders can be selected with notes.
+
+- **Copy** puts a copy of each beside it, a number after the name (`Physics (2)`), a folder with everything in
+  it, each with the star and tags of what it copies (`copy_library_entries`, `trash.rs`).
+- **Export** saves the notes as **PDF** (the note's own export) or as **KK-Notes files** (`.notex`, to keep or
+  to open on another device) (`exportNotes.ts`): one note where a save dialog says; several into a folder chosen
+  once, a name already there given a number rather than written over (`free_file_path`); on Android, where there
+  is no folder to choose, a save dialog for each, closing one calling off the rest; in a browser, downloads.
+  Folders are not exported.
+- **Delete** asks first — in the app (`ui/ConfirmDialog.tsx`), saying what goes where, with *Cancel* the button
+  Enter presses — and then moves them to the **recycle bin**; the notice after it says so and has **Undo**. The
+  Delete key does the same. A right-click used to delete a note for good behind the browser's `confirm()`, which
+  the app's web view does not always show: the note simply vanished. Nothing deletes for good from the library
+  now except the bin.
+
+**The recycle bin** (`notes-sync/src/trash.rs`, `RecycleBin.tsx`, `trash.ts`), the bin button in the library's
+header with a count of what is in it. Deleted notes and folders stay in it for 30 days and then go for good the
+next time it is looked at; in it, each can be **put back** where it was — a folder with what was in it, folders on
+the way that have gone since made again, a name taken meanwhile given a number — or **deleted for good**, and the
+whole bin emptied, both asked about first. On the desktop the bin is a folder *beside* the library (`trash/`
+next to the library root, not inside it), so the library's listing, search and sync stop seeing what is in it —
+to the cloud a deleted note is deleted, and one put back is a new file; each item has a folder of its own,
+`trash/<id>/`, holding it under its own name with an `item.json` saying what it was and where from. Ids are
+checked to be the bin's own (digits, letters, dashes) before they are joined to a path, the place it goes back to
+is checked to be inside the library, and a move across drives falls back to copy-then-delete. A note's star and
+tags go into the bin with it (kept on this device by the bin's id, `notes.library.trashMeta.v1`) and come back
+with it. In a browser the bin is kept in `localStorage` beside the browser library, and moving in or out is all
+or nothing — when storage runs out part way, what was copied is taken back and nothing is half moved. A note
+inside a folder that is also being deleted goes with the folder rather than on its own. `scripts/ui-check.mjs`
+(`checkLibrarySelection`) drives all of it, a held finger on a phone included.
 
 ### Version history (`notes-sync/src/history.rs`, `components/VersionHistory.tsx`)
 
@@ -1009,8 +1047,16 @@ both layouts on all four docks.
 **Docking.** The palette lives on the bottom edge to begin with and can be
 dragged to any side. Push the grip towards an edge — the pointer, not the panel,
 decides, so a wide toolbar is not "near" an edge just because a corner of it is
-— and a bar lights up along that edge; let go and it docks there, centred along
-it. On the left or right it stands on end: the tools become a column that wraps
+— and a bar lights up along that edge; let go and it docks there as a **band the
+whole length of that edge, flush against it** — no gap at the edge or at the ends,
+its buttons in the middle of it — with the pages beside it rather than under it: the
+page stage sets `--dock-top`/`-right`/`-bottom`/`-left` to the band's thickness while
+it is docked and shown (`ToolPalette.tsx`), and the page view and the panels over it
+(search, bookmarks, contents, the recording bar, notices, snips) are inset by them, so
+nothing written is hidden behind the toolbar and the band is not cut short by a
+margin. Where the stage does not reach the window's edge (beside the reading pane)
+the band keeps to the stage. Dragged, or left free, it is the floating panel again. On
+the left or right it stands on end: the tools become a column that wraps
 into a second column when the window is not tall enough, the colour and
 thickness controls sit beside it in a narrow column of their own, and flyouts and
 tooltips open *away* from the edge, beside their button, instead of above it.
@@ -1069,9 +1115,11 @@ bottom.
 
 The geometry is pure and unit-tested (`src/ui/dock.ts`: `snapDock`,
 `dockedPosition`, `verticalCapacity`); `useDraggablePanel` does the pointer
-work on top of the clamping in `dragBounds.ts`. The panel is kept fully inside
-the canvas area with a 12 px margin and re-clamped whenever the window or the
-panel itself resizes, so rotating a tablet cannot strand it off-screen.
+work on top of the clamping in `dragBounds.ts`. Free, the panel is kept fully inside
+the canvas area with a 12 px margin; docked, it is flush with the edge; either way it
+is re-clamped whenever the window or the panel itself resizes, so rotating a tablet
+cannot strand it off-screen. `checkDocks` measures the band on all four edges: no
+gap, the whole length, and the pages ending where it begins.
 
 **Dragging costs React nothing.** Moving the toolbar used to set state on every
 pointer move: thirty buttons and their tooltips re-rendered at the pen's report
@@ -2096,7 +2144,7 @@ Keyboard: `Ctrl/⌘+Z` undo, `Ctrl/⌘+Shift+Z` or `Ctrl+Y` redo.
 
 Typing works as in a word processor, in two places:
 
-- **page text**, which fills the page inside 2 cm margins and **flows on to the next page** when it is full, a
+- **page text**, which fills the page inside 1 cm margins and **flows on to the next page** when it is full, a
   new page added at the end, the way Word's body text does;
 - a **text box** (the text toolbar's *Text box*, or *Add → Text box*), placed anywhere — on a PDF's page to fill
   it in, beside a drawing — and as tall as its text.
@@ -2104,8 +2152,14 @@ Typing works as in a word processor, in two places:
 **The keyboard button** (`typing/typingMode.ts`), first on the toolbar as in Samsung Notes, is the way in. It
 turns the toolbar into the **text toolbar** and puts the caret at the end of the page text on the page in view —
 making the page text first if the page has none. From then on a tap on a page puts the caret there: in its text,
-nearest the tap (a tap in the margin beside a line is a tap on that line, one below the text puts it at the end),
-or in new text on a page that has none. Text started on a page after page text is on a page of its own — a page
+nearest the tap (a tap in the margin beside a line is a tap on that line), or in new text on a page that has none.
+**Click and Type**, as Word has it (`typing/editor/clickType.ts`): a click or a tap anywhere below the text puts
+the caret on the line clicked, empty lines added down to it — not at the end of the text far above it, which left
+Enter to be pressed line by line to write in the middle of a page — and that line is set where the click was
+across the page: indented towards it, centred in the middle, set right near the right edge. A click on an empty
+line already there is set the same way. The empty lines a click added and nothing was typed on go again when the
+caret leaves the text (`flow/engine.ts`, `trimEnd`, with no Undo step of its own), so clicking around leaves no
+trail of blank lines; empty lines with text after them are kept. Text started on a page after page text is on a page of its own — a page
 break before it — so what is typed there stays there rather than running back to the end of the page before, and
 page text after it keeps its page too. The **pen button** that takes the keyboard's place at the start of the text
 toolbar puts the keyboard away (on a tablet, the on-screen one too) and goes back to the tool that was writing
@@ -2192,7 +2246,9 @@ note's words, characters with and without spaces, paragraphs and pages with text
 selection's, and — apart — the words of handwriting the recogniser has read.
 
 **Page text flowing from page to page** (`typing/flow/`). Each page with page text has one box inside its
-margins (`TextBox.flow`: no frame, no grips, beneath anything else placed on the page). Consecutive pages with
+margins (`TextBox.flow`: no frame, no grips, beneath anything else placed on the page) — 1 cm, 38 px at 96 dpi
+(`PAGE_TEXT_MARGIN`, `pageTextFrame` in `document/media.ts`), smaller on a small page; a note saved with the 2 cm
+margins of before is read with the new ones (`serialization.ts`), so its text gains the room too. Consecutive pages with
 one make a chain, and the chain's text is one text. After each change (`engine.ts`, once a frame) it flows
 again from the page before the one changed (`paginate.ts`): each page is filled, text is pulled back from the
 page after while there is room and pushed on where there is not, a paragraph split between lines where it

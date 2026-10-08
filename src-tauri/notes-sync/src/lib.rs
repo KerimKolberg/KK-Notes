@@ -22,6 +22,7 @@ pub mod provider;
 pub mod relocate;
 pub mod text;
 pub mod thumb;
+pub mod trash;
 
 pub use account::DriveAccount;
 pub use conflict::{ConflictResolution, SyncAction, SyncRecord, decide, resolve_name};
@@ -35,3 +36,4 @@ pub use oauth::{AuthSession, Pkce, RedirectTarget, TokenSet};
 pub use provider::{CloudProvider, OfflineProvider, RemoteFile};
 pub use text::{DocumentText, TextPiece, read_document_text};
 pub use thumb::{ThumbnailSource, read_thumbnail_source};
+pub use trash::TrashItem;

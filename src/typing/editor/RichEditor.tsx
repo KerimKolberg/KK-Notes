@@ -43,6 +43,7 @@ import {
   tab,
   tick,
 } from './commands';
+import { clickAndType } from './clickType';
 import { fromDoc, toDoc } from './convert';
 import { markers, ticking, typingRules } from './plugins';
 
@@ -56,6 +57,8 @@ export interface EditorEdges {
   leave(direction: 'back' | 'forward', how: 'char' | 'line' | 'page'): boolean;
   /** Ctrl+Enter: what is after the caret starts the next page. */
   pageBreak(pos: number): boolean;
+  /** The caret has left the text: empty lines at its end that nothing was typed on go (`clickType.ts`). */
+  trimEnd(): void;
 }
 
 export interface RichEditorProps {
@@ -138,6 +141,19 @@ export function RichEditor({ box, pageId, editable, placeholder, onChange, edges
         publish();
       },
       handleDOMEvents: {
+        // Page text: a click under the text, or on an empty line, puts the caret there (`clickType.ts`).
+        mousedown: (v, event) => {
+          const { box: b, editable: on } = latest.current;
+          if (!b.flow || !on || event.button !== 0 || event.shiftKey || event.detail > 1) return false;
+          if (!clickAndType(v, event.clientX, event.clientY, b.fontSize)) return false;
+          event.preventDefault();
+          return true;
+        },
+        blur: () => {
+          // Once the focus has gone somewhere — another page's text, the same text drawn again on its other layer.
+          if (latest.current.box.flow) setTimeout(() => latest.current.edges?.trimEnd(), 0);
+          return false;
+        },
         focus: () => {
           const { box: b, pageId: p } = latest.current;
           setController(controller);
@@ -258,13 +274,14 @@ export function RichEditor({ box, pageId, editable, placeholder, onChange, edges
     }
 
     // A request to put the caret here that came before the editor did (a box just inserted, text that flowed in).
+    const pageTextSize = (): number | null => (latest.current.box.flow ? latest.current.box.fontSize : null);
     const request = takeFocusRequest(latest.current.box.id);
-    if (request) place(view, request.at, request.anchor);
+    if (request) place(view, request.at, request.anchor, pageTextSize());
 
     const unsubscribe = useTypingStore.subscribe((s, prev) => {
       if (s.focusRequest === prev.focusRequest || !s.focusRequest) return;
       const r = takeFocusRequest(latest.current.box.id);
-      if (r) place(view, r.at, r.anchor);
+      if (r) place(view, r.at, r.anchor, pageTextSize());
     });
 
     return () => {
@@ -328,8 +345,12 @@ function nearest(view: EditorView, x: number, y: number): number {
   return view.posAtCoords({ left, top })?.pos ?? view.state.doc.content.size - 1;
 }
 
-/** Focus an editor and put its caret (or a selection) where it was asked for. */
-function place(view: EditorView, at: CaretTarget, anchor?: number): void {
+/**
+ * Focus an editor and put its caret (or a selection) where it was asked for. A point in page text (`pageText`, its
+ * size) below its end, or on an empty line, is Click and Type's (`clickType.ts`).
+ */
+function place(view: EditorView, at: CaretTarget, anchor?: number, pageText: number | null = null): void {
+  if (typeof at === 'object' && anchor === undefined && pageText !== null && clickAndType(view, at.x, at.y, pageText)) return;
   const size = view.state.doc.content.size;
   const pos =
     at === 'start' ? 1 : at === 'end' ? size - 1 : typeof at === 'number' ? Math.max(0, Math.min(at, size)) : Math.max(0, Math.min(nearest(view, at.x, at.y), size));

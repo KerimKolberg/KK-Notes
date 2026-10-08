@@ -22,6 +22,24 @@ export interface LibraryEntry {
   readonly childCount: number;
 }
 
+/** Something in the recycle bin (`notes-sync/src/trash.rs`, `browserLibrary.ts`). */
+export interface TrashItem {
+  /** How it is asked for: its place in the bin. */
+  readonly id: string;
+  /** The note's name, or the folder's. */
+  readonly name: string;
+  readonly isFolder: boolean;
+  /** Where it was in the library, `/`-separated, its own file name last. */
+  readonly original: string;
+  readonly deletedMs: number;
+  readonly bytes: number;
+  /** The notes in it: one for a note. */
+  readonly count: number;
+}
+
+/** How long something stays in the recycle bin before it goes for good. */
+export const TRASH_KEEP_DAYS = 30;
+
 export interface LibraryListing {
   readonly path: string;
   readonly relativePath: string;

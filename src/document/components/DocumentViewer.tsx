@@ -255,10 +255,12 @@ export const DocumentViewer = memo(function DocumentViewer({ settingsRef, curren
     <RenderProfiler id="DocumentViewer">
       <div
         ref={scrollRef}
-        className="relative h-full w-full overflow-auto bg-zinc-200 dark:bg-zinc-900"
+        className="absolute overflow-auto bg-zinc-200 dark:bg-zinc-900"
         onScroll={onScroll}
         {...gestureHandlers}
-        style={{ touchAction: 'none' }}
+        // Clear of a toolbar pinned along an edge of the stage (`ToolPalette`): the band is beside the pages, not
+        // over the last of them.
+        style={{ touchAction: 'none', top: 'var(--dock-top, 0px)', right: 'var(--dock-right, 0px)', bottom: 'var(--dock-bottom, 0px)', left: 'var(--dock-left, 0px)' }}
         data-viewer
         data-view-mode={viewMode}
         data-axis={axis}

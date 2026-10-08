@@ -297,3 +297,19 @@ describe('writing a note as pieces', () => {
     expect(documentPieces(full()).filter((p) => typeof p !== 'string' && 'base64' in p)).toHaveLength(4);
   });
 });
+
+describe('page text read back from a file', () => {
+  it('fills its page inside the margins this version keeps, wherever the file put them', () => {
+    const doc = createDocument(1);
+    const page = doc.pages[0]!;
+    const old = { kind: 'text' as const, id: 't1', x: 76, y: 76, width: page.dimensions.width - 152, height: page.dimensions.height - 152, rotation: 0, zIndex: 0, text: 'Hi', fontFamily: 'sans' as const, fontSize: 16, color: '#18181b', bold: false, italic: false, underline: false, strikethrough: false, align: 'left' as const, flow: true };
+    const placed = { ...old, id: 't2', flow: undefined, x: 300, y: 400, width: 120, height: 40 };
+    const { flow: _gone, ...box } = placed;
+    void _gone;
+    const read = fromSerializable(toSerializable({ ...doc, pages: [{ ...page, media: [old, box] }] }));
+    const [pageText, textBox] = read.pages[0]!.media;
+    expect(pageText).toMatchObject({ x: 38, y: 38, width: page.dimensions.width - 76, height: page.dimensions.height - 76 });
+    // A text box placed on the page stays where it was put.
+    expect(textBox).toMatchObject({ x: 300, y: 400, width: 120, height: 40 });
+  });
+});

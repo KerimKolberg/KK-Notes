@@ -50,7 +50,7 @@ interface Drag {
 
 /**
  * Pointer-driven dragging for a floating panel, with viewport clamping and
- * docking to the edges of its container.
+ * docking to the edges of its container — flush against the edge it is docked to.
  *
  * Positions are kept in the container's coordinate space and re-clamped
  * whenever the container or the panel changes size, so rotating a tablet or
@@ -125,7 +125,9 @@ export function useDraggablePanel({
       );
       // Not while it is being dragged: the drag owns the position until it ends.
       if (dragRef.current) return;
-      const docked = dockedPosition(dockRef.current, sizes.panel, sizes.container, PANEL_MARGIN, insetsRef.current);
+      // Docked, it is flush against its edge — no margin, and the system bars are the panel's own padding to keep
+      // clear of, not a gap in front of it.
+      const docked = dockedPosition(dockRef.current, sizes.panel, sizes.container, 0, NO_INSETS);
       setPosition((current) => {
         if (docked) return current && current.x === docked.x && current.y === docked.y ? current : docked;
         return current === null

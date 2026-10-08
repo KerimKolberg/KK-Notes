@@ -580,6 +580,19 @@ export function isLocked(item: MediaObject): boolean {
 }
 
 /**
+ * How far a page's own text keeps from the page's edges: a centimetre at the app's 96 px to the inch. Little, as
+ * Samsung Notes keeps its text: a note's page (A4 at 794 px) is read on a tablet and written on with a pen, and the
+ * space beside and above the text is space to type in.
+ */
+export const PAGE_TEXT_MARGIN = 38;
+
+/** Where a page's own text goes: the page inside its margins (smaller ones on a page too small for them). */
+export function pageTextFrame(page: PageDimensions): { x: number; y: number; width: number; height: number } {
+  const margin = Math.min(PAGE_TEXT_MARGIN, page.width / 6, page.height / 6);
+  return { x: margin, y: margin, width: Math.max(1, page.width - 2 * margin), height: Math.max(1, page.height - 2 * margin) };
+}
+
+/**
  * Typed text set in front of the handwriting. Everything else placed on a page — pictures, notes, tables and
  * typed text left behind — is under the ink.
  */

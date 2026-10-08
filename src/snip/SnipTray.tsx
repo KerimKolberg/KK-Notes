@@ -49,8 +49,8 @@ export const SnipTray = memo(function SnipTray() {
       aria-label="Snips"
       data-snip-tray
       style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}
-      className={`absolute top-3 z-30 flex max-h-[70%] w-52 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white/95 shadow-xl dark:border-zinc-700 dark:bg-zinc-900/95 ${
-        dock === 'left' ? 'right-3' : 'left-3'
+      className={`absolute top-[calc(0.75rem+var(--dock-top,0px))] z-30 flex max-h-[70%] w-52 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white/95 shadow-xl dark:border-zinc-700 dark:bg-zinc-900/95 ${
+        dock === 'left' ? 'right-[calc(0.75rem+var(--dock-right,0px))]' : 'left-[calc(0.75rem+var(--dock-left,0px))]'
       }`}
     >
       <div
