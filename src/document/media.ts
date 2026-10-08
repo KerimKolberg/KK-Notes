@@ -579,6 +579,14 @@ export function isLocked(item: MediaObject): boolean {
   return item.locked === true;
 }
 
+/**
+ * Typed text set in front of the handwriting. Everything else placed on a page — pictures, notes, tables and
+ * typed text left behind — is under the ink.
+ */
+export function isAboveInk(item: MediaObject): boolean {
+  return item.kind === 'text' && item.aboveInk === true;
+}
+
 // ---------------------------------------------------------------------------
 // Text layout
 // ---------------------------------------------------------------------------

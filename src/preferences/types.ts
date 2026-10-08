@@ -100,6 +100,11 @@ export interface Preferences {
    */
   readonly palettePinned: boolean;
   /**
+   * The toolbar as one row that slides along (one column, docked to a side), as Samsung Notes' does, rather than
+   * wrapping onto as many lines as it takes to show everything at once. On unless turned off.
+   */
+  readonly paletteSlide: boolean;
+  /**
    * What the pen's buttons do.
    *
    * Here rather than in the tool settings because tool settings start from their

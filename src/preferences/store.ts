@@ -49,6 +49,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   paletteOrder: DEFAULT_PALETTE_ORDER,
   paletteDock: 'bottom',
   palettePinned: true,
+  paletteSlide: true,
   pointerStyle: 'cross',
   stylus: DEFAULT_STYLUS_SETTINGS,
   lowLatencyInk: false,
@@ -193,6 +194,8 @@ export function normalize(stored: unknown): Preferences {
     // Pinned unless it was explicitly unpinned: a mangled value must not make the
     // toolbar start disappearing on someone.
     palettePinned: record.palettePinned !== false,
+    // Sliding unless it was turned off; a toolbar from before there was a choice slides too.
+    paletteSlide: record.paletteSlide !== false,
     pointerStyle: normalizePointerStyle(record.pointerStyle),
     stylus: normalizeStylus(record.stylus),
     // Strictly `true`: anything else, including a stale or mangled value, is off.
@@ -245,6 +248,7 @@ export interface PreferencesStore extends Preferences {
   setPageDefaults: (defaults: PageDefaults | null) => void;
   setPaletteDock: (dock: PaletteDock) => void;
   setPalettePinned: (pinned: boolean) => void;
+  setPaletteSlide: (slide: boolean) => void;
   setPointerStyle: (style: PointerStyle) => void;
   setStylus: (stylus: StylusSettings) => void;
   setLowLatencyInk: (enabled: boolean) => void;
@@ -263,6 +267,7 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
       paletteOrder: patch.paletteOrder ?? current.paletteOrder,
       paletteDock: patch.paletteDock ?? current.paletteDock,
       palettePinned: patch.palettePinned ?? current.palettePinned,
+      paletteSlide: patch.paletteSlide ?? current.paletteSlide,
       pointerStyle: patch.pointerStyle ?? current.pointerStyle,
       stylus: patch.stylus ?? current.stylus,
       lowLatencyInk: patch.lowLatencyInk ?? current.lowLatencyInk,
@@ -322,6 +327,7 @@ export const usePreferencesStore = create<PreferencesStore>()((set, get) => {
     setPageDefaults: (defaults) => save({ pageDefaults: defaults }),
     setPaletteDock: (dock) => save({ paletteDock: normalizeDock(dock) }),
     setPalettePinned: (pinned) => save({ palettePinned: pinned !== false }),
+    setPaletteSlide: (slide) => save({ paletteSlide: slide !== false }),
     setPointerStyle: (style) => save({ pointerStyle: normalizePointerStyle(style) }),
     setStylus: (stylus) => save({ stylus: normalizeStylus(stylus) }),
     setLowLatencyInk: (enabled) => save({ lowLatencyInk: enabled === true }),

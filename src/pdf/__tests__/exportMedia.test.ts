@@ -10,6 +10,9 @@ import { A4_DIMENSIONS, NOTE_GRIP_HEIGHT, TABLE_GRIP_HEIGHT } from '../../docume
 import { createDocument } from '../../document/operations';
 import { DEFAULT_TEXT_STYLE } from '../../document/media';
 import type { MediaObject, StickyNote, TableLayer, TextBox } from '../../document/types';
+import { DEFAULT_TOOL_SETTINGS } from '../../inking/constants';
+import { createGeometricStroke } from '../../inking/engine/shapes';
+import { styleForTool } from '../../inking/engine/toolStyles';
 import { exportDocumentToPdf } from '../export';
 import { PX_PER_POINT } from '../pdfCoords';
 
@@ -296,5 +299,42 @@ describe('exporting a text box', () => {
     // live box hides its overflow and paper cannot scroll.
     expect(lines.length).toBeGreaterThan(0);
     expect(lines.length).toBeLessThan(6);
+  });
+});
+
+describe('typed text in front of the drawings', () => {
+  const stroke = createGeometricStroke({
+    tool: 'line',
+    shape: { type: 'curve', kind: 'wave', from: { x: 100, y: 220 }, to: { x: 300, y: 220 }, amplitude: 10, cycles: 2 },
+    style: styleForTool('line', DEFAULT_TOOL_SETTINGS, 'pen'),
+    pointerType: 'pen',
+    createdAt: 0,
+  });
+
+  /** Where in the page's drawing the words are written, and where the ink is drawn. */
+  async function order(aboveInk: boolean): Promise<{ text: number; ink: number }> {
+    const base = createDocument(1);
+    const document = { ...base, pages: [{ ...base.pages[0]!, media: [{ ...textBox, aboveInk }], strokes: [stroke] }] };
+    const loaded = await PDFDocument.load(await exportDocumentToPdf(document, { includeTemplates: false }));
+    const streams = loaded.getPage(0).node.normalizedEntries().Contents!;
+    const parts: string[] = [];
+    for (let i = 0; i < streams.size(); i++) {
+      const raw = loaded.context.lookup(streams.get(i));
+      if (raw instanceof PDFRawStream) parts.push(new TextDecoder('latin1').decode(decodePDFRawStream(raw).decode()));
+    }
+    const content = parts.join('\n');
+    return { text: content.indexOf('Tj'), ink: content.search(/-?[\d.]+ -?[\d.]+ m\b/) };
+  }
+
+  it('is written after the ink, so it lies over it on paper as on the screen', async () => {
+    const front = await order(true);
+    expect(front.text).toBeGreaterThan(0);
+    expect(front.ink).toBeGreaterThan(0);
+    expect(front.text).toBeGreaterThan(front.ink);
+  });
+
+  it('and behind the drawings, before it', async () => {
+    const behind = await order(false);
+    expect(behind.text).toBeLessThan(behind.ink);
   });
 });

@@ -23,6 +23,7 @@ import {
   noteTailSize,
   noteTextLocalBox,
   imageCenter,
+  isAboveInk,
   isLocked,
   moveImage,
   removeTableColumn,
@@ -44,6 +45,8 @@ import {
 import { useViewportShift } from '../../ui/useViewportShift';
 import { usePageFlow } from '../../typing/flow/usePageFlow';
 import { RichTextCard } from '../../typing/RichTextCard';
+import { typeAt } from '../../typing/typingMode';
+import { useTypingStore } from '../../typing/typingStore';
 import { useDocumentStore } from '../store';
 import type { MediaObject, NoteShape, Page, StickyNote, TableLayer } from '../types';
 
@@ -52,6 +55,12 @@ export interface MediaLayerProps {
   zoom: number;
   /** Only the select tool interacts with media. */
   active: boolean;
+  /**
+   * Which of the page's objects: everything under the ink (the default), or the typed text set in front of it,
+   * which a second layer above the ink draws (`PageFrame.tsx`). That one never takes a press itself, only its
+   * text does, so a press anywhere else still reaches the page under it.
+   */
+  layer?: 'below' | 'above';
 }
 
 type DragKind = 'move' | 'resize' | 'rotate';
@@ -94,7 +103,7 @@ const DIVIDER_GRAB = 7;
  * Notes and tables are real HTML, not canvas: they are typed into, so they
  * need the platform's own text editing, selection and IME.
  */
-export const MediaLayer = memo(function MediaLayer({ page, zoom, active }: MediaLayerProps) {
+export const MediaLayer = memo(function MediaLayer({ page, zoom, active, layer = 'below' }: MediaLayerProps) {
   const { selectedMedia, selectMedia, updateMedia, removeMedia, bringMediaToFront, sendMediaToBack } = useDocumentStore(
     useShallow((s) => ({
       selectedMedia: s.selectedMedia,
@@ -112,7 +121,8 @@ export const MediaLayer = memo(function MediaLayer({ page, zoom, active }: Media
   const containerRef = useRef<HTMLDivElement>(null);
 
   const selectedId = selectedMedia?.pageId === page.id ? selectedMedia.mediaId : null;
-  const items = sortedByZ(page.media);
+  const above = layer === 'above';
+  const items = sortedByZ(page.media.filter((item) => isAboveInk(item) === above));
   const selected = items.find((item) => item.id === selectedId) ?? null;
   const shown = (item: MediaObject): MediaObject => (draft && draft.id === item.id ? draft : item);
 
@@ -191,11 +201,21 @@ export const MediaLayer = memo(function MediaLayer({ page, zoom, active }: Media
 
   return (
     <div
-      className="absolute inset-0 z-10"
-      style={{ pointerEvents: active ? 'auto' : 'none' }}
+      className={`absolute inset-0 ${above ? 'z-[22]' : 'z-10'}`}
+      style={{ pointerEvents: active && !above ? 'auto' : 'none' }}
       data-media-layer={page.id}
+      data-media-layer-above={above ? '' : undefined}
       onPointerDown={(e) => {
-        if (e.target === e.currentTarget || (e.target as HTMLElement).dataset.mediaCanvas !== undefined) selectMedia(null);
+        // Typing with the keyboard, a tap on the page is a place for the caret (below), not "select nothing".
+        if (onPage(e) && !useTypingStore.getState().keyboard) selectMedia(null);
+      }}
+      onMouseDown={(e) => {
+        // …and the press does not take the focus away from the text it is about to put the caret in.
+        if (onPage(e) && useTypingStore.getState().keyboard) e.preventDefault();
+      }}
+      onClick={(e) => {
+        // A tap, not the start of a scroll: the caret goes into the page's text, nearest the tap.
+        if (onPage(e) && useTypingStore.getState().keyboard) typeAt(page.id, e.clientX, e.clientY);
       }}
     >
       <div
@@ -328,6 +348,11 @@ export const MediaLayer = memo(function MediaLayer({ page, zoom, active }: Media
     </div>
   );
 });
+
+/** A press on the page itself, not on anything placed on it. */
+function onPage(e: { target: EventTarget; currentTarget: EventTarget }): boolean {
+  return e.target === e.currentTarget || (e.target as HTMLElement).dataset.mediaCanvas !== undefined;
+}
 
 /** The pointer handlers that make a grip drag its object. */
 interface BodyHandlers {
@@ -788,6 +813,8 @@ function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete
     zIndex: 10000,
     boxSizing: 'border-box',
     touchAction: 'none',
+    // Said rather than inherited: over the ink, the layer these are in takes no press itself.
+    pointerEvents: 'auto',
   });
   // Rotation handle sits above the top edge, following the box rotation.
   const rad = (item.rotation * Math.PI) / 180;
@@ -862,7 +889,7 @@ function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete
           {...drag}
         />
       )}
-      {/* A text box's actions are in the format bar docked above the pages (`typing/FormatBar.tsx`). */}
+      {/* A text box's actions are in the text toolbar the toolbar becomes (`typing/TextToolbar.tsx`). */}
       {item.kind !== 'text' && (
       <div
         role="toolbar"

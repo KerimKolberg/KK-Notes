@@ -7,6 +7,7 @@
  * the focus away — and stops being it when another box is, or when nothing is selected any more.
  */
 import { create } from 'zustand';
+import type { ToolType } from '../inking/types';
 import type { FormatCommand, FormatState } from './format';
 
 export interface EditorController {
@@ -19,8 +20,11 @@ export interface EditorController {
   selection(): { readonly anchor: number; readonly head: number };
 }
 
-/** Where to put the caret: the start, the end, or a position in the box's text (the editor's). */
-export type CaretTarget = 'start' | 'end' | number;
+/**
+ * Where to put the caret: the start, the end, a position in the box's text (the editor's), or the place in it
+ * nearest a point on the screen — where a page was tapped.
+ */
+export type CaretTarget = 'start' | 'end' | number | { readonly x: number; readonly y: number };
 
 export interface FocusRequest {
   readonly mediaId: string;
@@ -38,6 +42,13 @@ interface TypingState {
   readonly focusRequest: FocusRequest | null;
   readonly sheetOpen: boolean;
   readonly countOpen: boolean;
+  /**
+   * Typing with the keyboard (`typingMode.ts`): the toolbar is the text toolbar and a tap on a page puts the caret
+   * there, until the pen button takes the toolbar back to drawing.
+   */
+  readonly keyboard: boolean;
+  /** The tool the pen button goes back to: the one that was writing before the keyboard was. */
+  readonly returnTool: ToolType;
 }
 
 export const useTypingStore = create<TypingState>()(() => ({
@@ -47,6 +58,8 @@ export const useTypingStore = create<TypingState>()(() => ({
   focusRequest: null,
   sheetOpen: false,
   countOpen: false,
+  keyboard: false,
+  returnTool: 'pen',
 }));
 
 export function setController(controller: EditorController): void {

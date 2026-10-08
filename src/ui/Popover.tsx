@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { fixedPlacement, useAnchorRect, useFloatingMode, viewportSize } from './floating';
 import { useViewportShift } from './useViewportShift';
 
 export type PopoverSide = 'top' | 'bottom' | 'left' | 'right';
@@ -42,16 +43,24 @@ const ALIGN_BESIDE = {
   end: 'bottom-0',
 };
 
+/** The element a popover belongs to: the one that holds it and its trigger. */
+const holder = (el: HTMLElement): HTMLElement | null => el.parentElement;
+
 /**
  * Small anchored panel used by the palette's flyouts. Closes on Escape, on a
  * pointer press outside it, and whenever the trigger asks. The caller wraps
  * trigger + popover in a `relative` element.
+ *
+ * Inside a toolbar that slides (`floating.ts`) it is placed on the screen beside
+ * that element instead of inside it, so the strip's edge does not cut it off.
  */
 export function Popover({ open, onClose, label, side = 'top', align = 'center', children }: PopoverProps) {
   // On a phone a flyout centred on a button near the edge would hang off it.
   // Beside a standing toolbar the edge in question is the top or bottom.
   const beside = side === 'left' || side === 'right';
   const { ref, shift } = useViewportShift<HTMLDivElement>(open, undefined, beside ? 'y' : 'x');
+  const fixed = useFloatingMode() === 'fixed';
+  const anchor = useAnchorRect(ref, open && fixed, holder);
 
   useEffect(() => {
     if (!open) return;
@@ -83,8 +92,10 @@ export function Popover({ open, onClose, label, side = 'top', align = 'center', 
       role="group"
       aria-label={label}
       data-popover={label}
-      className={`absolute z-40 w-max max-w-[calc(100vw-1rem)] rounded-2xl border border-zinc-200 bg-white/95 p-2 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900/95 ${SIDE[side]} ${beside ? ALIGN_BESIDE[align] : ALIGN[align]}`}
+      className={`${fixed ? 'fixed' : `absolute ${SIDE[side]} ${beside ? ALIGN_BESIDE[align] : ALIGN[align]}`} z-40 w-max max-w-[calc(100vw-1rem)] rounded-2xl border border-zinc-200 bg-white/95 p-2 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900/95`}
       style={{
+        // Fixed, it waits for its place before it is seen.
+        ...(fixed ? (anchor ? fixedPlacement(side, align, anchor, viewportSize()) : { visibility: 'hidden' as const }) : {}),
         transform: beside
           ? align === 'center'
             ? `translateY(calc(-50% + ${shift}px))`

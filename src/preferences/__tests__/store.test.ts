@@ -233,6 +233,25 @@ describe('pinning the toolbar', () => {
   });
 });
 
+describe('a toolbar that slides', () => {
+  it('is how the toolbar starts, as one line like Samsung Notes\'', () => {
+    expect(DEFAULT_PREFERENCES.paletteSlide).toBe(true);
+    expect(normalize({}).paletteSlide).toBe(true);
+  });
+
+  it('can be turned back into the toolbar that wraps, and is remembered so', () => {
+    usePreferencesStore.getState().setPaletteSlide(false);
+    expect(usePreferencesStore.getState().paletteSlide).toBe(false);
+    expect(normalize({ paletteSlide: false }).paletteSlide).toBe(false);
+    usePreferencesStore.getState().resetPreferences();
+    expect(usePreferencesStore.getState().paletteSlide).toBe(true);
+  });
+
+  it('reads anything but a real false as sliding', () => {
+    for (const junk of ['false', 0, null, {}, 'no']) expect(normalize({ paletteSlide: junk }).paletteSlide).toBe(true);
+  });
+});
+
 describe('a fullscreen style saved by an earlier version', () => {
   it('is ignored: there is one way to go fullscreen now, and it is the borderless window', () => {
     const read = normalize({ fullscreenStyle: 'screen', palettePinned: false });

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { DraftingCompass, FileText, Image as ImageIcon, Ruler as RulerIcon, StickyNote, Table, Type, ZoomIn } from 'lucide-react';
+import { DraftingCompass, Image as ImageIcon, Ruler as RulerIcon, StickyNote, Table, Type, ZoomIn } from 'lucide-react';
 import { Chip, Row } from '../../inking/palette/parts';
 import { useAidStore } from '../aids';
 import { useDocumentStore } from '../store';
@@ -27,8 +27,6 @@ export interface InsertMenuProps {
   onInsertImage: () => void;
   onInsertNote: (init: NoteInit) => void;
   onInsertText: () => void;
-  /** Types on the page itself, inside its margins, the text flowing on to the next page (page text). */
-  onTypeOnPage: () => void;
   onInsertTable: (init: TableInit) => void;
   /** Closes the popover the menu is rendered in. */
   onDone: () => void;
@@ -49,7 +47,7 @@ const COLUMNS = Array.from({ length: MAX_TABLE_COLUMNS }, (_, i) => i + 1);
  * adding and removing rows one at a time, and the line weight is part of what
  * the table is for (a faint grid to write over, or a hard-ruled one).
  */
-export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onTypeOnPage, onInsertTable, onDone }: InsertMenuProps) {
+export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onInsertTable, onDone }: InsertMenuProps) {
   const [noteShape, setNoteShape] = useState<NoteShape>('rectangle');
   const [rows, setRows] = useState(DEFAULT_TABLE_ROWS);
   const [columns, setColumns] = useState(DEFAULT_TABLE_COLUMNS);
@@ -100,19 +98,6 @@ export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onTypeOn
       >
         <Type size={18} aria-hidden="true" />
         Text box
-      </button>
-      <button
-        type="button"
-        className={ENTRY}
-        data-type-on-page
-        title="Write on the page with the keyboard, like a word processor: the text fills the page and goes on to the next"
-        onClick={() => {
-          onTypeOnPage();
-          onDone();
-        }}
-      >
-        <FileText size={18} aria-hidden="true" />
-        Type on the page
       </button>
       <div className="flex items-center gap-1">
         <button

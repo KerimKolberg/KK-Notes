@@ -7,12 +7,13 @@
  * browser in `measure.ts`), in the same step of Undo: undoing a keystroke that pushed a line to a new page takes
  * the page away again.
  */
+import { flushSync } from 'react-dom';
 import { createPage } from '../../document/operations';
 import { blockLength, sliceRuns } from '../../document/richText';
 import { useDocumentStore, type TextEdit } from '../../document/store';
 import type { Page, RichBlock, RichText, TextBox } from '../../document/types';
 import { requestFocus, useTypingStore, type CaretTarget } from '../typingStore';
-import { createFlowBox } from './geometry';
+import { bottomZIndex, createFlowBox } from './geometry';
 import { domMeasurer } from './measure';
 import { chainAround, flowBoxOf, reflow, type FlowMeasurer, type FlowPosition } from './paginate';
 
@@ -95,12 +96,21 @@ function newPageAfter(after: Page): Page {
     },
     after.pageNumber + 1,
   );
-  const previous = flowBoxOf(after);
   const box = createFlowBox(page, 0);
-  const styled: TextBox = previous
-    ? { ...box, fontFamily: previous.fontFamily, fontSize: previous.fontSize, color: previous.color, align: previous.align }
-    : box;
-  return { ...page, media: [styled] };
+  return { ...page, media: [styledLike(box, flowBoxOf(after))] };
+}
+
+/** A new page's text set like the page text it continues: its style, and in front of the ink or behind it. */
+function styledLike(box: TextBox, source: TextBox | null | undefined): TextBox {
+  if (!source) return box;
+  return {
+    ...box,
+    fontFamily: source.fontFamily,
+    fontSize: source.fontSize,
+    color: source.color,
+    align: source.align,
+    ...(source.aboveInk ? { aboveInk: true } : {}),
+  };
 }
 
 /** Flow a chain's text again from page `pageId` on; the caret, if given (or where it is), follows its text. */
@@ -273,22 +283,56 @@ export function pageBreakAt(pageId: string, pos: number): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Type on a page: put the caret in its page text, making it first if it has none. Returns the box.
+ * Type on a page: put the caret in its page text — at its end, or nearest a point on the screen — making the text
+ * first if the page has none. Returns the box.
  */
-export function typeOnPage(index: number): TextBox | null {
+export function typeOnPage(index: number, at: CaretTarget = 'end'): TextBox | null {
   const store = useDocumentStore.getState();
   if (store.readOnly) return null;
   const page = store.document.pages[index];
   if (!page) return null;
   let box = flowBoxOf(page);
   if (!box) {
-    box = createFlowBox(page, page.media.reduce((low, m) => Math.min(low, m.zIndex), 1) - 1);
+    // Next to page text already there, it is more of that text, and set like it — but it starts on this page and
+    // stays on it, as text after a page break does in a word processor: what is typed here neither runs back to the
+    // end of the text on the page before nor pulls up the text of the page after.
+    const pages = store.document.pages;
+    const before = flowBoxOf(pages[index - 1]);
+    const after = flowBoxOf(pages[index + 1]);
+    box = styledLike(createFlowBox(page, bottomZIndex(page)), before ?? after);
+    if (before) box = { ...box, rich: { blocks: [{ runs: [], pageBreak: true }] } };
     store.addMedia(page.id, box);
+    const next = pages[index + 1];
+    const first = after ? blocksOf(after)[0] : undefined;
+    if (next && after && first && !first.pageBreak) {
+      store.updateMedia(next.id, after.id, withBlocks([{ ...without(first, 'cont'), pageBreak: true }, ...blocksOf(after).slice(1)]));
+    }
   } else {
     store.selectMedia({ pageId: page.id, mediaId: box.id });
   }
-  requestFocus(box.id, 'end');
+  requestFocus(box.id, at);
   return box;
+}
+
+/**
+ * Put typed text in front of the handwriting, or behind it: a text box on its own, or page text — all of it, every
+ * page, since it is one text. One step of Undo. The text moves to the layer over the ink (or back under it) and its
+ * editor starts again there, so the caret is put back where it was.
+ */
+export function setAboveInk(pageId: string, mediaId: string, above: boolean): void {
+  const store = useDocumentStore.getState();
+  if (store.readOnly) return;
+  const item = store.document.pages.find((p) => p.id === pageId)?.media.find((m) => m.id === mediaId);
+  if (!item || item.kind !== 'text') return;
+  const boxes = item.flow ? chainBoxes(store.document.pages, pageId) : [{ pageId, box: item }];
+  const edits = boxes.filter(({ box }) => (box.aboveInk === true) !== above).map(({ pageId: p, box }) => ({ pageId: p, mediaId: box.id, patch: { aboveInk: above } }));
+  if (edits.length === 0) return;
+  const controller = useTypingStore.getState().controller;
+  const caret = controller?.mediaId === mediaId ? controller.selection() : null;
+  // Drawn at once, so the request for the caret finds the new editor: asked while the old one is still there,
+  // that one would take it, and go.
+  flushSync(() => store.editTexts(edits, 'format'));
+  if (caret) requestFocus(mediaId, caret.head, caret.anchor);
 }
 
 /** Every box of the chain of page text a page is in, in page order. */

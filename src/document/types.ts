@@ -246,6 +246,11 @@ export interface TextBox extends MediaBox, TextStyle {
    * as a word processor's does (`document/flow.ts`). At most one per page; it is not moved or resized.
    */
   readonly flow?: boolean;
+  /**
+   * Drawn in front of the handwriting rather than behind it, as Samsung Notes can put typed text. Absent is
+   * behind, where typed text has always been. Page text is one text, so every page of it is set the same.
+   */
+  readonly aboveInk?: boolean;
 }
 
 export type MediaObject = ImageLayer | StickyNote | TableLayer | TextBox;

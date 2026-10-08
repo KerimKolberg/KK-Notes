@@ -1065,16 +1065,18 @@ async function openPenDocument(browser, stylus, contextOptions = {}) {
 }
 
 /**
- * Where the colours and the tools stand on each dock. The tools are against the
- * edge the bar is docked to and the colours on the side facing the page, so the
- * right dock mirrors the left and the bottom mirrors the top; standing on end, the
- * settings button heads the column of colours rather than ending the tools.
+ * Where everything stands on each dock. Sliding (the default), the toolbar is one line along its edge — the
+ * keyboard first, then the tools, the colours and last the settings — one button thick, whichever edge it is on.
+ *
+ * Wrapping (the setting turned off), it is as it was: the tools against the edge the bar is docked to and the
+ * colours on the side facing the page, so the right dock mirrors the left and the bottom mirrors the top; standing
+ * on end, the settings button heads the column of colours rather than ending the tools.
  */
 async function checkDocks(browser) {
   console.log('dock layouts, 1280x800:');
-  const geometry = async (dock) => {
+  const geometry = async (dock, slide) => {
     const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
-    await ctx.addInitScript((d) => localStorage.setItem('notes.preferences.v1', JSON.stringify({ paletteDock: d })), dock);
+    await ctx.addInitScript(([d, sl]) => localStorage.setItem('notes.preferences.v1', JSON.stringify({ paletteDock: d, paletteSlide: sl })), [dock, slide]);
     const page = await ctx.newPage();
     await openDocument(page);
     await page.waitForSelector('[data-tool-palette]', { state: 'visible', timeout: 10_000 });
@@ -1082,34 +1084,57 @@ async function checkDocks(browser) {
     const found = await page.evaluate(() => {
       const box = (el) => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, cx: r.left + r.width / 2, cy: r.top + r.height / 2 }; };
       const swatches = [...document.querySelectorAll('[data-swatch]')].map((el) => box(el));
+      const scroller = document.querySelector('[data-slide-scroller]');
       return {
         settings: box(document.querySelector('[data-palette-settings-trigger]')),
+        keyboard: box(document.querySelector('[data-palette-keyboard]')),
         pen: box(document.querySelector('[data-palette-tool="pen"]')),
         config: box(document.querySelector('[data-tool-config]')),
         swatches,
         panel: box(document.querySelector('[data-tool-palette]')),
+        stage: box(document.querySelector('[data-page-stage]')),
+        vw: window.innerWidth,
+        vh: window.innerHeight,
+        scroller: scroller ? { scrollW: scroller.scrollWidth, w: scroller.clientWidth, scrollH: scroller.scrollHeight, h: scroller.clientHeight } : null,
       };
     });
     await ctx.close();
     return found;
   };
 
-  const left = await geometry('left');
-  check('left: the settings button sits over the colours, in their column', Math.abs(left.settings.cx - left.swatches[0].cx) <= 2 && left.settings.b <= left.swatches[0].t, `${Math.round(left.settings.cx)} vs ${Math.round(left.swatches[0].cx)}`);
-  check('left: the tools are on the outside, the colours on the inside', left.pen.cx < left.swatches[0].cx);
-  check('left: the colours fill the height the tools leave, not a third column', left.panel.r - left.swatches[0].r < 20, `${Math.round(left.panel.r - left.swatches[0].r)}px to the edge`);
+  for (const dock of ['bottom', 'top', 'left', 'right']) {
+    const g = await geometry(dock, true);
+    const vertical = dock === 'left' || dock === 'right';
+    const along = (b) => (vertical ? b.cy : b.cx);
+    const across = (b) => (vertical ? b.cx : b.cy);
+    const line = [g.pen, g.swatches[0], g.settings];
+    check(`sliding, ${dock}: one line — the pen, the colours and the settings are all on it`, line.every((b) => Math.abs(across(b) - across(g.keyboard)) <= 3), JSON.stringify(line.map((b) => Math.round(across(b)))));
+    check(`sliding, ${dock}: the keyboard comes first, before the tools`, along(g.keyboard) < along(g.pen));
+    check(`sliding, ${dock}: and the settings last, after the colours`, along(g.settings) > along(g.swatches[g.swatches.length - 1]));
+    const thick = vertical ? g.panel.r - g.panel.l : g.panel.b - g.panel.t;
+    check(`sliding, ${dock}: it is one button thick`, thick <= 60, `${Math.round(thick)}px`);
+    check(`sliding, ${dock}: it is inside the window`, g.panel.l >= 0 && g.panel.t >= 0 && g.panel.r <= g.vw && g.panel.b <= g.vh, JSON.stringify(g.panel));
+    const edge = { bottom: g.stage.b - g.panel.b, top: g.panel.t - g.stage.t, left: g.panel.l - g.stage.l, right: g.stage.r - g.panel.r }[dock];
+    check(`sliding, ${dock}: against its edge`, edge < 24, `${Math.round(edge)}px away`);
+  }
 
-  const right = await geometry('right');
-  check('right: the settings button sits over the colours too', Math.abs(right.settings.cx - right.swatches[0].cx) <= 2 && right.settings.b <= right.swatches[0].t);
-  check('right: the tools are on the outside (right), the colours on the inside', right.pen.cx > right.swatches[0].cx);
-  check('right mirrors left', Math.abs((left.pen.l - left.panel.l) - (right.panel.r - right.pen.r)) <= 2 && Math.abs((left.swatches[0].l - left.panel.l) - (right.panel.r - right.swatches[0].r)) <= 2, JSON.stringify({ l: left.pen.l - left.panel.l, r: right.panel.r - right.pen.r }));
+  const left = await geometry('left', false);
+  check('wrapping, left: the settings button sits over the colours, in their column', Math.abs(left.settings.cx - left.swatches[0].cx) <= 2 && left.settings.b <= left.swatches[0].t, `${Math.round(left.settings.cx)} vs ${Math.round(left.swatches[0].cx)}`);
+  check('wrapping, left: the tools are on the outside, the colours on the inside', left.pen.cx < left.swatches[0].cx);
+  check('wrapping, left: the colours fill the height the tools leave, not a third column', left.panel.r - left.swatches[0].r < 20, `${Math.round(left.panel.r - left.swatches[0].r)}px to the edge`);
 
-  const top = await geometry('top');
-  const bottom = await geometry('bottom');
-  check('top: the tools are on the edge, the colours below them', top.pen.cy < top.swatches[0].cy);
-  check('bottom: the tools are on the edge, the colours above them', bottom.pen.cy > bottom.swatches[0].cy);
-  check('top mirrors bottom', Math.abs((top.pen.t - top.panel.t) - (bottom.panel.b - bottom.pen.b)) <= 2 && Math.abs((top.swatches[0].t - top.panel.t) - (bottom.panel.b - bottom.swatches[0].b)) <= 2);
-  check('on a row the settings button stays with the tools', top.settings.cy === top.pen.cy || Math.abs(top.settings.cy - top.pen.cy) <= 2);
+  const right = await geometry('right', false);
+  check('wrapping, right: the settings button sits over the colours too', Math.abs(right.settings.cx - right.swatches[0].cx) <= 2 && right.settings.b <= right.swatches[0].t);
+  check('wrapping, right: the tools are on the outside (right), the colours on the inside', right.pen.cx > right.swatches[0].cx);
+  check('wrapping, right mirrors left', Math.abs((left.pen.l - left.panel.l) - (right.panel.r - right.pen.r)) <= 2 && Math.abs((left.swatches[0].l - left.panel.l) - (right.panel.r - right.swatches[0].r)) <= 2, JSON.stringify({ l: left.pen.l - left.panel.l, r: right.panel.r - right.pen.r }));
+
+  const top = await geometry('top', false);
+  const bottom = await geometry('bottom', false);
+  check('wrapping, top: the tools are on the edge, the colours below them', top.pen.cy < top.swatches[0].cy);
+  check('wrapping, bottom: the tools are on the edge, the colours above them', bottom.pen.cy > bottom.swatches[0].cy);
+  check('wrapping, top mirrors bottom', Math.abs((top.pen.t - top.panel.t) - (bottom.panel.b - bottom.pen.b)) <= 2 && Math.abs((top.swatches[0].t - top.panel.t) - (bottom.panel.b - bottom.swatches[0].b)) <= 2);
+  check('wrapping, on a row the settings button stays with the tools', top.settings.cy === top.pen.cy || Math.abs(top.settings.cy - top.pen.cy) <= 2);
+  check('wrapping, the keyboard is with the tools', Math.abs(top.keyboard.cy - top.pen.cy) <= 2 && top.keyboard.cx < top.pen.cx);
 }
 
 /**
@@ -1874,11 +1899,11 @@ async function checkSearch(browser) {
 
   await page.fill('[data-search-input]', 'lemon');
   await page.waitForSelector('[data-search-hit]');
-  // Each result brings its own object under the selection: a text box's tools are the format bar, the note has
-  // a shape picker in its toolbar.
+  // Each result brings its own object under the selection: a text box's tools are the text toolbar the toolbar
+  // turns into, the note has a shape picker in its toolbar.
   const noteTools = "[data-media-toolbar] [data-note-shape-option]";
   await page.click('[data-search-hit][data-search-hit-kind="text"]');
-  await page.waitForSelector('[data-format-bar]', { timeout: 3_000 });
+  await page.waitForSelector('[data-tool-palette][data-typing="true"]', { timeout: 3_000 });
   check('choosing the text box result selects the text box', (await page.$(noteTools)) === null);
   await page.click('[data-search-hit][data-search-hit-kind="note"]');
   await page.waitForSelector(noteTools, { timeout: 3_000 });
@@ -3556,7 +3581,7 @@ async function checkTyping(browser) {
   await page.waitForSelector('[data-text-content]', { timeout: 10_000 });
   await page.waitForFunction(() => document.activeElement?.hasAttribute('data-text-content'), null, { timeout: 5_000 }).catch(() => {});
   check('a new text box takes the keyboard straight away', await page.evaluate(() => document.activeElement?.hasAttribute('data-text-content')));
-  check('the format bar is there', (await page.$('[data-format-bar]')) !== null);
+  check('the toolbar is the text toolbar', (await page.$('[data-tool-palette][data-typing="true"] [data-format-bar]')) !== null);
 
   await page.keyboard.type('# Plan');
   await page.keyboard.press('Enter');
@@ -3641,7 +3666,7 @@ async function checkTyping(browser) {
 }
 
 /**
- * Typing on the page, as in a word processor: a new typed document has the caret in its page; text that does not
+ * Typing on the page, as in a word processor: the keyboard button puts the caret in the page; text that does not
  * fit goes on to a new page, mid-paragraph if it has to, with the caret following; Ctrl+Enter starts a page;
  * Backspace at the top of it takes the break away and the text comes back; and Undo puts it all back.
  */
@@ -3651,12 +3676,11 @@ async function checkPageText(browser) {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('[data-new-typed-document]', { timeout: 20_000 });
-  await page.click('[data-new-typed-document]');
+  await openDocument(page);
+  await page.click('[data-palette-keyboard]');
   await page.waitForSelector('[data-text-flow] [data-text-content]', { timeout: 20_000 });
   await page.waitForFunction(() => document.activeElement?.closest('[data-text-flow]') !== null, null, { timeout: 5_000 }).catch(() => {});
-  check('a new typed document has the caret on its page', await page.evaluate(() => document.activeElement?.closest('[data-text-flow]') !== null));
+  check('the keyboard button puts the caret on the page', await page.evaluate(() => document.activeElement?.closest('[data-text-flow]') !== null));
   const state = () =>
     page.evaluate(() => {
       const pages = [...document.querySelectorAll('[data-page-index]')];
@@ -3692,6 +3716,270 @@ async function checkPageText(browser) {
   const count = await page.textContent('[data-word-count-button]');
   // 14 paragraphs of 48 words and "The end." ("Chapter two" went with the Undo, typed in the same breath).
   check('the word count is the whole text, every page of it', /^\s*674 words/.test(count ?? ''), count);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
+ * The toolbar as one line that slides, like Samsung Notes'. On a phone the bottom bar is a single row however many
+ * tools there are, and it slides along: a wheel turns it, the pen or the mouse drags it (and a drag that slides is not
+ * a press of the button it began on), the arrow at its end moves it on. Flyouts and tooltips from it are drawn whole,
+ * not cut off at its edge. Standing on a side it is one column that slides up and down; and the setting turns it back
+ * into the toolbar that wraps.
+ */
+async function checkSlidingToolbar(browser) {
+  console.log('the sliding toolbar, 412x915 and 1280x560:');
+  const errors = [];
+  {
+    const ctx = await browser.newContext({ viewport: { width: 412, height: 915 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await openDocument(page);
+    await page.waitForSelector('[data-tool-palette]', { state: 'visible', timeout: 10_000 });
+    await page.waitForTimeout(300);
+    const strip = () => page.$eval('[data-slide-scroller]', (el) => ({ left: Math.round(el.scrollLeft), room: el.scrollWidth - el.clientWidth, touch: getComputedStyle(el).touchAction }));
+    const bar = await (await page.$('[data-tool-palette]')).boundingBox();
+    check('on a phone the toolbar is one row', bar.height <= 60, `${Math.round(bar.width)}x${Math.round(bar.height)}`);
+    check('inside the screen', bar.x >= 0 && bar.x + bar.width <= 412, `${Math.round(bar.x)}..${Math.round(bar.x + bar.width)}`);
+    const start = await strip();
+    check('with more in it than fits, to slide to', start.room > 100, `${start.room}px more`);
+    check('a finger slides it sideways', start.touch === 'pan-x', start.touch);
+    check('an arrow says there is more to the right, none to the left', (await page.$('[data-slide-more="after"]')) !== null && (await page.$('[data-slide-more="before"]')) === null);
+
+    const scroller = await (await page.$('[data-slide-scroller]')).boundingBox();
+    await page.mouse.move(scroller.x + scroller.width / 2, scroller.y + scroller.height / 2);
+    await page.mouse.wheel(0, 240);
+    await page.waitForTimeout(150);
+    check('a mouse wheel slides it along', (await strip()).left > 100, `${(await strip()).left}`);
+    check('and then an arrow points back to the start', (await page.$('[data-slide-more="before"]')) !== null);
+    await page.mouse.wheel(0, -3000);
+    await page.waitForTimeout(150);
+
+    // A drag along it, as a pen makes: it slides, and the button it began on is not pressed by it.
+    const hl = await (await page.$('[data-palette-tool="highlighter"]')).boundingBox();
+    await page.mouse.move(hl.x + hl.width / 2, hl.y + hl.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(hl.x + hl.width / 2 - 170, hl.y + hl.height / 2, { steps: 10 });
+    await page.mouse.up();
+    await page.waitForTimeout(150);
+    const dragged = await strip();
+    check('dragging along it slides it', dragged.left > 120, `${dragged.left}`);
+    const active = await page.$eval('[data-palette-tool][aria-pressed="true"]', (el) => el.getAttribute('data-palette-tool')).catch(() => 'none');
+    check('and does not press the button the drag began on', active === 'pen', active);
+
+    await page.mouse.wheel(0, -3000);
+    await page.waitForTimeout(150);
+    await page.click('[data-slide-more="after"]');
+    await page.waitForTimeout(700);
+    check('the arrow slides it on', (await strip()).left > 100, `${(await strip()).left}`);
+
+    // A flyout from far along it is drawn whole, above the bar.
+    await page.mouse.move(scroller.x + scroller.width / 2, scroller.y + scroller.height / 2);
+    await page.mouse.wheel(0, 3000);
+    await page.waitForTimeout(150);
+    await page.click('[data-palette-tool="eraser"]');
+    await page.click('[data-palette-tool="eraser"]');
+    const pop = await page.waitForSelector('[data-popover="Eraser"]', { state: 'visible', timeout: 3_000 }).then(() => true, () => false);
+    check('a flyout opens from a tool slid into view', pop);
+    if (pop) {
+      const g = await page.evaluate(() => {
+        const p = document.querySelector('[data-popover="Eraser"]').getBoundingClientRect();
+        const barTop = document.querySelector('[data-tool-palette]').getBoundingClientRect().top;
+        const hit = document.elementFromPoint(p.left + p.width / 2, p.top + Math.min(24, p.height / 2));
+        return { t: Math.round(p.top), b: Math.round(p.bottom), l: Math.round(p.left), r: Math.round(p.right), barTop: Math.round(barTop), shown: hit?.closest('[data-popover="Eraser"]') != null };
+      });
+      check('drawn whole, not cut off at the bar\'s edge', g.shown && g.t >= 0 && g.l >= 0 && g.r <= 412, JSON.stringify(g));
+      check('above the bar', g.b <= g.barTop + 1, `${g.b} vs ${g.barTop}`);
+      await page.keyboard.press('Escape');
+    }
+    await page.hover('[data-palette-settings-trigger]');
+    const tip = await page.waitForSelector('[role="tooltip"]', { state: 'visible', timeout: 2_000 }).then(() => true, () => false);
+    const placed = tip
+      ? await page.evaluate(() => {
+          const t = document.querySelector('[role="tooltip"]');
+          const r = t.getBoundingClientRect();
+          return { fixed: getComputedStyle(t).position === 'fixed', b: Math.round(r.bottom), barTop: Math.round(document.querySelector('[data-tool-palette]').getBoundingClientRect().top) };
+        })
+      : null;
+    check('a tooltip from it is placed on the screen, above the bar', placed !== null && placed.fixed && placed.b <= placed.barTop + 1, JSON.stringify(placed));
+    await ctx.close();
+  }
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 560 } });
+    await ctx.addInitScript(() => localStorage.setItem('notes.preferences.v1', JSON.stringify({ paletteDock: 'left' })));
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => errors.push(e.message));
+    await openDocument(page);
+    await page.waitForSelector('[data-tool-palette]', { state: 'visible', timeout: 10_000 });
+    await page.waitForTimeout(300);
+    const column = () => page.$eval('[data-slide-scroller]', (el) => ({ top: Math.round(el.scrollTop), room: el.scrollHeight - el.clientHeight, touch: getComputedStyle(el).touchAction }));
+    const c = await column();
+    check('on a side in a short window it is one column, with more to slide to', c.room > 50, `${c.room}px more`);
+    check('a finger slides it up and down', c.touch === 'pan-y', c.touch);
+    const panel = await (await page.$('[data-tool-palette]')).boundingBox();
+    check('it fits the window, one button wide', panel.y >= 0 && panel.y + panel.height <= 560 && panel.width <= 60, `${Math.round(panel.y)}..${Math.round(panel.y + panel.height)}, ${Math.round(panel.width)} wide`);
+    check('an arrow at its foot says there is more below', (await page.$('[data-slide-more="after"]')) !== null);
+    const scroller = await (await page.$('[data-slide-scroller]')).boundingBox();
+    await page.mouse.move(scroller.x + scroller.width / 2, scroller.y + scroller.height / 2);
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(200);
+    check('the wheel slides it down', (await column()).top > 50, `${(await column()).top}`);
+    await page.mouse.wheel(0, -3000);
+    await page.waitForTimeout(200);
+    const lasso = await (await page.$('[data-palette-tool="lasso"]')).boundingBox();
+    await page.mouse.move(lasso.x + lasso.width / 2, lasso.y + lasso.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(lasso.x + lasso.width / 2, lasso.y + lasso.height / 2 - 150, { steps: 10 });
+    await page.mouse.up();
+    await page.waitForTimeout(150);
+    check('a drag up it slides it, as a pen would', (await column()).top > 100, `${(await column()).top}`);
+
+    // Wrapping again, from the settings.
+    await page.mouse.wheel(0, 3000);
+    await page.waitForTimeout(200);
+    await page.click('[data-palette-settings-trigger]');
+    await page.waitForSelector('[data-palette-slide]', { state: 'visible', timeout: 3_000 });
+    await page.click('[data-palette-slide]');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    const wrapped = await page.$eval('[data-tool-palette]', (el) => ({ slide: el.getAttribute('data-slide'), strips: document.querySelectorAll('[data-slide-scroller]').length, w: el.getBoundingClientRect().width }));
+    check('the setting turns it back into the toolbar that wraps', wrapped.slide === 'false' && wrapped.strips === 0 && wrapped.w > 70, JSON.stringify(wrapped));
+    await ctx.close();
+  }
+  check('no page errors', errors.length === 0, errors.join(' | '));
+}
+
+/**
+ * The keyboard button, as in Samsung Notes: first on the toolbar, it turns the toolbar into the text toolbar and puts
+ * the caret in the page's text, and the pen button there turns it back, with the tool that was writing before. A tap
+ * on a page puts the caret there — in new text, on a page that has none. Typed text goes in front of the drawings or
+ * behind them, keeping the caret, and the pen still writes over text in front of it. With the select tool, a text box
+ * selected makes the toolbar the text toolbar until something else is. The library's "New typed document" and the Add
+ * menu's "Type on the page" are gone: this is the way in.
+ */
+async function checkKeyboardMode(browser) {
+  console.log('the keyboard button, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-new-document]', { timeout: 20_000 });
+  check('the library has no "New typed document" any more', (await page.$('[data-new-typed-document]')) === null);
+  await page.click('[data-new-document]');
+  await page.waitForSelector('[data-palette-keyboard]', { state: 'visible', timeout: 20_000 });
+  await page.waitForTimeout(300);
+
+  const keyboard = await (await page.$('[data-palette-keyboard]')).boundingBox();
+  const select = await (await page.$('[data-palette-tool="select"]')).boundingBox();
+  check('the keyboard button comes first, before the tools', keyboard.x < select.x);
+  await page.click('[data-insert-trigger]');
+  await page.waitForSelector('[data-insert-menu]', { timeout: 3_000 });
+  check('the Add menu has no "Type on the page" any more', (await page.$('[data-type-on-page]')) === null && (await page.$('[data-insert-text]')) !== null);
+  await page.keyboard.press('Escape');
+
+  const caret = () =>
+    page.evaluate(() => {
+      const el = document.activeElement;
+      const flow = el?.closest('[data-text-flow]');
+      return { inText: !!flow, page: flow ? Number(flow.closest('[data-page-index]')?.getAttribute('data-page-index')) : -1, above: !!el?.closest('[data-media-layer-above]') };
+    });
+  const tool = () => page.$eval('[data-palette-tool][aria-pressed="true"]', (el) => el.getAttribute('data-palette-tool')).catch(() => 'none');
+  const typing = () => page.$eval('[data-tool-palette]', (el) => el.getAttribute('data-typing') === 'true');
+
+  await page.click('[data-palette-tool="highlighter"]');
+  await page.click('[data-palette-keyboard]');
+  await page.waitForSelector('[data-tool-palette][data-typing="true"]', { timeout: 3_000 });
+  await page.waitForFunction(() => document.activeElement?.closest('[data-text-flow]') !== null, null, { timeout: 3_000 }).catch(() => {});
+  check('pressed, the toolbar is the text toolbar', (await typing()) && (await page.$('[data-palette-tool="pen"]')) === null);
+  const order = await page.evaluate(() => {
+    const at = (sel) => document.querySelector(sel)?.getBoundingClientRect().left ?? -1;
+    return { draw: at('[data-palette-draw]'), first: at('[data-format-list="check"]') };
+  });
+  check('with the pen button first, as the keyboard was', order.draw >= 0 && order.draw < order.first, JSON.stringify(order));
+  const at = await caret();
+  check('and the caret is in the page\'s text', at.inText && at.page === 0, JSON.stringify(at));
+  await page.keyboard.type('Typed on the page');
+  await page.click('[data-format-toggle="bold"]');
+  await page.keyboard.type(' bold');
+  check('a button of the text toolbar leaves the caret in the text', (await caret()).inText);
+  const text = await page.$eval('[data-page-index="0"] [data-text-content]', (el) => ({ text: el.textContent, bold: [...el.querySelectorAll('strong')].map((b) => b.textContent).join('') }));
+  check('and what is typed next is set as it said', text.text === 'Typed on the page bold' && text.bold === ' bold', JSON.stringify(text));
+
+  check('typed text starts behind the drawings', (await page.$('[data-media-layer-above]')) === null && (await page.getAttribute('[data-text-above-ink]', 'data-text-above-ink')) === 'false');
+  await page.click('[data-text-above-ink]');
+  const moved = await page.waitForSelector('[data-media-layer-above] [data-text-flow]', { timeout: 3_000 }).then(() => true, () => false);
+  await page.waitForTimeout(150);
+  const layers = await page.evaluate(() => {
+    const above = document.querySelector('[data-media-layer-above]');
+    const ink = document.querySelector('[data-page-index="0"] [data-layer="live"]')?.parentElement?.closest('.z-20');
+    return { above: above ? Number(getComputedStyle(above).zIndex) : null, ink: ink ? Number(getComputedStyle(ink).zIndex) : null };
+  });
+  check('in front of the drawings, it is drawn over the ink', moved && layers.above !== null && layers.ink !== null && layers.above > layers.ink, JSON.stringify(layers));
+  const kept = await caret();
+  check('and the caret stays in it', kept.inText && kept.above, JSON.stringify(kept));
+  await page.keyboard.type('!');
+  const after = await page.$eval('[data-media-layer-above] [data-text-content]', (el) => el.textContent).catch(() => '');
+  check('typing carries on where it was', after === 'Typed on the page bold!', after);
+
+  await page.click('[data-palette-draw]');
+  await page.waitForTimeout(200);
+  check('the pen button turns it back into the drawing tools', !(await typing()) && (await page.$('[data-palette-keyboard]')) !== null);
+  check('with the tool that was writing before', (await tool()) === 'highlighter', await tool());
+  check('and the caret out of the text', !(await caret()).inText);
+
+  // The pen still writes over text in front of the drawings.
+  await page.click('[data-palette-tool="pen"]');
+  const ink = () =>
+    page.evaluate(() => {
+      const c = document.querySelector('[data-page-index="0"] [data-layer="committed"]');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+      return n;
+    });
+  const before = await ink();
+  const line = await (await page.$('[data-media-layer-above] [data-text-content] > *')).boundingBox();
+  await page.mouse.move(line.x + 4, line.y + line.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(line.x + 160, line.y + line.height / 2, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  check('the pen writes over text in front of the drawings', (await ink()) > before, `${before} -> ${await ink()}`);
+
+  // A tap on a page with no text yet: the caret goes there, in new page text, set like the page before's.
+  await page.click('[data-arranger-toggle]');
+  await page.click('text=Add after');
+  await page.click('[data-arranger-toggle]');
+  await page.waitForTimeout(300);
+  await page.click('[data-palette-keyboard]');
+  await page.waitForSelector('[data-tool-palette][data-typing="true"]', { timeout: 3_000 });
+  await page.$eval('[data-page-index="1"]', (el) => el.scrollIntoView({ block: 'center' }));
+  await page.waitForSelector('[data-page-index="1"][data-page-mode="active"]', { timeout: 5_000 });
+  const second = await (await page.$('[data-page-index="1"]')).boundingBox();
+  await page.mouse.click(second.x + second.width / 2, second.y + second.height / 2);
+  await page.waitForFunction(() => document.activeElement?.closest('[data-page-index="1"]') != null, null, { timeout: 3_000 }).catch(() => {});
+  const there = await caret();
+  check('a tap on a page with no text starts its text, with the caret in it', there.inText && there.page === 1, JSON.stringify(there));
+  check('in front of the drawings like the page text before it', there.above);
+  await page.keyboard.type('Page two');
+  check('and it takes what is typed', (await page.$eval('[data-page-index="1"] [data-text-content]', (el) => el.textContent)) === 'Page two');
+
+  // The select tool: a text box selected is the text toolbar, a tap off it the tools again.
+  await page.click('[data-palette-draw]');
+  await page.click('[data-palette-tool="select"]');
+  await page.$eval('[data-page-index="0"]', (el) => el.scrollIntoView({ block: 'start' }));
+  await page.waitForTimeout(300);
+  const first = await (await page.$('[data-page-index="0"] [data-text-content] > *')).boundingBox();
+  await page.mouse.click(first.x + 30, first.y + first.height / 2);
+  await page.waitForTimeout(200);
+  check('with the select tool, a text box chosen makes the toolbar the text toolbar', await typing());
+  // In the margin beside the text: the page itself.
+  const pageBox = await (await page.$('[data-page-index="0"]')).boundingBox();
+  await page.mouse.click(pageBox.x + 20, first.y + first.height / 2);
+  await page.waitForTimeout(200);
+  check('and a tap off it, the tools again', !(await typing()) && (await tool()) === 'select', await tool());
+
   check('no page errors', errors.length === 0, errors.join(' | '));
   await ctx.close();
 }
@@ -4166,6 +4454,8 @@ try {
     checkBackgroundSettings,
     checkTyping,
     checkPageText,
+    checkSlidingToolbar,
+    checkKeyboardMode,
   ];
   for (const run of checks) {
     if (only.length > 0 && !only.some((o) => run.name.toLowerCase().includes(o.toLowerCase()))) continue;

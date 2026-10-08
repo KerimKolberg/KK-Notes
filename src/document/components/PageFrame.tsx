@@ -15,6 +15,7 @@ import { useClipboardStore } from '../clipboard';
 import { useAidStore } from '../aids';
 import { AidsLayer } from './AidsLayer';
 import { eraserRadius } from '../../inking/engine/toolStyles';
+import { isAboveInk } from '../media';
 import { useDocumentStore } from '../store';
 import { pageSnapSpacing, templateSvgDataUrl } from '../templates';
 import { cancelBarrelButton, consumeBarrelButton, noteBarrelButton } from '../stylusBarrel';
@@ -42,8 +43,9 @@ export interface PageFrameProps {
 /**
  * One page in the viewer. Layer stack, all in page-local coordinates:
  *   z-0  background — template SVG (CSS) or the PDF.js raster
- *   z-10 media      — user-placed images with transform boxes
+ *   z-10 media      — user-placed images, notes, tables and typed text, with transform boxes
  *   z-20 ink        — live + committed canvases (or a snapshot when far away)
+ *   z-22 front text — typed text set in front of the ink (only when the page has some)
  *   z-25 selection  — lasso selection box, handles and quick actions
  *   z-30 forms      — HTML widgets for AcroForm annotations
  */
@@ -123,6 +125,7 @@ export const PageFrame = memo(function PageFrame({
   // Something is on the clipboard and the lasso is in hand with nothing selected: offer
   // to put it down here, since a finger has no Ctrl+V.
   const showPaste = mode === 'active' && isCurrent && !readOnly && currentTool === 'lasso' && lassoIds === null && copiedCount > 0;
+  const hasTextAboveInk = page.media.some(isAboveInk);
 
   return (
     <div
@@ -178,6 +181,7 @@ export const PageFrame = memo(function PageFrame({
               ariaLabel={`Page ${page.pageNumber} drawing surface`}
             />
           </div>
+          {hasTextAboveInk && <MediaLayer page={page} zoom={zoom} active={currentTool === 'select' && !readOnly} layer="above" />}
           {showSelection && (
             <SelectionLayer
               page={page}

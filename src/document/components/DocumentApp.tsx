@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Zap } from 'lucide-react';
 import { useLatestRef } from '../../inking/hooks/useLatestRef';
 import { useUndoRedoShortcuts } from '../../inking/hooks/useUndoRedoShortcuts';
@@ -58,11 +58,12 @@ import { TopBar } from './TopBar';
 import { useTabStore } from '../tabStore';
 import { errorMessage } from '../../lib/errors';
 import { isEditableTarget } from '../../lib/dom';
-import { FormatBar } from '../../typing/FormatBar';
-import { typeOnPage } from '../../typing/flow/engine';
 import { ShortcutSheet } from '../../typing/ShortcutSheet';
-import { requestFocus, showWordCount } from '../../typing/typingStore';
+import { TextToolbar } from '../../typing/TextToolbar';
+import { insertTextBox, startTyping, stopTyping, useTypingMode } from '../../typing/typingMode';
+import { showWordCount } from '../../typing/typingStore';
 import { WordCountDialog } from '../../typing/WordCountDialog';
+import type { PaletteTyping } from '../../inking/palette/ToolPalette';
 
 /**
  * A panel that failed to draw is put away and the reason given, instead of taking the screen with it. Deferred a tick:
@@ -122,16 +123,7 @@ export function DocumentApp() {
     (init: NoteInit) => insertMedia((page, z) => createStickyNote(page.dimensions, z, undefined, init)),
     [insertMedia],
   );
-  const insertText = useCallback(
-    () =>
-      insertMedia((page, z) => {
-        const box = createTextBox(page.dimensions, z);
-        // Typed into straight away, as a word processor's new text box is.
-        requestFocus(box.id, 'end');
-        return box;
-      }),
-    [insertMedia],
-  );
+
   /**
    * A dropped text file, as a text box holding its contents.
    *
@@ -153,13 +145,22 @@ export function DocumentApp() {
       }),
     [insertMedia],
   );
-  /** Type on the page in view, word-processor style (`typing/flow/`). */
-  const typeOnActivePage = useCallback(() => {
-    const state = useDocumentStore.getState();
-    if (state.readOnly) return;
-    updateSettings({ tool: 'select' });
-    typeOnPage(state.document.activePageIndex);
-  }, [updateSettings]);
+  // Typing with the keyboard: the keyboard button at the start of the toolbar, and the text toolbar it becomes.
+  const typingMode = useTypingMode();
+  const typing = useMemo<PaletteTyping>(
+    () => ({
+      active: typingMode.active,
+      returnTool: typingMode.returnTool,
+      onStart: startTyping,
+      onStop: stopTyping,
+      controls: (layout) => (
+        <ErrorBoundary what="the text formatting" fallback={null} onError={(e) => panelFailed('The text formatting', e, () => useDocumentStore.getState().selectMedia(null))}>
+          <TextToolbar {...layout} />
+        </ErrorBoundary>
+      ),
+    }),
+    [typingMode.active, typingMode.returnTool],
+  );
   const insertTable = useCallback(
     (init: TableInit) => insertMedia((page, z) => createTable(page.dimensions, z, undefined, init)),
     [insertMedia],
@@ -396,9 +397,6 @@ export function DocumentApp() {
           onDrop={onDrop}
         >
             <DocumentViewer settingsRef={settingsRef} currentTool={settings.tool} />
-          <ErrorBoundary what="the text formatting" fallback={null} onError={(e) => panelFailed('The text formatting', e, () => useDocumentStore.getState().selectMedia(null))}>
-            <FormatBar />
-          </ErrorBoundary>
           {searchOpen && (
             <ErrorBoundary what="the search" fallback={null} onError={(e) => panelFailed('The search', e, () => useSearchStore.getState().close())}>
               <Suspense fallback={null}>
@@ -451,8 +449,7 @@ export function DocumentApp() {
               <InsertMenu
                 onInsertImage={pickImage}
                 onInsertNote={insertNote}
-                onInsertText={insertText}
-                onTypeOnPage={typeOnActivePage}
+                onInsertText={insertTextBox}
                 onInsertTable={insertTable}
                 onDone={onInsertDone}
               />
@@ -460,6 +457,7 @@ export function DocumentApp() {
             onClearPageInk={clearPageInkActive}
             onClearDocumentInk={clearDocumentInkActive}
             hidden={readOnly}
+            typing={typing}
           />
           {/* …and the laser still needs its colour and width, so the config row
               survives the lock even though the rest of the palette does not. */}

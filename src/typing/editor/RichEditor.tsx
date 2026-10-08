@@ -68,12 +68,16 @@ export interface RichEditorProps {
   readonly edges?: EditorEdges;
 }
 
-function attributesFor(base: RichBase, placeholder: string, editable: boolean) {
+/**
+ * `fill`: page text, which takes the whole of its box, so that a tap below its last line is a tap in it — the caret
+ * goes to the end, as a word processor's page does — rather than on nothing.
+ */
+function attributesFor(base: RichBase, placeholder: string, editable: boolean, fill: boolean) {
   return (state: EditorState): Record<string, string> => {
     const empty = state.doc.childCount === 1 && state.doc.firstChild!.content.size === 0;
     return {
       class: RT_ROOT,
-      style: cssText(rootCss(base)),
+      style: cssText(rootCss(base)) + (fill ? ';min-height:100%' : ''),
       spellcheck: 'true',
       'aria-label': 'Text',
       'data-text-content': '',
@@ -122,7 +126,7 @@ export function RichEditor({ box, pageId, editable, placeholder, onChange, edges
     const view: EditorView = new EditorView(mount.current!, {
       state: EditorState.create({ doc: toDoc(richOf(latest.current.box)), plugins: plugins() }),
       editable: () => latest.current.editable,
-      attributes: attributesFor(richBaseOf(latest.current.box), latest.current.placeholder, latest.current.editable),
+      attributes: attributesFor(richBaseOf(latest.current.box), latest.current.placeholder, latest.current.editable, latest.current.box.flow === true),
       dispatchTransaction(tr) {
         const state = view.state.apply(tr);
         view.updateState(state);
@@ -277,7 +281,7 @@ export function RichEditor({ box, pageId, editable, placeholder, onChange, edges
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.setProps({ attributes: attributesFor(richBaseOf(box), placeholder, editable) });
+    view.setProps({ attributes: attributesFor(richBaseOf(box), placeholder, editable, box.flow === true) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseKey, placeholder, editable]);
 
@@ -307,16 +311,28 @@ export function RichEditor({ box, pageId, editable, placeholder, onChange, edges
     <div
       ref={mount}
       data-rich-editor
+      style={box.flow ? { height: '100%' } : undefined}
       // A press in the text places the caret; it must not start dragging the box.
       onPointerDown={(e) => e.stopPropagation()}
     />
   );
 }
 
+/** The place in the text nearest a point on the screen: on the nearest line, at the nearest character of it. */
+function nearest(view: EditorView, x: number, y: number): number {
+  const rect = view.dom.getBoundingClientRect();
+  // Brought inside the text first: a tap in the margin beside a line is a tap on that line, and one below the
+  // last line a tap on it.
+  const left = Math.min(Math.max(x, rect.left + 1), Math.max(rect.left + 1, rect.right - 1));
+  const top = Math.min(Math.max(y, rect.top + 1), Math.max(rect.top + 1, rect.bottom - 1));
+  return view.posAtCoords({ left, top })?.pos ?? view.state.doc.content.size - 1;
+}
+
 /** Focus an editor and put its caret (or a selection) where it was asked for. */
 function place(view: EditorView, at: CaretTarget, anchor?: number): void {
   const size = view.state.doc.content.size;
-  const pos = at === 'start' ? 1 : at === 'end' ? size - 1 : Math.max(0, Math.min(at, size));
+  const pos =
+    at === 'start' ? 1 : at === 'end' ? size - 1 : typeof at === 'number' ? Math.max(0, Math.min(at, size)) : Math.max(0, Math.min(nearest(view, at.x, at.y), size));
   const from = anchor === undefined ? pos : Math.max(0, Math.min(anchor, size));
   const selection = TextSelection.between(view.state.doc.resolve(from), view.state.doc.resolve(pos));
   view.dispatch(view.state.tr.setSelection(selection).scrollIntoView());

@@ -39,6 +39,8 @@ npm run android:apk    # ./build-android.sh — checks the toolchain, then build
 ├── Tooltip.tsx             hover / focus / long-press tooltip
 ├── IconButton.tsx          icon + tooltip + loud active state
 ├── Popover.tsx             anchored flyout panel
+├── SlideStrip.tsx          a toolbar line that slides (finger, pen, mouse wheel, arrows)
+├── floating.ts             flyouts and tooltips placed on the screen inside a strip that clips
 ├── dragBounds.ts           pure clamping for the floating palette
 ├── dock.ts                 which edge a drop docks to, and where a docked panel sits
 ├── idleHide.ts             when an unpinned toolbar hides, and the hook that applies it
@@ -953,10 +955,11 @@ tooltip of our own rather than another dependency.
 As the window narrows the zoom read-out and the word "Page" drop away and
 the title truncates; the icons stay, so nothing becomes unreachable.
 
-**Floating tool palette** — a draggable panel over the canvas. The first row
-groups the tools (select, lasso, laser, add · pen, highlighter, washi tape ·
-line, coordinate system, stroke options · eraser · settings) and the second
-carries the colour swatches and the thickness slider. Tools that have more
+**Floating tool palette** — a draggable panel over the canvas, one line that slides
+(below). It starts, as Samsung Notes' does, with the **keyboard** button (typing,
+below), then the tools (select, lasso, laser, add · pen, highlighter, washi tape ·
+line, coordinate system, stroke options · eraser), the colour swatches and the
+thickness, and last the settings. Tools that have more
 to say open a flyout when their own button is pressed again: the lasso's
 layers and mode, the pen's five brushes, the highlighter's width, opacity and
 gradient, the tape's patterns, the shape tool's paths and dashes, the
@@ -982,6 +985,26 @@ are one errand with three answers and the palette has no room to spend on
 each. The popover's body is passed into `ToolPalette` as a render prop
 (`insertMenu`), so the palette stays an inking control that knows nothing
 about pages, notes or tables.
+
+**One line that slides.** However many tools there are, the toolbar is one row along
+the bottom (or the top) of the screen, and one column standing on a side — the grip,
+the pin and the keyboard (or, typing, the pen) fixed at its start and everything else
+in a strip that slides (`ui/SlideStrip.tsx`), as Samsung Notes' toolbar does, rather
+than wrapping onto a second and third line that take more of the page. A finger slides
+it as any list scrolls (`touch-action: pan-x`, or `pan-y` on a side, on the strip
+itself against the toolbar's own `none`); a pen and a mouse slide it by dragging along
+it — a pen does not scroll on Windows — and a drag that slides is not a press of the
+button it began on; a mouse wheel turned over a row slides it along. A fade with an
+arrow at an end says there is more that way, and a press on it slides on by most of a
+strip. The thickness slider takes a drag on it as a drag of the slider. On a wide screen
+the whole of it fits and nothing slides. Flyouts and tooltips from inside the strip are
+placed on the screen (`position: fixed`, from the trigger's box, followed as the strip
+slides — `ui/floating.ts`), since the strip clips everything inside it to its own box;
+outside a strip they hang off their trigger as before. *Settings → Toolbar layout* turns
+it back into the toolbar that wraps (`paletteSlide`), which is what the next three
+paragraphs describe. `scripts/ui-check.mjs` (`checkSlidingToolbar`, `checkDocks`) slides
+it with the wheel, a drag and the arrow, opens a flyout from far along it, and checks
+both layouts on all four docks.
 
 **Docking.** The palette lives on the bottom edge to begin with and can be
 dragged to any side. Push the grip towards an edge — the pointer, not the panel,
@@ -2073,17 +2096,42 @@ Keyboard: `Ctrl/⌘+Z` undo, `Ctrl/⌘+Shift+Z` or `Ctrl+Y` redo.
 
 Typing works as in a word processor, in two places:
 
-- a **text box** (*Insert → Text box*), placed anywhere — on a PDF's page to fill it in, beside a drawing —
-  and as tall as its text;
-- **page text** (*Insert → Type on the page*, or *New typed document* in the library), which fills the page
-  inside 2 cm margins and **flows on to the next page** when it is full, a new page added at the end, the way
-  Word's body text does.
+- **page text**, which fills the page inside 2 cm margins and **flows on to the next page** when it is full, a
+  new page added at the end, the way Word's body text does;
+- a **text box** (the text toolbar's *Text box*, or *Add → Text box*), placed anywhere — on a PDF's page to fill
+  it in, beside a drawing — and as tall as its text.
 
-Both take formatting in parts — bold, italic, underline, strikethrough, superscript and subscript, a colour, a
-highlight, a size and a font for any stretch of text; a style (normal text, heading 1–3), an alignment
-(including justified), an indent, and bulleted, numbered and checklist lists for any paragraph — from the
-**format bar** docked above the pages while a box is being typed in, or from the keyboard. Ink still goes over
-all of it with the pen; the select tool is the one that types.
+**The keyboard button** (`typing/typingMode.ts`), first on the toolbar as in Samsung Notes, is the way in. It
+turns the toolbar into the **text toolbar** and puts the caret at the end of the page text on the page in view —
+making the page text first if the page has none. From then on a tap on a page puts the caret there: in its text,
+nearest the tap (a tap in the margin beside a line is a tap on that line, one below the text puts it at the end),
+or in new text on a page that has none. Text started on a page after page text is on a page of its own — a page
+break before it — so what is typed there stays there rather than running back to the end of the page before, and
+page text after it keeps its page too. The **pen button** that takes the keyboard's place at the start of the text
+toolbar puts the keyboard away (on a tablet, the on-screen one too) and goes back to the tool that was writing
+before — the highlighter, the eraser — or to the pen. Another tool chosen from the keyboard or the pen's own
+button, a locked note or another note end typing too. With the select tool, a text box selected makes the toolbar
+the text toolbar as well, until something else is selected.
+
+The **text toolbar** (`typing/TextToolbar.tsx`) is laid out as Samsung Notes' is: checklist, paragraph style, a
+text box, the font (*Aa*) and the size first, then — a slide along — bold, italic, underline, strikethrough, the
+text colour and the highlight, bulleted and numbered lists, the alignment, indent less and more, superscript and
+subscript, clear formatting, **in front of the drawings or behind them**, a text box's lock, front, back and
+delete, the word count, the shortcut sheet, and the Add menu. Pickers (style, font, size, colours, alignment) open
+as flyouts away from the edge the bar is on, docked anywhere. Its buttons take no focus, so the caret stays in the
+text and a tablet's keyboard stays up. Both kinds of text take formatting in parts — bold, italic, underline,
+strikethrough, superscript and subscript, a colour, a highlight, a size and a font for any stretch of text; a
+style (normal text, heading 1–3), an alignment (including justified), an indent, and bulleted, numbered and
+checklist lists for any paragraph — from the text toolbar or from the keyboard.
+
+**In front of the drawings, or behind them** (`TextBox.aboveInk`). Typed text sits behind the handwriting to
+begin with, as it always has: a highlighter stroke over it tints it, washi tape covers it. The text toolbar's
+layer button puts it in front instead, drawn over the ink — on the page, where a second media layer above the ink
+holds it (`PageFrame.tsx`; it takes a press only on its text, and only with the select tool, so the pen still
+writes over text in front of it), in snapshots and thumbnails (`rasterize.paintPage` draws it after the strokes)
+and in the PDF (after the strokes there too). Page text goes in front or behind as a whole, every page of it, and
+a page the text flows on to is set the same; it is one step of Undo, and the caret stays where it was though the
+text has moved to the other layer and its editor started again there.
 
 **The model** (`richText.ts`). A box's text is a list of paragraphs (*blocks*), each a list of *runs* of text in
 one style. It is flat, as Google Docs keeps it rather than as HTML nests it: a list item is a paragraph that says
@@ -2110,7 +2158,7 @@ multiples of the box's size (`--rt-base`), list markers as `::before` from `data
 tick — so they agree to the line. The canvas and PDF layout (`document/richLayout.ts`, below) follows the same
 numbers.
 
-**Keyboard** (`typing/shortcuts.ts`, the sheet behind Ctrl+/ and the format bar's keyboard button). One table
+**Keyboard** (`typing/shortcuts.ts`, the sheet behind Ctrl+/ and the text toolbar's shortcuts button). One table
 builds both the keymap and the sheet, so the sheet cannot promise a key that does nothing:
 
 | | |
@@ -2128,7 +2176,7 @@ builds both the keymap and the sheet, so the sheet cannot promise a key that doe
 | Line break, new page | Shift+Enter, Ctrl+Enter (page text) |
 | Undo, redo | Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z |
 | Word count, shortcuts | Ctrl+Shift+G or Ctrl+Shift+C, Ctrl+/ |
-| Stop typing | Esc (the box stays selected: the format bar then formats all of it) |
+| Stop typing | Esc (the box stays selected: the text toolbar then formats all of it) |
 
 As you type, `- ` or `* ` starts a bulleted list, `1. ` a numbered one, `[] ` a checklist, `# `/`## `/`### ` a
 heading, `--` a dash and `...` an ellipsis, and quotes curl; Backspace straight after undoes any of them. Enter on
@@ -2138,7 +2186,7 @@ box and exports outside one (`useDesktopIntegration` skips a key already handled
 
 **Counting words** (`richText.countWords`, `typing/wordCount.ts`). A word is anything between spaces with a
 letter or a digit in it — a dash standing alone is not one — and each character of Chinese or Japanese, which
-put no spaces between words, as Word counts them. The format bar shows the box's words, or "12 of 340 words"
+put no spaces between words, as Word counts them. The text toolbar shows the box's words, or "12 of 340 words"
 with a selection (page text counts all its pages); *Word count* (Ctrl+Shift+G, or the top bar) gives the
 note's words, characters with and without spaces, paragraphs and pages with text, the box's and the
 selection's, and — apart — the words of handwriting the recogniser has read.
@@ -2186,7 +2234,7 @@ one table so the two cannot drift.
 **A text box is moved by its grip**, not by pressing its text: a press in a text box puts the caret there
 straight away, as a word processor's does, so the shield every other placed object has for its first press is
 left off. The grab strip above it is measured in screen px (`textGrabStrip`), so it stays a finger-sized target
-at any zoom, and its other actions — lock, front, back, delete — are in the format bar, which never covers the
+at any zoom, and its other actions — lock, front, back, delete — are in the text toolbar, which never covers the
 box the way a toolbar floating over it near the top of a page did.
 
 **No pen handwriting in the note's fields.** Windows turns pen writing in a text field into typed text (Edge's
@@ -2885,15 +2933,28 @@ hit-testing can answer:
   twice as far, a 25 % step makes + and a notch 25 %, a pinch inside a 20 % threshold does not zoom and one
   past it carries on without a jump, and Reset zoom puts them back; a plain wheel still scrolls; over the
   reading pane it zooms the pane and leaves the note alone.
-- **typing in a text box**: a new box takes the keyboard at once and the format bar appears; `# ` makes a
+- **typing in a text box**: a new box takes the keyboard at once and the toolbar becomes the text toolbar; `# ` makes a
   heading, Ctrl+B bold, Ctrl+, a subscript, `1. ` a numbered list and Tab a sub-list (`a.`), Enter on an empty
   item ends the list and `[] ` starts a checklist; the bar counts the words, and a selection as "1 of 10"; its
   buttons format the selection and leave the caret in the text; Ctrl+Z takes back a burst of typing as one;
   Ctrl+Shift+G shows the note's count and Ctrl+/ the shortcuts; with the box only selected, a format applies to
   all of it; the note's title takes no pen handwriting.
-- **typing on the page**: a new typed document has the caret on its page; text that does not fit goes on to a
+- **typing on the page**: the keyboard button puts the caret on the page; text that does not fit goes on to a
   new page, a paragraph split where its lines break, with the caret; Ctrl+Enter starts a page and Backspace at
   its top takes it away, the text coming back; Undo puts it back; the word count is all the pages' text.
+- **the sliding toolbar**: on a phone the toolbar is one row inside the screen with more to slide to, an arrow
+  at its end and none at its start; a wheel slides it, a mouse drag slides it without pressing the button it began
+  on, the arrow slides it on; a flyout from a tool slid into view is drawn whole above the bar, and a tooltip is
+  placed on the screen above it; on a side in a short window it is one column, one button wide, with more below
+  that the wheel and a drag slide to; the setting turns it back into the toolbar that wraps.
+- **the keyboard button**: the library has no "New typed document" and the Add menu no "Type on the page"; the
+  keyboard comes before the tools; pressed, the toolbar is the text toolbar with the pen button first and the
+  caret in the page's text; its buttons leave the caret in the text; typed text starts behind the drawings, and in
+  front it is drawn over the ink with the caret still in it and typing carrying on; the pen button gives back the
+  drawing tools with the tool that was writing before and takes the caret out; the pen writes over text in front
+  of the drawings; a tap on a new page starts its text there, in front like the text before it, and it takes what
+  is typed; with the select tool a text box chosen makes the toolbar the text toolbar and a tap off it the tools
+  again.
 - **floating toolbar over a note**: it stands above the note mid-page and goes underneath near the top, never
   over the note, and moves by its grip.
 - **starting with Windows and the tray** (desktop shell faked): the settings offer the three switches, the

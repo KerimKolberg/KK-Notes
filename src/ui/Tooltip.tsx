@@ -5,12 +5,15 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode,
 } from 'react';
+import { fixedPlacement, useAnchorRect, useFloatingMode, viewportSize } from './floating';
+import { horizontalShift } from './viewportClamp';
 
 export type TooltipSide = 'top' | 'bottom' | 'left' | 'right';
 
@@ -63,6 +66,29 @@ export function Tooltip({ label, side: sideProp, delay = TOOLTIP_DELAY_MS, hint,
   const [open, setOpen] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const id = useId();
+  // In a toolbar that slides, placed on the screen beside its trigger, so the strip's edge cannot cut it off.
+  const wrapperRef = useRef<HTMLSpanElement>(null);
+  const fixed = useFloatingMode() === 'fixed';
+  const anchor = useAnchorRect(wrapperRef, open && !disabled && fixed);
+  // …and kept on the screen: a button at the end of a toolbar on a phone is near its edge. Measured once it is
+  // placed, and only then — there are dozens of these, and nearly all of them are closed.
+  const across = side === 'top' || side === 'bottom';
+  const bubbleRef = useRef<HTMLSpanElement>(null);
+  const [shift, setShift] = useState(0);
+  useLayoutEffect(() => {
+    const bubble = bubbleRef.current;
+    if (!anchor || !bubble) {
+      setShift(0);
+      return;
+    }
+    const r = bubble.getBoundingClientRect();
+    const screen = viewportSize();
+    setShift((current) =>
+      across
+        ? horizontalShift(r.left - current, r.right - current, screen.width)
+        : horizontalShift(r.top - current, r.bottom - current, screen.height),
+    );
+  }, [anchor, across]);
 
   const cancel = useCallback(() => {
     if (timerRef.current !== null) {
@@ -134,15 +160,23 @@ export function Tooltip({ label, side: sideProp, delay = TOOLTIP_DELAY_MS, hint,
   });
 
   return (
-    <span className="relative inline-flex">
+    <span ref={wrapperRef} className="relative inline-flex">
       {trigger}
-      {open && !disabled && (
+      {open && !disabled && (!fixed || anchor) && (
         <span
+          ref={bubbleRef}
           id={id}
           role="tooltip"
           aria-hidden="true"
           data-tooltip
-          className={`pointer-events-none absolute z-50 whitespace-nowrap rounded-md bg-zinc-900 px-2 py-1 text-xs font-medium text-white shadow-lg ring-1 ring-black/10 dark:bg-zinc-100 dark:text-zinc-900 ${SIDE_CLASSES[side]}`}
+          className={`pointer-events-none z-50 whitespace-nowrap rounded-md bg-zinc-900 px-2 py-1 text-xs font-medium text-white shadow-lg ring-1 ring-black/10 dark:bg-zinc-100 dark:text-zinc-900 ${
+            fixed ? 'fixed' : `absolute ${SIDE_CLASSES[side]}`
+          }`}
+          style={
+            fixed && anchor
+              ? { ...fixedPlacement(side, 'center', anchor, viewportSize()), transform: across ? `translateX(calc(-50% + ${shift}px))` : `translateY(calc(-50% + ${shift}px))` }
+              : undefined
+          }
         >
           {label}
           {hint && <span className="ml-1.5 opacity-60">{hint}</span>}

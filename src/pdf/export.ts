@@ -37,6 +37,7 @@ import type { Point } from '../inking/types';
 import {
   columnFractions,
   dataUrlToBytes,
+  isAboveInk,
   noteBodyBox,
   noteShapeOf,
   noteTailPoints,
@@ -61,7 +62,7 @@ import {
   TABLE_GRIP_HEIGHT,
 } from '../document/constants';
 import { templateLines } from '../document/templates';
-import type { Document, FormField, FormValues, ImageLayer, MediaBox, Page, StickyNote, TableLayer, TextBox } from '../document/types';
+import type { Document, FormField, FormValues, ImageLayer, MediaBox, MediaObject, Page, StickyNote, TableLayer, TextBox } from '../document/types';
 import { pagePointToPdf, PX_PER_POINT } from './pdfCoords';
 import { cssColorToPdf, fmt, strokeToPdfOps, type PdfOp, type PdfProjection, type RgbColor } from './pdfOps';
 
@@ -518,12 +519,12 @@ function sanitizeText(text: string): string {
 async function drawMedia(
   out: PDFDocument,
   target: PDFPage,
-  page: Page,
+  media: readonly MediaObject[],
   projection: PdfProjection,
   fonts: Fonts,
   cache: Map<string, Promise<PDFImage | null>>,
 ): Promise<void> {
-  for (const item of sortedByZ(page.media)) {
+  for (const item of sortedByZ(media)) {
     if (item.kind === 'note') {
       drawNote(target, item, projection, fonts);
       continue;
@@ -699,10 +700,12 @@ export async function exportDocumentToPdf(document: Document, options: ExportOpt
       if (includeTemplates) drawTemplateBackground(target, page, projection, size);
     }
 
-    await drawMedia(out, target, page, projection, fonts, imageCache);
+    // Under the ink, the ink, and typed text set in front of it over that, as the page shows them.
+    await drawMedia(out, target, page.media.filter((m) => !isAboveInk(m)), projection, fonts, imageCache);
     for (const stroke of page.strokes) {
       for (const op of strokeToPdfOps(stroke, projection)) drawOp(target, op, fonts);
     }
+    await drawMedia(out, target, page.media.filter(isAboveInk), projection, fonts, imageCache);
   }
 
   rebuildAcroForm(out, fieldRefs);

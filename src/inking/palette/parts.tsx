@@ -148,7 +148,16 @@ export function usesColor(tool: ToolType): boolean {
  * instead of laid out in a row that runs to three hundred pixels. Anything that is
  * a word elsewhere (Add, Remove, Done, Rainbow) is an icon here, for the width.
  */
-export function ToolConfigRow({ settings, onSettingsChange, compact = false }: PanelProps & { compact?: boolean }) {
+export function ToolConfigRow({
+  settings,
+  onSettingsChange,
+  compact = false,
+  strip = false,
+}: PanelProps & {
+  compact?: boolean;
+  /** In a toolbar that slides (`ui/SlideStrip.tsx`): one line that never wraps, its slider a fixed length. */
+  strip?: boolean;
+}) {
   const colorInputRef = useRef<HTMLInputElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const laser = settings.tool === 'laser-pointer';
@@ -191,13 +200,18 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
   return (
     <div
       className={`rounded-xl bg-zinc-100/70 dark:bg-zinc-800/60 ${
-        compact ? 'flex w-11 flex-col items-center gap-2 px-1 py-2' : 'flex flex-wrap items-center gap-2 px-2 py-1.5'
+        compact
+          ? 'flex w-11 shrink-0 flex-col items-center gap-2 px-1 py-2'
+          : strip
+            ? 'flex shrink-0 flex-nowrap items-center gap-2 px-2'
+            : 'flex flex-wrap items-center gap-2 px-2 py-1.5'
       }`}
       data-tool-config
       {...(compact ? { 'data-compact': 'true' } : {})}
+      {...(strip ? { 'data-strip': 'true' } : {})}
     >
       <div
-        className={compact ? 'flex flex-col items-center gap-1.5' : 'flex flex-wrap items-center gap-1'}
+        className={compact ? 'flex flex-col items-center gap-1.5' : strip ? 'flex flex-nowrap items-center gap-1' : 'flex flex-wrap items-center gap-1'}
         role="group"
         aria-label="Stroke colour"
       >
@@ -361,7 +375,10 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
         ))}
       </div>
 
-      <label className={compact ? 'flex min-w-0 flex-col items-center gap-1.5' : 'flex min-w-0 flex-1 items-center gap-2'} title="Stroke thickness">
+      <label
+        className={compact ? 'flex min-w-0 flex-col items-center gap-1.5' : strip ? 'flex shrink-0 items-center gap-2' : 'flex min-w-0 flex-1 items-center gap-2'}
+        title="Stroke thickness"
+      >
         <span className="sr-only">Stroke thickness</span>
         {/* Beside the slider in a row; above it in a column, where the slider stands up
             beside the tools and runs down the height they leave free. */}
@@ -383,7 +400,8 @@ export function ToolConfigRow({ settings, onSettingsChange, compact = false }: P
         </span>
         <input
           type="range"
-          className={`accent-blue-600 ${compact ? 'h-28 w-5' : 'h-1 min-w-16 flex-1'}`}
+          // `touch-none`: in a toolbar that slides, a finger on the slider moves the slider, not the toolbar.
+          className={`touch-none accent-blue-600 ${compact ? 'h-28 w-5' : strip ? 'h-1 w-24' : 'h-1 min-w-16 flex-1'}`}
           // Standing on end, biggest at the top like a fader. Only the compact layout:
           // the row keeps its ordinary slider.
           {...(compact ? { style: { writingMode: 'vertical-lr', direction: 'rtl' } as const } : {})}
@@ -1263,6 +1281,8 @@ export function PaletteSettings({
     paletteDock,
     setPaletteDock,
     palettePinned,
+    paletteSlide,
+    setPaletteSlide,
     pointerStyle,
     setPointerStyle,
     lowLatencyInk,
@@ -1281,6 +1301,8 @@ export function PaletteSettings({
       paletteDock: s.paletteDock,
       setPaletteDock: s.setPaletteDock,
       palettePinned: s.palettePinned,
+      paletteSlide: s.paletteSlide,
+      setPaletteSlide: s.setPaletteSlide,
       pointerStyle: s.pointerStyle,
       setPointerStyle: s.setPointerStyle,
       lowLatencyInk: s.lowLatencyInk,
@@ -1299,6 +1321,7 @@ export function PaletteSettings({
     widthPresets.join() !== DEFAULT_PREFERENCES.widthPresets.join() ||
     paletteDock !== DEFAULT_PREFERENCES.paletteDock ||
     palettePinned !== DEFAULT_PREFERENCES.palettePinned ||
+    paletteSlide !== DEFAULT_PREFERENCES.paletteSlide ||
     pointerStyle !== DEFAULT_PREFERENCES.pointerStyle ||
     lowLatencyInk !== DEFAULT_PREFERENCES.lowLatencyInk ||
     handwritingSearch !== DEFAULT_PREFERENCES.handwritingSearch ||
@@ -1425,6 +1448,16 @@ export function PaletteSettings({
         Or drag it by its handle and push it against an edge. The pin beside the
         handle keeps it on screen; unpinned, it hides when idle and comes back
         from the tab on its edge.
+      </p>
+      <Row label="Toolbar layout">
+        <Switch checked={paletteSlide} onChange={setPaletteSlide}>
+          <span data-palette-slide>One line that slides</span>
+        </Switch>
+      </Row>
+      <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-palette-slide-note>
+        {paletteSlide
+          ? 'One row (one column on a side) that you slide along with a finger, the pen or the mouse wheel, like Samsung Notes. Off, it wraps onto more lines to show everything at once.'
+          : 'It wraps onto more lines to show everything at once. On, it is one row (one column on a side) that you slide along, like Samsung Notes.'}
       </p>
       {isDesktop && (
         <>

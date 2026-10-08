@@ -17,6 +17,7 @@ import {
 } from '../constants';
 import {
   columnFractions,
+  isAboveInk,
   noteBodyBox,
   noteLipHeight,
   noteShapeOf,
@@ -241,7 +242,7 @@ async function loadImages(media: readonly MediaObject[]): Promise<Map<string, Im
 
 /**
  * Paint background (template or PDF raster), media and strokes at `scale`
- * device px per page unit.
+ * device px per page unit — and then typed text set in front of the ink, over it, as the page shows it.
  */
 export async function paintPage(ctx: InkContext, page: PageVisual, scale: number, background?: ImageBitmap): Promise<void> {
   const bitmaps = await loadImages(page.media);
@@ -254,8 +255,9 @@ export async function paintPage(ctx: InkContext, page: PageVisual, scale: number
   } else {
     drawTemplate(ctx, page);
   }
-  drawMediaLayers(ctx, page.media, bitmaps);
+  drawMediaLayers(ctx, page.media.filter((m) => !isAboveInk(m)), bitmaps);
   for (const stroke of page.strokes) drawStroke(ctx, stroke);
+  drawMediaLayers(ctx, page.media.filter(isAboveInk), bitmaps);
 }
 
 export async function rasterizePage(page: PageVisual, targetWidth: number, background?: ImageBitmap): Promise<ImageBitmap> {

@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from 'react';
 import {
   Axis3d,
   ChevronDown,
@@ -9,6 +9,7 @@ import {
   Eraser,
   GripHorizontal,
   Highlighter,
+  Keyboard,
   Lasso,
   MousePointer2,
   Pin,
@@ -20,6 +21,7 @@ import {
   Ticket,
   Undo2,
   Zap,
+  type LucideIcon,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { usePointerReorder, type ReorderItemProps } from '../../document/hooks/usePointerReorder';
@@ -33,6 +35,7 @@ import { TooltipSideProvider, Tooltip, type TooltipSide } from '../../ui/Tooltip
 import { isVerticalDock, verticalCapacity } from '../../ui/dock';
 import { useIdleHide } from '../../ui/idleHide';
 import { NO_INSETS, type Insets } from '../../ui/safeArea';
+import { SlideStrip } from '../../ui/SlideStrip';
 import { PANEL_MARGIN, useDraggablePanel } from '../../ui/useDraggablePanel';
 import { useSafeAreaInsets } from '../../ui/useSafeAreaInsets';
 import type { ToolSettings, ToolType } from '../types';
@@ -72,6 +75,22 @@ export interface ToolPaletteProps {
   draggable?: boolean;
   /** Read-only mode fades the whole palette out. */
   hidden?: boolean;
+  /**
+   * Typing with the keyboard: the keyboard button at the start of the toolbar, and the text toolbar it turns into.
+   * Passed in like the Add menu, so the palette stays an inking control and knows nothing about text.
+   */
+  typing?: PaletteTyping;
+}
+
+export interface PaletteTyping {
+  /** The toolbar is the text toolbar. */
+  readonly active: boolean;
+  /** The tool the pen button at the start of the text toolbar goes back to. */
+  readonly returnTool: ToolType;
+  readonly onStart: () => void;
+  readonly onStop: () => void;
+  /** The text toolbar's controls, laid out as the toolbar is; `onBusyChange` says a picker is open in it. */
+  readonly controls: (layout: { readonly vertical: boolean; readonly popSide: PopoverSide; readonly onBusyChange: (busy: boolean) => void }) => ReactNode;
 }
 
 type Flyout =
@@ -98,6 +117,25 @@ const LINE_LABELS: Readonly<Record<ToolSettings['lineCurve'], string>> = {
 
 function lineLabel(curve: ToolSettings['lineCurve']): string {
   return LINE_LABELS[curve];
+}
+
+/** The tool the text toolbar's first button goes back to, as its icon and its name. */
+function returnTo(tool: ToolType, settings: Readonly<ToolSettings>): { icon: LucideIcon; name: string } {
+  switch (tool) {
+    case 'highlighter':
+      return { icon: Highlighter, name: 'the highlighter' };
+    case 'washi-tape':
+      return { icon: Ticket, name: 'the washi tape' };
+    case 'line':
+      return { icon: Spline, name: 'lines and shapes' };
+    case 'coordinate-plane':
+      return { icon: Axis3d, name: 'the coordinate system' };
+    case 'eraser-stroke':
+    case 'eraser-pixel':
+      return { icon: Eraser, name: 'the eraser' };
+    default:
+      return { icon: BRUSH_ICONS[settings.brush], name: 'the pen' };
+  }
 }
 
 /**
@@ -184,12 +222,13 @@ export const ToolPalette = memo(function ToolPalette({
   onClearDocumentInk,
   draggable = true,
   hidden = false,
+  typing,
 }: ToolPaletteProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [flyout, setFlyout] = useState<Flyout>(null);
   // On a tablet the palette must stay clear of the status bar and the gesture pill.
   const insets = useSafeAreaInsets();
-  const { paletteOrder, movePaletteSlot, paletteDock, setPaletteDock, palettePinned, setPalettePinned } = usePreferencesStore(
+  const { paletteOrder, movePaletteSlot, paletteDock, setPaletteDock, palettePinned, setPalettePinned, paletteSlide } = usePreferencesStore(
     useShallow((s) => ({
       paletteOrder: s.paletteOrder,
       movePaletteSlot: s.movePaletteSlot,
@@ -197,8 +236,12 @@ export const ToolPalette = memo(function ToolPalette({
       setPaletteDock: s.setPaletteDock,
       palettePinned: s.palettePinned,
       setPalettePinned: s.setPalettePinned,
+      paletteSlide: s.paletteSlide,
     })),
   );
+  const typingActive = typing?.active === true;
+  // A picker open in the text toolbar: in use, like an open flyout.
+  const [textBusy, setTextBusy] = useState(false);
   // A palette that cannot be dragged (an embedded canvas) has no dock either.
   const dock = draggable ? paletteDock : 'free';
   // Whether the pointer or keyboard focus is on the toolbar. Tracked so an
@@ -223,8 +266,12 @@ export const ToolPalette = memo(function ToolPalette({
   // the icons being arranged — holds it up.
   const { concealed, reveal } = useIdleHide(
     draggable && !palettePinned && !hidden,
-    flyout !== null || arranging || dragging || hovered || focused,
+    flyout !== null || (typingActive && textBusy) || arranging || dragging || hovered || focused,
   );
+  // A flyout is placed where its button was; one left open as the toolbar is carried off would hang in mid-air.
+  useEffect(() => {
+    if (dragging) setFlyout(null);
+  }, [dragging]);
   const away = hidden || concealed;
   const vertical = isVerticalDock(dock);
   /** Flyouts open away from the edge the toolbar is against, not always upwards. */
@@ -471,9 +518,9 @@ export const ToolPalette = memo(function ToolPalette({
   );
 
   // Part of the tools' row on a horizontal bar; on a standing one it heads the
-  // column of colours instead.
+  // column of colours instead. Sliding, it ends the strip either way.
   const settingsControl = (
-    <div className="relative">
+    <div className="relative shrink-0">
       <IconButton size="sm"
         icon={Settings2}
         label="Input and page settings"
@@ -495,6 +542,96 @@ export const ToolPalette = memo(function ToolPalette({
     </div>
   );
 
+  const handle = draggable && (
+    <Tooltip label="Move the palette" hint="double-click to reset">
+      <button
+        type="button"
+        aria-label="Move the palette"
+        data-palette-handle
+        className="inline-flex h-9 w-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-200/70 active:cursor-grabbing group-data-[vertical=true]/palette:h-5 group-data-[vertical=true]/palette:w-9 dark:text-zinc-500 dark:hover:bg-zinc-700/70"
+        onDoubleClick={reset}
+        {...handleProps}
+      >
+        <GripHorizontal size={16} aria-hidden="true" />
+      </button>
+    </Tooltip>
+  );
+
+  const pin = draggable && (
+    <IconButton
+      icon={palettePinned ? Pin : PinOff}
+      label={palettePinned ? 'Unpin the toolbar' : 'Pin the toolbar'}
+      hint={palettePinned ? 'it will slip away when idle' : 'keep it on screen'}
+      size="sm"
+      aria-pressed={palettePinned}
+      className={palettePinned ? 'text-blue-600 dark:text-blue-400 [&>svg]:fill-current' : ''}
+      onClick={() => setPalettePinned(!palettePinned)}
+      data-palette-pin
+    />
+  );
+
+  // First on the toolbar, as in Samsung Notes: the keyboard, which turns it into the text toolbar, and there the
+  // pen, which turns it back — to the tool that was writing before.
+  const back = typing ? returnTo(typing.returnTool, settings) : null;
+  const modeButton =
+    typing &&
+    (typingActive && back ? (
+      <IconButton size="sm" icon={back.icon} label="Back to drawing" hint={`with ${back.name}`} onClick={typing.onStop} data-palette-draw />
+    ) : (
+      <IconButton size="sm" icon={Keyboard} label="Type with the keyboard" hint="the text toolbar, and the caret on the page" onClick={typing.onStart} data-palette-keyboard />
+    ));
+
+  // The tools, in whatever order the user arranged them. Dividers are drawn
+  // before the slot that starts each group, so the grouping survives a reorder
+  // rather than being pinned to fixed positions.
+  const tools = (
+    <>
+      {paletteOrder.map((slot, index) => {
+        const content = slots[slot];
+        if (!content) return null;
+        return (
+          <PaletteSlotButton
+            key={slot}
+            slot={slot}
+            index={index}
+            arranging={arranging}
+            itemProps={getItemProps(index)}
+            dragging={drag?.from === index}
+            dropTarget={drag !== null && drag.over === index && drag.from !== index}
+            divider={index > 0 && PALETTE_GROUP_STARTS.includes(slot) ? DIVIDER : null}
+          >
+            {content}
+          </PaletteSlotButton>
+        );
+      })}
+
+      {history && (
+        <>
+          {DIVIDER}
+          <IconButton icon={Undo2} label="Undo" size="sm" disabled={!history.canUndo} onClick={history.onUndo} />
+          <IconButton icon={Redo2} label="Redo" size="sm" disabled={!history.canRedo} onClick={history.onRedo} />
+        </>
+      )}
+    </>
+  );
+  // Typing, the text toolbar — and the Add menu after it, so a picture or a table is as near as when drawing.
+  const textControls =
+    typingActive && typing ? (
+      <>
+        {typing.controls({ vertical, popSide, onBusyChange: setTextBusy })}
+        {slots.insert && (
+          <>
+            {DIVIDER}
+            {slots.insert}
+          </>
+        )}
+      </>
+    ) : null;
+
+  // A bar along the top or the bottom is never wider than the room it is in, so a sliding one slides rather than
+  // running off the side; a bar on a side never taller.
+  const across = !vertical && container ? Math.max(120, container.width - PANEL_MARGIN * 2 - insets.left - insets.right) : undefined;
+
   return (
     <TooltipSideProvider value={tipSide}>
       {dockPreview && <DockTarget edge={dockPreview} />}
@@ -502,29 +639,42 @@ export const ToolPalette = memo(function ToolPalette({
       <div
         ref={panelRef}
         role="toolbar"
-        aria-label="Drawing tools"
+        aria-label={typingActive ? 'Text tools' : 'Drawing tools'}
         aria-orientation={vertical ? 'vertical' : 'horizontal'}
         aria-hidden={away}
         data-tool-palette
         data-dock={dock}
         data-vertical={vertical ? 'true' : 'false'}
         data-pinned={palettePinned ? 'true' : 'false'}
+        data-slide={paletteSlide ? 'true' : 'false'}
+        data-typing={typingActive ? 'true' : undefined}
         data-concealed={concealed ? 'true' : undefined}
         data-dragging={dragging ? 'true' : undefined}
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
         onFocus={onFocus}
         onBlur={onBlur}
+        // Typing, a press on the toolbar must not take the caret out of the text — nor, on a tablet, the keyboard
+        // away with it. Lists and fields in its flyouts still take the focus they need.
+        onMouseDown={(e) => {
+          if (typingActive && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
+            e.preventDefault();
+          }
+        }}
         // No backdrop blur. It looked like little, and it made the browser
         // re-blur the page behind the toolbar on every frame it moved — the
         // costliest thing on the screen, over the largest canvas, on the
         // biggest display. A near-opaque panel reads the same.
         className={`group/palette absolute z-30 flex max-w-[calc(100vw-1.5rem-var(--safe-left)-var(--safe-right))] ${
-          // The tools stand against the edge the bar is docked to and the colours
-          // on the side facing the page, so the right dock and the top dock are the
-          // left and bottom docks seen in a mirror.
-          dock === 'right' ? 'flex-row-reverse items-start' : vertical ? 'flex-row items-start' : dock === 'bottom' ? 'flex-col-reverse' : 'flex-col'
-        } gap-1 rounded-2xl border border-zinc-200/80 bg-white/95 p-1 shadow-2xl data-[dragging=true]:will-change-transform dark:border-zinc-700/80 dark:bg-zinc-900/95 ${
+          paletteSlide
+            ? // One line: the handle, the pin and the keyboard (or the pen) where they always are, and everything
+              // else in a strip that slides.
+              `${vertical ? 'flex-col' : 'flex-row'} items-center gap-0.5 p-0.5`
+            : // The tools stand against the edge the bar is docked to and the colours
+              // on the side facing the page, so the right dock and the top dock are the
+              // left and bottom docks seen in a mirror.
+              `${dock === 'right' ? 'flex-row-reverse items-start' : vertical ? 'flex-row items-start' : dock === 'bottom' ? 'flex-col-reverse' : 'flex-col'} gap-1 p-1`
+        } rounded-2xl border border-zinc-200/80 bg-white/95 shadow-2xl data-[dragging=true]:will-change-transform dark:border-zinc-700/80 dark:bg-zinc-900/95 ${
           away ? 'pointer-events-none opacity-0' : 'opacity-100'
         }`}
         style={{
@@ -538,102 +688,71 @@ export const ToolPalette = memo(function ToolPalette({
           transition: concealed ? 'opacity 200ms, visibility 0s 200ms' : 'opacity 200ms, visibility 0s',
           touchAction: 'none',
           ...(capacity ? { maxHeight: capacity } : {}),
+          ...(paletteSlide && across !== undefined ? { maxWidth: across } : {}),
         }}
       >
-      {/* The tools. Wraps onto further lines rather than growing past the panel
-          — on a phone the full set is far wider than the screen, and standing on
-          end it is taller than a tablet in landscape. */}
-      <div
-        className={`flex items-center gap-0.5 ${
-          vertical ? `flex-col content-start ${dock === 'right' ? 'flex-wrap-reverse' : 'flex-wrap'}` : 'flex-wrap'
-        }`}
-        style={vertical && capacity ? { maxHeight: capacity - 12 } : undefined}
-      >
-        {draggable && (
-          <Tooltip label="Move the palette" hint="double-click to reset">
-            <button
-              type="button"
-              aria-label="Move the palette"
-              data-palette-handle
-              className="inline-flex h-9 w-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-200/70 active:cursor-grabbing group-data-[vertical=true]/palette:h-5 group-data-[vertical=true]/palette:w-9 dark:text-zinc-500 dark:hover:bg-zinc-700/70"
-              onDoubleClick={reset}
-              {...handleProps}
-            >
-              <GripHorizontal size={16} aria-hidden="true" />
-            </button>
-          </Tooltip>
-        )}
-
-        {draggable && (
-          <IconButton
-            icon={palettePinned ? Pin : PinOff}
-            label={palettePinned ? 'Unpin the toolbar' : 'Pin the toolbar'}
-            hint={palettePinned ? 'it will slip away when idle' : 'keep it on screen'}
-            size="sm"
-            aria-pressed={palettePinned}
-            className={palettePinned ? 'text-blue-600 dark:text-blue-400 [&>svg]:fill-current' : ''}
-            onClick={() => setPalettePinned(!palettePinned)}
-            data-palette-pin
-          />
-        )}
-
-        {/* The tools, in whatever order the user arranged them. Dividers are
-            drawn before the slot that starts each group, so the grouping
-            survives a reorder rather than being pinned to fixed positions. */}
-        {paletteOrder.map((slot, index) => {
-          const content = slots[slot];
-          if (!content) return null;
-          return (
-            <PaletteSlotButton
-              key={slot}
-              slot={slot}
-              index={index}
-              arranging={arranging}
-              itemProps={getItemProps(index)}
-              dragging={drag?.from === index}
-              dropTarget={drag !== null && drag.over === index && drag.from !== index}
-              divider={index > 0 && PALETTE_GROUP_STARTS.includes(slot) ? DIVIDER : null}
-            >
-              {content}
-            </PaletteSlotButton>
-          );
-        })}
-
-        {history && (
+        {paletteSlide ? (
           <>
-            {DIVIDER}
-            <IconButton icon={Undo2} label="Undo" size="sm" disabled={!history.canUndo} onClick={history.onUndo} />
-            <IconButton icon={Redo2} label="Redo" size="sm" disabled={!history.canRedo} onClick={history.onRedo} />
+            {handle}
+            {pin}
+            {modeButton}
+            <SlideStrip vertical={vertical} dragToSlide={!arranging} className="flex-1">
+              {textControls ?? (
+                <>
+                  {tools}
+                  {DIVIDER}
+                  <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} compact={vertical} strip={!vertical} />
+                </>
+              )}
+              {DIVIDER}
+              {settingsControl}
+            </SlideStrip>
+          </>
+        ) : (
+          <>
+            {/* The tools. Wraps onto further lines rather than growing past the panel
+                — on a phone the full set is far wider than the screen, and standing on
+                end it is taller than a tablet in landscape. */}
+            <div
+              className={`flex items-center gap-0.5 ${
+                vertical ? `flex-col content-start ${dock === 'right' ? 'flex-wrap-reverse' : 'flex-wrap'}` : 'flex-wrap'
+              }`}
+              style={vertical && capacity ? { maxHeight: capacity - 12 } : undefined}
+            >
+              {handle}
+              {pin}
+              {modeButton}
+              {textControls ?? tools}
+              {(!vertical || textControls) && (
+                <>
+                  {DIVIDER}
+                  {settingsControl}
+                </>
+              )}
+            </div>
+
+            {/* Colours and thickness. Standing on end they share one column with the
+                settings button, which heads it, so the column beside the tools is
+                the whole of the rest of the bar; in a row they sit on the side of the
+                tools that faces the page. Typing, there are none: the text toolbar has
+                its own. */}
+            {textControls ? null : vertical ? (
+              <div
+                className="flex shrink-0 flex-col items-center gap-0.5"
+                data-palette-inner
+                {...(capacity ? { style: { maxHeight: capacity - 12 } } : {})}
+              >
+                {settingsControl}
+                {DIVIDER}
+                <div className="min-h-0 overflow-y-auto">
+                  <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} compact />
+                </div>
+              </div>
+            ) : (
+              <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} />
+            )}
           </>
         )}
-
-        {!vertical && (
-          <>
-            {DIVIDER}
-            {settingsControl}
-          </>
-        )}
-      </div>
-
-      {/* Colours and thickness. Standing on end they share one column with the
-          settings button, which heads it, so the column beside the tools is
-          the whole of the rest of the bar; in a row they sit on the side of the
-          tools that faces the page. */}
-      {vertical ? (
-        <div
-          className="flex shrink-0 flex-col items-center gap-0.5"
-          data-palette-inner
-          {...(capacity ? { style: { maxHeight: capacity - 12 } } : {})}
-        >
-          {settingsControl}
-          {DIVIDER}
-          <div className="min-h-0 overflow-y-auto">
-            <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} compact />
-          </div>
-        </div>
-      ) : (
-        <ToolConfigRow settings={settings} onSettingsChange={onSettingsChange} />
-      )}
       </div>
     </TooltipSideProvider>
   );
