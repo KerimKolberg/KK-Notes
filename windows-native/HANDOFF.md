@@ -29,6 +29,10 @@ current Tauri app ships x64 only; on ARM it runs emulated.)
 
 ## Plan
 
+The full list of what the current app does is in `windows-native/FEATURES.md`, with a status box per
+feature. Use it as the checklist; do not try to discover the features from the code alone.
+
+
 1. **Prototype — the deciding step.** One WinUI 3 window with a page and the pen:
    - `InkCanvas` / `InkPresenter` (or, if it measures better, `CoreInkIndependentInputSource` with
      Win2D drawing), pressure and tilt, a few colours and widths, an eraser, undo;
