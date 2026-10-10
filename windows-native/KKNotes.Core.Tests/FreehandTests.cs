@@ -54,7 +54,7 @@ public class FreehandTests
     {
         var samples = Brushes.FreehandSamples(points, style);
         var options = Brushes.FreehandOptionsFor(style, complete, points);
-        double k = style.NoiseScale;
+        double k = StrokeOutline.Scale(style);
         var scaledSamples = samples.Select(p => p with { X = p.X * k, Y = p.Y * k }).ToList();
         var scaledOptions = options with { Size = options.Size * k, StartTaper = options.StartTaper * k, EndTaper = options.EndTaper * k };
         var expected = Reference(scaledSamples, scaledOptions, Brushes.Of(style)?.Easing ?? "linear")
@@ -198,14 +198,35 @@ public class FreehandTests
         Assert.All(curl, p => Assert.True(Inside(outline, p.X, p.Y), $"({p.X:0.00}, {p.Y:0.00}) is not inked"));
     }
 
-    [Fact]
-    public void WithPerfectFreehandsFixedSkipTheCurlIsCutOff()
+    [Theory]
+    // An ordinary pen at 100 %: as perfect-freehand.
+    [InlineData(3, 1, 1)]
+    // A fine pen alone is outlined as if 2 units wide.
+    [InlineData(1, 1, 2)]
+    // At 400 % the zoom asks for more than a 1-unit pen…
+    [InlineData(1, 4, 4)]
+    // …and a quarter-unit pen for more than the zoom.
+    [InlineData(0.25, 4, 8)]
+    // An ordinary pen written zoomed in, which the width alone never reached.
+    [InlineData(3, 4, 4)]
+    // Zoomed out changes nothing.
+    [InlineData(3, 0.5, 1)]
+    public void TheOutlineIsScaledForTheZoomOrAFinePenWhicheverAsksMore(double size, double zoom, double expected)
     {
-        // What both apps did: the last 3 page units are skipped whatever the zoom, so the outside of
-        // the curl is not inked. This pins the reason for WritingZoom.
-        var stroke = CurlStroke(writingZoom: 1);
-        var outline = StrokeOutline.Get(stroke.Points, stroke.Style, complete: true);
-        Assert.Contains(stroke.Points.Where(p => p.X >= 10), p => !Inside(outline, p.X, p.Y));
+        var style = Brushes.PenStyle(Brushes.Ballpoint, "#000000", size, "pen") with { WritingZoom = zoom };
+        Assert.Equal(expected, StrokeOutline.Scale(style), 9);
+    }
+
+    [Fact]
+    public void FinePensGoDownToAQuarterAndSmoothLessTheFinerTheyAre()
+    {
+        // The same numbers as the current app's fineInk.test.ts.
+        Assert.Equal(0.25, Brushes.MinStrokeSize);
+        Assert.True(Brushes.PenStyle(Brushes.Ballpoint, "#000000", 0.25, "pen").Size < 0.5);
+        Assert.Equal(0.5, Brushes.FineStreamline(0.5, 2));
+        Assert.Equal(0.2, Brushes.FineStreamline(0.5, Brushes.MinStrokeSize), 9);
+        Assert.True(Brushes.FineStreamline(0.5, 1) > Brushes.FineStreamline(0.5, 0.5));
+        Assert.True(Brushes.FineStreamline(0.5, 1) < 0.5);
     }
 
     [Fact]

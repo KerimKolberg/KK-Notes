@@ -55,19 +55,38 @@ public static class Brushes
         _ => static t => t,
     };
 
+    /// <summary>The thinnest a pen can be, in page units (<c>MIN_STROKE_SIZE</c>): for writing small zoomed in.</summary>
+    public const double MinStrokeSize = 0.25;
+
+    /// <summary>Up to this width a pen is fine, and smooths less the finer it is.</summary>
+    private const double FineSize = 1.5;
+
+    /// <summary>
+    /// The input smoothing for a pen <paramref name="size"/> wide (<c>fineStreamline</c>): smoothing lags each
+    /// sample behind the pen, which in letters a few units high rounds off their curves, so a fine pen keeps
+    /// more of what the hand did, down to 40 % of the brush's smoothing at the finest width.
+    /// </summary>
+    public static double FineStreamline(double streamline, double size)
+    {
+        if (size >= FineSize) return streamline;
+        double t = Math.Clamp((size - MinStrokeSize) / (FineSize - MinStrokeSize), 0, 1);
+        return streamline * (0.4 + 0.6 * t);
+    }
+
     /// <summary>Style of a new pen stroke (<c>brushStyle</c>).</summary>
     public static StrokeStyle PenStyle(string brushId, string color, double size, string pointerType)
     {
         var brush = ById(brushId);
+        double width = Math.Max(MinStrokeSize, size * brush.SizeScale);
         return new StrokeStyle
         {
             Color = color,
-            Size = Math.Max(0.5, size * brush.SizeScale),
+            Size = width,
             Opacity = brush.Opacity,
             CompositeOperation = brush.Composite,
             Thinning = brush.Thinning,
             Smoothing = brush.Smoothing,
-            Streamline = brush.Streamline,
+            Streamline = FineStreamline(brush.Streamline, width),
             // A device without pressure gets life from velocity, except for even-width brushes.
             SimulatePressure = brush.VelocityWidth || (pointerType != "pen" && brush.Thinning > 0.2),
             TaperStart = brush.TaperStart,
@@ -188,18 +207,30 @@ public static class Brushes
 /// <summary>The outline of a stroke, ready to fill (<c>strokeOutline.ts: getStrokeOutline</c>).</summary>
 public static class StrokeOutline
 {
+    /// <summary>Pens finer than this are outlined scaled up to it (<c>OUTLINE_BASE_SIZE</c>).</summary>
+    private const double OutlineBaseSize = 2;
+
+    /// <summary>How much a stroke <paramref name="size"/> wide is scaled up for its width alone (<c>outlineScale</c>).</summary>
+    public static double WidthScale(double size) => size > 0 && size < OutlineBaseSize ? OutlineBaseSize / size : 1;
+
     /// <summary>
-    /// The outline. A stroke written at a zoom above 100 % (<see cref="StrokeStyle.WritingZoom"/>) is
-    /// outlined as if it were that much bigger, then scaled back: its points, size and tapers are
-    /// multiplied by the zoom before perfect-freehand and the outline divided by it after.
+    /// How much a stroke is scaled up to be outlined (<c>strokeOutlineScale</c>): for its width or for the zoom
+    /// it was written at, whichever asks for more.
+    /// </summary>
+    public static double Scale(StrokeStyle style) => Math.Max(WidthScale(style.Size), style.NoiseScale);
+
+    /// <summary>
+    /// The outline. A stroke written at a zoom above 100 % (<see cref="StrokeStyle.WritingZoom"/>), or with a pen
+    /// finer than 2 units, is outlined as if it were that much bigger (<see cref="Scale"/>), then scaled back:
+    /// its points, size and tapers are multiplied before perfect-freehand and the outline divided after.
     /// <para>
     /// Everything perfect-freehand measures is relative to the size, except one constant: it skips
     /// the last <see cref="Freehand.EndNoiseThreshold"/> (3) units of every line as noise. That was
-    /// tuned for 100 %, where 3 units are 3 pixels; at 400 % they are most of a small letter, and
-    /// the skipped end is joined on straight, which twists into a thin neck and a dot wherever
-    /// the pen curls as it lifts. Scaling makes the skip 3 units <em>on screen</em> at the zoom
-    /// the stroke was written at, and nothing else changes. It is done here, around the library,
-    /// so that the current app can do exactly the same around the JavaScript original.
+    /// tuned for 100 %, where 3 units are 3 pixels; at 400 %, or for a fine pen, they are most of a
+    /// small letter, and the skipped end is joined on straight, which twists into a thin neck and a
+    /// dot wherever the pen curls as it lifts. Scaling shrinks the skip, and nothing else changes. It
+    /// is done here, around the library, exactly as the current app does it around the JavaScript
+    /// original (<c>strokeOutline.ts</c>), tapers worked out at the stroke's own size and then scaled.
     /// </para>
     /// </summary>
     public static List<Vec2> Get(IReadOnlyList<InkPoint> points, StrokeStyle style, bool complete)
@@ -207,7 +238,7 @@ public static class StrokeOutline
         if (points.Count == 0) return [];
         var samples = Brushes.FreehandSamples(points, style);
         var options = Brushes.FreehandOptionsFor(style, complete, points);
-        double k = style.NoiseScale;
+        double k = Scale(style);
         if (k == 1) return Freehand.GetStroke(samples, options);
 
         var scaled = new InkPoint[samples.Count];

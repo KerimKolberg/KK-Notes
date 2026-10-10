@@ -6,7 +6,8 @@ namespace KKNotes.Core.Ink;
 /// add nothing a screen can show, and each is a vertex outlined again on every frame. The newest
 /// held one is put on the end when the stroke is built, so it ends exactly where the pen did.
 /// The spacing is on screen: divided by the zoom the stroke is written at
-/// (<see cref="StrokeStyle.WritingZoom"/>), or small writing at a high zoom loses most of its samples.
+/// (<see cref="StrokeStyle.WritingZoom"/>), or small writing at a high zoom loses most of its samples;
+/// and a fine pen keeps samples half its width apart if that is closer.
 /// </summary>
 public sealed class StrokeBuilder
 {
@@ -25,7 +26,8 @@ public sealed class StrokeBuilder
         Style = style;
         PointerType = pointerType;
         CreatedAt = createdAt;
-        _spacing = MinSampleSpacing / style.NoiseScale;
+        // On screen whatever the zoom, and for a fine pen half its width, whichever keeps more (strokeBuilder.ts).
+        _spacing = Math.Min(MinSampleSpacing / style.NoiseScale, style.Size * 0.5);
     }
 
     public string Id { get; } = StrokeIds.Create();

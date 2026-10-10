@@ -18,8 +18,8 @@ public sealed partial class MainWindow : Window
     /// <summary>The current app's swatches (<c>COLOR_PALETTE</c>).</summary>
     private static readonly string[] PenColors = ["#1f1f24", "#2563eb", "#16a34a", "#dc2626", "#8b5a2b", "#7c3aed", "#ea580c", "#ec4899"];
     private static readonly string[] HighlighterColors = ["#facc15", "#4ade80", "#f472b6", "#60a5fa", "#fb923c"];
-    /// <summary>Half a unit is for writing small zoomed in, as in the current app.</summary>
-    private static readonly double[] PenWidths = [0.5, 1, 2, 3, 5, 8];
+    /// <summary>The widths below 1 are for writing small zoomed in, down to the current app's 0.25.</summary>
+    private static readonly double[] PenWidths = [0.25, 0.5, 1, 2, 3, 5, 8];
     private static readonly double[] HighlighterWidths = [8, 16, 24, 32];
 
     /// <summary>Prediction choices: -1 is the system's own look-ahead, 0 is off.</summary>
