@@ -77,7 +77,8 @@ UTF-8 JSON (`src/desktop/notex.ts`, `src/document/types.ts`, `src/document/seria
         "points": [ { "x": 120.5, "y": 88.2, "pressure": 0.42, "tilt": 0.3 } ],  // page px
         "style": { "color": "#1d1d1f", "size": 2, "opacity": 1, "compositeOperation": "source-over",
                    "thinning": 0.5, "smoothing": 0.5, "streamline": 0.5, "simulatePressure": false,
-                   "taperStart": 0, "taperEnd": 0, "pattern": "solid", "arrowheads": "none", "brush": "…" },
+                   "taperStart": 0, "taperEnd": 0, "pattern": "solid", "arrowheads": "none", "brush": "…",
+                   "writingZoom": 4 },        // only when written above 100 %: see README "Writing small at a high zoom"
         "bbox": { "minX": …, "minY": …, "maxX": …, "maxY": … },
         "pointerType": "pen", "createdAt": 12345.6
       } ],

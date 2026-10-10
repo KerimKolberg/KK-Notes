@@ -49,6 +49,7 @@ import { edgeForStart, lengthCm, projectToEdge, type Edge, type Ruler } from '..
 import { polylineLength } from '../engine/simplify';
 import { LiveBaker, canBakeLive } from '../engine/liveBake';
 import { StrokeBuilder } from '../engine/strokeBuilder';
+import { withWritingZoom } from '../engine/writingZoom';
 import { beginDwell, lockDwell, noteDwellMovement, type DwellState } from '../engine/dwell';
 import { filterIsActive, inEraseFilter, type EraseFilter } from '../engine/eraseFilter';
 import { eraserRadius, laserStyleFor, styleForTool } from '../engine/toolStyles';
@@ -779,7 +780,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           hud: [],
         };
       } else {
-        const builder = new StrokeBuilder(tool, styleForTool(tool, settings, pointerType), pointerType);
+        // The zoom it is written at, so small writing at a high zoom keeps its shape (writingZoom.ts).
+        const builder = new StrokeBuilder(tool, withWritingZoom(styleForTool(tool, settings, pointerType), scale), pointerType);
         builder.add(point);
         // A pen or highlighter that starts at a ruler's edge follows the edge, which leaves
         // no room for the hold-to-snap guess at what shape was meant.

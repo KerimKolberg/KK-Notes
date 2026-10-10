@@ -12,6 +12,7 @@ import { bboxFromPoints } from './geometry';
 import { createStrokeId } from './ids';
 import { arrowheadLength } from './shapes';
 import { straightenTape } from './tape';
+import { noiseScale } from './writingZoom';
 
 /** Padding around a freehand path: widest half-width, arrowheads, anti-aliasing slop. */
 export function freehandPadding(style: StrokeStyle): number {
@@ -34,6 +35,9 @@ export function freehandBBox(points: readonly Point[], style: StrokeStyle): BBox
  * again on every frame, so a long scribble made with a mouse cost several times what
  * the same scribble made with a pen did, and got dearer with every sample. Fast
  * strokes are untouched: their samples are already further apart than this.
+ *
+ * It is a distance on screen at 100 %: a stroke written zoomed in divides it by its
+ * `writingZoom` (`writingZoom.ts`), or small writing at 400 % keeps one sample in five.
  */
 export const MIN_SAMPLE_SPACING = 0.4;
 
@@ -67,12 +71,20 @@ export class StrokeBuilder {
   private maxY = Number.NEGATIVE_INFINITY;
   /** The newest sample that was too close to the last one kept; the stroke still ends on it. */
   private held: InkPoint | null = null;
+  /** The spacing for this stroke, squared (see the constructor). */
+  private readonly spacingSq: number;
 
   constructor(
     readonly tool: PersistentFreehandTool,
     readonly style: StrokeStyle,
     readonly pointerType: InkPointerType,
-  ) {}
+  ) {
+    // `MIN_SAMPLE_SPACING` on screen, whatever the zoom the stroke is written at; and a fine pen
+    // keeps samples closer still, half its width apart, since its letters are smaller than a
+    // coarse one's. Whichever keeps more.
+    const spacing = Math.min(MIN_SAMPLE_SPACING / noiseScale(style), style.size * 0.5);
+    this.spacingSq = spacing * spacing;
+  }
 
   get points(): readonly InkPoint[] {
     return this.samples;
@@ -92,9 +104,7 @@ export class StrokeBuilder {
     if (prev) {
       const dx = point.x - prev.x;
       const dy = point.y - prev.y;
-      // A fine pen keeps samples closer together: its letters are smaller than a coarse one's.
-      const spacing = Math.min(MIN_SAMPLE_SPACING, this.style.size * 0.5);
-      if (dx * dx + dy * dy < spacing * spacing) {
+      if (dx * dx + dy * dy < this.spacingSq) {
         if (dx !== 0 || dy !== 0) this.held = point;
         return;
       }

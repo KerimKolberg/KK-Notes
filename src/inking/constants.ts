@@ -235,7 +235,7 @@ export const LASER_DEFAULT_COLOR = '#ef4444';
 export const DEFAULT_TOOL_SETTINGS: Readonly<ToolSettings> = {
   tool: 'pen',
   color: '#1f1f24',
-  // The finest the slider goes: what most people write with.
+  // What most people write with. The slider goes finer, to MIN_STROKE_SIZE, for writing small zoomed in.
   size: 1,
   touchDraw: false,
   brush: DEFAULT_BRUSH,

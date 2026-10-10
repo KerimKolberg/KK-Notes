@@ -1391,7 +1391,7 @@ async function checkQuickSettings(browser) {
     if (dock === 'bottom') {
       const colours = await page.$$eval('[data-swatch]', (els) => els.map((e) => e.getAttribute('data-swatch')));
       check('the colours are black, blue, green, red, brown, purple, orange, pink', colours.length === 8 && colours.join() === ['#1f1f24', '#2563eb', '#16a34a', '#dc2626', '#8b5a2b', '#7c3aed', '#ea580c', '#ec4899'].join(), colours.join(' '));
-      check('the pen starts at the finest width, 1 px', (await reading()) === '1px', await reading());
+      check('the pen starts at 1 px', (await reading()) === '1px', await reading());
     }
     const presets = await page.$$eval('[data-width-preset]', (els) => els.map((e) => e.getAttribute('data-width-value')));
     check(`${dock}: two quick widths, 1 and 5`, presets.join() === '1,5', presets.join());

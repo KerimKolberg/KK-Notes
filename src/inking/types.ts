@@ -128,6 +128,13 @@ export interface StrokeStyle {
   /** Pen preset this stroke was drawn with. Absent on strokes from other tools. */
   readonly brush?: BrushId;
   /**
+   * The page zoom a freehand stroke was written at, when it was above 100 % (absent otherwise,
+   * and on every stroke saved before it existed). What tells a hand's noise from its writing is
+   * measured on the screen, so the sample thinning and the outline's end skip are divided by it
+   * (`engine/writingZoom.ts`); without it, small writing at a high zoom loses its stroke ends.
+   */
+  readonly writingZoom?: number;
+  /**
    * Washi tape's pattern, frozen with the stroke so the band re-renders the
    * same at any zoom and carries into an export. Absent on everything else.
    */

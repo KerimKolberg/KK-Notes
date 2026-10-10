@@ -23,6 +23,7 @@
 import { getStroke, type StrokeOptions } from 'perfect-freehand';
 import { easingForStyle, pencilPressure, strokeBrush, strokeTapers } from './brushes';
 import type { InkPoint, StrokeStyle } from '../types';
+import { noiseScale } from './writingZoom';
 
 export type Outline = ReadonlyArray<readonly [number, number]>;
 
@@ -87,9 +88,17 @@ export function freehandSamples(points: readonly InkPoint[], style: StrokeStyle)
 /** Pens finer than this are outlined scaled up to it (see `getStrokeOutline`). */
 const OUTLINE_BASE_SIZE = 2;
 
-/** How much a stroke `size` wide is scaled up to be outlined: 1 for ordinary widths. */
+/** How much a stroke `size` wide is scaled up to be outlined for its width alone: 1 for ordinary widths. */
 export function outlineScale(size: number): number {
   return size > 0 && size < OUTLINE_BASE_SIZE ? OUTLINE_BASE_SIZE / size : 1;
+}
+
+/**
+ * How much a stroke is scaled up to be outlined: for its width (a fine pen, `outlineScale`) or for the zoom it
+ * was written at (`writingZoom.ts`), whichever asks for more.
+ */
+export function strokeOutlineScale(style: StrokeStyle): number {
+  return Math.max(outlineScale(style.size), noiseScale(style));
 }
 
 /**
@@ -97,9 +106,13 @@ export function outlineScale(size: number): number {
  *
  * perfect-freehand works in the units it is given, and nearly everything it does is measured against the stroke's
  * size — except that it passes over the samples in the last 3 units of a stroke, as a fixed number. For an ordinary
- * pen that is less than a line's width; for a fine one writing small, with the page zoomed in, it is a good part
- * of a letter. So a stroke finer than `OUTLINE_BASE_SIZE` is outlined scaled up to that width and the outline
- * scaled back: everything else comes out as it would have, and those 3 units are a line's width and a half.
+ * pen at 100 % that is less than a line's width. For a fine pen, or any pen writing small with the page zoomed in,
+ * it is a good part of a letter, and wherever the pen curls as it lifts the straight join across it twists into a
+ * thin neck and a dot. So such a stroke is outlined scaled up (`strokeOutlineScale`: points, size and tapers) and
+ * the outline scaled back. Everything else comes out as it would have; those 3 units become a line's width and a
+ * half for a fine pen, or 3 units on screen for a stroke written zoomed in, whichever is less of the page. The
+ * tapers are worked out at the stroke's own size and then scaled, so a nib's speed-driven taper is exactly what
+ * it would be unscaled.
  */
 export function getStrokeOutline(
   points: readonly InkPoint[],
@@ -108,16 +121,29 @@ export function getStrokeOutline(
   caps: CapOverrides = {},
 ): Outline {
   if (points.length === 0) return [];
-  const k = outlineScale(style.size);
+  const samples = freehandSamples(points, style);
+  const options = toFreehandOptions(style, complete, points, caps);
+  const k = strokeOutlineScale(style);
   // perfect-freehand accepts `{x, y, pressure}` objects directly; InkPoint is
   // structurally compatible so no per-frame allocation is needed here.
-  if (k === 1) return getStroke(freehandSamples(points, style) as FreehandPoint[], toFreehandOptions(style, complete, points, caps));
-  // Scaled up: the samples, the width and the tapers (lengths, so they scale too; a brush's speed-driven taper
-  // follows from the scaled samples).
-  const big = points.map((p) => ({ ...p, x: p.x * k, y: p.y * k }));
-  const bigStyle = { ...style, size: style.size * k, taperStart: style.taperStart * k, taperEnd: style.taperEnd * k };
-  const outline = getStroke(freehandSamples(big, bigStyle) as FreehandPoint[], toFreehandOptions(bigStyle, complete, big, caps));
-  return outline.map(([x, y]) => [x! / k, y! / k] as const);
+  if (k === 1) return getStroke(samples as FreehandPoint[], options);
+
+  const scaled = samples.map((p): FreehandPoint =>
+    p.pressure === undefined ? { x: p.x * k, y: p.y * k } : { x: p.x * k, y: p.y * k, pressure: p.pressure },
+  );
+  const { start, end } = options;
+  const outline = getStroke(scaled, {
+    ...options,
+    size: (options.size ?? style.size) * k,
+    ...(start ? { start: scaleTaper(start, k) } : {}),
+    ...(end ? { end: scaleTaper(end, k) } : {}),
+  });
+  return outline.map(([x, y]) => [x / k, y / k] as const);
+}
+
+/** A cap's taper length (page units) scaled with the stroke; `true`/`false` mean no length and stay. */
+function scaleTaper<T extends { readonly taper?: number | boolean }>(cap: T, k: number): T {
+  return typeof cap.taper === 'number' ? { ...cap, taper: cap.taper * k } : cap;
 }
 
 /**

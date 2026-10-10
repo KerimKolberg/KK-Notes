@@ -1152,7 +1152,9 @@ together (`StrokeBuilder`: half its width apart, at most the usual 0.4), since s
 ordinary writing rounds off a small letter's curves. And a stroke finer than 2 px is **outlined scaled up** to
 2 px and scaled back (`getStrokeOutline`): perfect-freehand measures nearly everything against the stroke's size
 but passes over the samples in its last 3 units as a fixed number, which for a fine pen was a good part of a
-letter's tail. Widths stay in page units: zooming in does not make the pen finer by itself.
+letter's tail. Widths stay in page units: zooming in does not make the pen finer by itself. What the zoom does
+change is how much of a stroke is taken for noise, at any width: see *Writing small at a high zoom keeps its
+shape* under *How it works*.
 
 The pen tool paints with one of five presets, picked from the palette's pen
 flyout. A
@@ -2478,8 +2480,8 @@ works*).
   slower path through it than a stock one; if the stock pointers do not lag in fullscreen,
   the image is the cause, and if they do, the screen's presentation is.
 - **Quick widths.** Two buttons beside the thickness slider, **1** to write with
-  (the finest the slider goes, and the pen's starting width) and **5** to rule lines
-  with. A tap sets the width; a hold saves the slider's width into that slot. They
+  (the pen's starting width; the slider goes finer, to 0.25, for writing small zoomed
+  in) and **5** to rule lines with. A tap sets the width; a hold saves the slider's width into that slot. They
   are a preference (`widthPresets`, exactly two, each within what the slider can make
   or the shipped pair), so they survive a restart and "Reset to defaults" clears them.
 - **Page defaults.** *Set as default* in the arranger stores the selected
@@ -2723,6 +2725,31 @@ each autosave bigger. A sample within the spacing of the last one kept is held b
 the newest held one is put on the end when the stroke is built, so the stroke finishes
 exactly where the pointer did. Fast strokes are untouched — their samples are already
 further apart than that — and so are dots.
+
+**Writing small at a high zoom keeps its shape** (`engine/writingZoom.ts`). That spacing,
+and one distance inside perfect-freehand, decide what of a stroke is the hand's noise, and
+both were fixed in page units, tuned for 100 %, where a page unit is a CSS pixel. At 400 %
+they cover four times as much of a letter on screen, and writing small zoomed in came out
+messy. On the Z13 (measured in the native prototype, which logs it per stroke) the
+thinning kept one sample in five to nine. Worse, perfect-freehand skips the last **3
+units** of every line as pen-lift noise (`END_NOISE_THRESHOLD`, a constant in the library,
+not an option) and joins the end on straight. At 400 % that is about the height of a small
+letter, and wherever the pen curled as it lifted (a "t"'s foot, the tail of a "g", the
+closing of an "o") the straight join twisted into a thin neck ending in a dot. A fine pen
+was already treated for this (*Writing small, zoomed in* under *Brush engine*: outlined as
+if 2 px wide, samples half its width apart), but a 1 px pen at 400 % still lost a line and a
+half at every end, and a 3 px one the full 3 units. So a freehand stroke now also records the
+zoom it was written at, `style.writingZoom` (CSS pixels per page unit: the page zoom, or the
+zoom window's magnification), stored only above 100 % and to three decimals. The thinning is
+divided by it, or is half the pen's width if that keeps more. The outline is computed with
+the stroke **scaled up and scaled back** (points, size and tapers multiplied before
+`getStroke`, the outline divided after) by whichever is larger, the writing zoom or the fine
+pen's scale (`strokeOutlineScale`). Everything else perfect-freehand measures is relative
+to the size, so only the end skip changes, to 3 units *on screen*, and the library stays as
+it is. Strokes written at 100 % or less, and every stroke saved before this, have no
+`writingZoom` and outline exactly as before. `writingZoom.test.ts` pins which scale wins and
+that a curl at the end of a stroke written at 400 % is inked. The native Windows app does
+the same (`windows-native/README.md`).
 
 **Drawing aids** (`engine/ruler.ts`, `engine/protractor.ts`, `engine/grid.ts`, `document/aids.ts`,
 `components/AidsLayer.tsx`). Three things for drawing neatly, all reached from the Add menu or the
@@ -3141,6 +3168,7 @@ src/inking/
 │   ├── gestureState.ts     shared two-finger-gesture flag and pen presence
 │   ├── toolStyles.ts       per-tool StrokeStyle
 │   ├── strokeBuilder.ts    in-progress freehand accumulator
+│   ├── writingZoom.ts      noise thresholds on screen: small writing at a high zoom
 │   └── geometry.ts
 └── hooks/
     ├── usePointerInk.ts    pointer state machine, dwell timer, drag shapes, rAF rendering
