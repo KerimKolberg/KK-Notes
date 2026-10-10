@@ -26,7 +26,9 @@ install that workload rather than pulling unofficial template packs.
 - `windows-native/KKNotes.Native.sln`, app project `windows-native/KKNotes.Native/`.
 - **Unpackaged** (`<WindowsPackageType>None</WindowsPackageType>`) so it runs from `dotnet run` and
   needs no signing; `<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>`.
-- Target `net8.0-windows10.0.22621.0` (or newer), `x64` (the Z13 is x64).
+- Target `net8.0-windows10.0.22621.0` (or newer), for **both `x64` and `ARM64`**: the Z13 is x64, and
+  the owner may use an ARM laptop (NVIDIA N1X). Keep every dependency ARM64-capable (Win2D, the
+  Windows App SDK and a Rust `aarch64-pc-windows-msvc` build of `notes-sync` all are).
 - Pure logic (the `.notex` model, the stroke outline, geometry) in a separate class library with an
   xUnit test project, so it is tested without a window.
 
@@ -37,6 +39,9 @@ dotnet build windows-native\KKNotes.Native.sln -c Debug -p:Platform=x64
 dotnet test  windows-native\KKNotes.Core.Tests                     # once tests exist
 dotnet run   --project windows-native\KKNotes.Native -c Debug -p:Platform=x64
 ```
+
+On an ARM laptop use `-p:Platform=ARM64` instead (`$env:PROCESSOR_ARCHITECTURE` says `ARM64`); an x64
+build would run there only under emulation, which defeats the point of measuring ink latency.
 
 - `dotnet run` blocks until the window is closed. Start it in the background, or tell the owner the
   window is up and wait for them to say they are done.

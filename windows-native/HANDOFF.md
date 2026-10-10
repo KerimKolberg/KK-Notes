@@ -23,6 +23,10 @@ scale, 60/180 Hz, pen):
 
 So the first job is **a prototype that proves the ink is better**, not a port.
 
+The app is to run on **x64 and ARM64** Windows: besides the Z13 (x64) the owner may write on an ARM
+laptop (NVIDIA N1X). Build both, and test latency on each natively, never under emulation. (The
+current Tauri app ships x64 only; on ARM it runs emulated.)
+
 ## Plan
 
 1. **Prototype — the deciding step.** One WinUI 3 window with a page and the pen:
