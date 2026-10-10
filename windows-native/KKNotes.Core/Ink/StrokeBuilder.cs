@@ -5,12 +5,16 @@ namespace KKNotes.Core.Ink;
 /// Samples closer than <see cref="MinSampleSpacing"/> to the last one kept are held back: they
 /// add nothing a screen can show, and each is a vertex outlined again on every frame. The newest
 /// held one is put on the end when the stroke is built, so it ends exactly where the pen did.
+/// The spacing is on screen: divided by the zoom the stroke is written at
+/// (<see cref="StrokeStyle.WritingZoom"/>), or small writing at a high zoom loses most of its samples.
 /// </summary>
 public sealed class StrokeBuilder
 {
     public const double MinSampleSpacing = 0.4;
 
     private readonly List<InkPoint> _samples = new(512);
+    /// <summary>The spacing for this stroke: <see cref="MinSampleSpacing"/> on screen, whatever the zoom.</summary>
+    private readonly double _spacing;
     private InkPoint? _held;
     private double _minX = double.PositiveInfinity, _minY = double.PositiveInfinity;
     private double _maxX = double.NegativeInfinity, _maxY = double.NegativeInfinity;
@@ -21,6 +25,7 @@ public sealed class StrokeBuilder
         Style = style;
         PointerType = pointerType;
         CreatedAt = createdAt;
+        _spacing = MinSampleSpacing / style.NoiseScale;
     }
 
     public string Id { get; } = StrokeIds.Create();
@@ -39,7 +44,7 @@ public sealed class StrokeBuilder
         {
             var prev = _samples[^1];
             double dx = point.X - prev.X, dy = point.Y - prev.Y;
-            if (dx * dx + dy * dy < MinSampleSpacing * MinSampleSpacing)
+            if (dx * dx + dy * dy < _spacing * _spacing)
             {
                 if (dx != 0 || dy != 0) _held = point;
                 return;

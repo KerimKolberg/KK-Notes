@@ -21,8 +21,11 @@ public partial class App : Application
         string[] argv = Environment.GetCommandLineArgs();
         int i = Array.IndexOf(argv, "--snapshot");
         string? snapshot = i >= 0 && i + 1 < argv.Length ? Path.GetFullPath(argv[i + 1]) : null;
+        // `--demo small` makes that page synthetic small handwriting instead, at a high zoom.
+        int d = Array.IndexOf(argv, "--demo");
+        string? demo = d >= 0 && d + 1 < argv.Length ? argv[d + 1] : null;
 
-        _window = new MainWindow(snapshot);
+        _window = new MainWindow(snapshot, demo);
         _window.Activate();
     }
 }

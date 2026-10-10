@@ -25,6 +25,17 @@ internal sealed partial class InkSurface
     private PointerPredictor? _predictor;
     private TimeSpan _systemPredictionTime;
     private volatile int _predictionMs = -1; // -1: the system's own prediction time; 0: off
+    private volatile bool _zoomAwareInk = true;
+
+    /// <summary>
+    /// Whether new strokes remember the zoom they are written at, so their noise thresholds are
+    /// measured on screen (true), or behave as in the current app, in page units (false).
+    /// </summary>
+    public bool ZoomAwareInk
+    {
+        get => _zoomAwareInk;
+        set => _zoomAwareInk = value;
+    }
     private GestureRecognizer? _gestures;
     private DispatcherQueueTimer? _barrelTimer;
 
@@ -252,9 +263,13 @@ internal sealed partial class InkSurface
         {
             var settings = _settings;
             string pointerType = pt.PointerDeviceType == PointerDeviceType.Pen ? "pen" : "mouse";
-            var builder = _activeTool == Tool.Highlighter
-                ? new StrokeBuilder(StrokeTools.Highlighter, Brushes.HighlighterStyle(settings.HighlighterColor, settings.HighlighterWidth), pointerType, now)
-                : new StrokeBuilder(StrokeTools.Pen, Brushes.PenStyle(settings.Brush, settings.PenColor, settings.PenWidth, pointerType), pointerType, now);
+            var style = _activeTool == Tool.Highlighter
+                ? Brushes.HighlighterStyle(settings.HighlighterColor, settings.HighlighterWidth)
+                : Brushes.PenStyle(settings.Brush, settings.PenColor, settings.PenWidth, pointerType);
+            // The zoom it is written at, so small writing at a high zoom keeps its shape (StrokeStyle.WritingZoom).
+            style = style with { WritingZoom = _zoomAwareInk ? _camera.Zoom : 1 };
+            string tool = _activeTool == Tool.Highlighter ? StrokeTools.Highlighter : StrokeTools.Pen;
+            var builder = new StrokeBuilder(tool, style, pointerType, now);
             builder.Add(p);
             lock (_sync)
             {
@@ -471,7 +486,7 @@ internal sealed partial class InkSurface
     {
         double ms = (_lastTimestamp - _strokeStartTimestamp) / 1000.0;
         string rate = ms > 0 ? $"{(_strokeSamples - 1) / (ms / 1000):0}/s" : "–";
-        Log.Write($"Stroke ({stroke.PointerType}, {stroke.Style.Brush ?? stroke.Tool}): {_strokeSamples} samples in {ms:0} ms ({rate}) " +
+        Log.Write($"Stroke ({stroke.PointerType}, {stroke.Style.Brush ?? stroke.Tool}, written at {stroke.Style.WritingZoom:P0}): {_strokeSamples} samples in {ms:0} ms ({rate}) " +
             $"from {_strokeMoves} move events, {stroke.Points.Count} kept; prediction on {_strokePredictedMoves} of {_strokeMoves} moves");
     }
 

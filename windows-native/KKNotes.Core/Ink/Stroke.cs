@@ -34,6 +34,19 @@ public sealed record StrokeStyle
     public string Arrowheads { get; init; } = "none";
     /// <summary>Pen preset (<c>ballpoint</c>, <c>fountain</c>, …); null for highlighter strokes.</summary>
     public string? Brush { get; init; }
+
+    /// <summary>
+    /// The page zoom the stroke was written at (1 when unknown, as for every stroke the current app
+    /// has saved). Not in the current app's files yet. The distances that tell a hand's noise from
+    /// its writing (sample thinning, the outline's end-noise skip) are about the screen, not the
+    /// page: a fixed number of page units is four times as much of a letter at 400 %. So they are
+    /// divided by this (<see cref="StrokeBuilder"/>, <see cref="StrokeOutline.Get"/>); it is never
+    /// taken below 1, so writing zoomed out keeps the old behaviour.
+    /// </summary>
+    public double WritingZoom { get; init; } = 1;
+
+    /// <summary><see cref="WritingZoom"/> as the thresholds use it: at least 1.</summary>
+    public double NoiseScale => double.IsFinite(WritingZoom) && WritingZoom > 1 ? WritingZoom : 1;
 }
 
 /// <summary>The tools a freehand stroke can come from, as the file names them.</summary>

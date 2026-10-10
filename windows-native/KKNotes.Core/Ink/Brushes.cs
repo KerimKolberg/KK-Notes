@@ -188,9 +188,37 @@ public static class Brushes
 /// <summary>The outline of a stroke, ready to fill (<c>strokeOutline.ts: getStrokeOutline</c>).</summary>
 public static class StrokeOutline
 {
+    /// <summary>
+    /// The outline. A stroke written at a zoom above 100 % (<see cref="StrokeStyle.WritingZoom"/>) is
+    /// outlined as if it were that much bigger, then scaled back: its points, size and tapers are
+    /// multiplied by the zoom before perfect-freehand and the outline divided by it after.
+    /// <para>
+    /// Everything perfect-freehand measures is relative to the size, except one constant: it skips
+    /// the last <see cref="Freehand.EndNoiseThreshold"/> (3) units of every line as noise. That was
+    /// tuned for 100 %, where 3 units are 3 pixels; at 400 % they are most of a small letter, and
+    /// the skipped end is joined on straight, which twists into a thin neck and a dot wherever
+    /// the pen curls as it lifts. Scaling makes the skip 3 units <em>on screen</em> at the zoom
+    /// the stroke was written at, and nothing else changes. It is done here, around the library,
+    /// so that the current app can do exactly the same around the JavaScript original.
+    /// </para>
+    /// </summary>
     public static List<Vec2> Get(IReadOnlyList<InkPoint> points, StrokeStyle style, bool complete)
     {
         if (points.Count == 0) return [];
-        return Freehand.GetStroke(Brushes.FreehandSamples(points, style), Brushes.FreehandOptionsFor(style, complete, points));
+        var samples = Brushes.FreehandSamples(points, style);
+        var options = Brushes.FreehandOptionsFor(style, complete, points);
+        double k = style.NoiseScale;
+        if (k == 1) return Freehand.GetStroke(samples, options);
+
+        var scaled = new InkPoint[samples.Count];
+        for (int i = 0; i < scaled.Length; i++) scaled[i] = samples[i] with { X = samples[i].X * k, Y = samples[i].Y * k };
+        var outline = Freehand.GetStroke(scaled, options with
+        {
+            Size = options.Size * k,
+            StartTaper = options.StartTaper * k,
+            EndTaper = options.EndTaper * k,
+        });
+        for (int i = 0; i < outline.Count; i++) outline[i] = new Vec2(outline[i].X / k, outline[i].Y / k);
+        return outline;
     }
 }

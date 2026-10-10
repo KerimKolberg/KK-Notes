@@ -18,6 +18,22 @@ public class StrokeBuilderTests
     }
 
     [Fact]
+    public void ThinningIsMeasuredOnScreenNotOnThePage()
+    {
+        // 0.15 page units apart: dropped at 100 %, but 0.6 units of screen at 400 %, so kept.
+        var style = Brushes.PenStyle("ballpoint", "#000000", 2, "pen");
+        var atFour = new StrokeBuilder(StrokeTools.Pen, style with { WritingZoom = 4 }, "pen", 0);
+        var atOne = new StrokeBuilder(StrokeTools.Pen, style, "pen", 0);
+        for (int i = 0; i < 10; i++)
+        {
+            atFour.Add(new InkPoint(i * 0.15, 0, 0.5));
+            atOne.Add(new InkPoint(i * 0.15, 0, 0.5));
+        }
+        Assert.Equal(10, atFour.Count);
+        Assert.Equal(4, atOne.Count);
+    }
+
+    [Fact]
     public void TheStrokeStillEndsWhereThePenDid()
     {
         var b = Builder();

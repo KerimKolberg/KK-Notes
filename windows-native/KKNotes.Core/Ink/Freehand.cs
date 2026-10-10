@@ -54,7 +54,12 @@ public static class Freehand
     private const int StartCapSegments = 13;
     private const int EndCapSegments = 29;
     private const int CornerCapSegments = 13;
-    private const double EndNoiseThreshold = 3;
+    /// <summary>
+    /// The length at the end of a line skipped as noise, in the units of the points. A constant
+    /// in perfect-freehand, and a lot of a letter written small at a high zoom: see
+    /// <see cref="StrokeOutline.Get"/> for how the app deals with that without changing the library.
+    /// </summary>
+    public const double EndNoiseThreshold = 3;
     private const double MinStreamlineT = 0.15;
     private const double StreamlineTRange = 0.85;
     private const double MinRadius = 0.01;

@@ -138,6 +138,13 @@ internal sealed partial class InkSurface : IDisposable
         RequestFrame();
     }
 
+    /// <summary>Shows the page at <paramref name="zoom"/> with page point (x, y) at the top left.</summary>
+    public void SetView(double zoom, double x, double y)
+    {
+        lock (_sync) SetCameraLocked(new PageCamera(zoom, -x * zoom, -y * zoom));
+        RequestFrame();
+    }
+
     /// <summary>Back to the page fitted to the width of the window.</summary>
     public void ResetView()
     {

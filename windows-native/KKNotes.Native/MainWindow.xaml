@@ -78,6 +78,13 @@
             </StackPanel>
 
             <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4">
+                <ToggleButton x:Name="ZoomAwareButton" IsChecked="True" Click="OnZoomAwareClick"
+                              ToolTipService.ToolTip="New strokes remember the zoom they are written at, so small writing at a high zoom keeps its shape. Off: as the current app does.">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE8A3;" FontSize="16" />
+                        <TextBlock Text="Zoom-aware" />
+                    </StackPanel>
+                </ToggleButton>
                 <ComboBox x:Name="PredictionBox" SelectionChanged="OnPredictionChanged" MinWidth="170"
                           ToolTipService.ToolTip="How far ahead Windows predicts the pen. The predicted bit is drawn but never kept." />
                 <ComboBox x:Name="PresentBox" SelectionChanged="OnPresentChanged" MinWidth="150"

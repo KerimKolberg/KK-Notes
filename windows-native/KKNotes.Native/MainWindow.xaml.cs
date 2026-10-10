@@ -30,7 +30,7 @@ public sealed partial class MainWindow : Window
     private bool _toolbarUpdating;
     private double _labelledPredictionMs;
 
-    public MainWindow(string? snapshotPath = null)
+    public MainWindow(string? snapshotPath = null, string? demo = null)
     {
         InitializeComponent();
         ExtendsContentIntoTitleBar = false;
@@ -42,7 +42,15 @@ public sealed partial class MainWindow : Window
         {
             _ink.Start();
             if (snapshotPath is null) return;
-            _ink.AddStrokes(DemoPage.Strokes());
+            if (demo == "small")
+            {
+                _ink.AddStrokes(DemoPage.SmallWriting());
+                _ink.SetView(DemoPage.SmallWritingViewZoom, 0, 0);
+            }
+            else
+            {
+                _ink.AddStrokes(DemoPage.Strokes());
+            }
             bool saved = await _ink.SaveSnapshotAsync(snapshotPath);
             Log.Write(saved ? "Snapshot done, closing" : "Snapshot failed, closing");
             Close();
@@ -170,6 +178,8 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnPresentChanged(object sender, SelectionChangedEventArgs e) => _ink.VSync = PresentBox.SelectedIndex == 1;
+
+    private void OnZoomAwareClick(object sender, RoutedEventArgs e) => _ink.ZoomAwareInk = ZoomAwareButton.IsChecked == true;
 
     private void OnUndoClick(object sender, RoutedEventArgs e) => _ink.Undo();
     private void OnRedoClick(object sender, RoutedEventArgs e) => _ink.Redo();

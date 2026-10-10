@@ -23,7 +23,8 @@ windows-native\KKNotes.Native\bin\x64\Debug\net9.0-windows10.0.22621.0\KKNotes.N
   (a pen on the Z13 should report a few hundred a second), how many were kept, and how many moves had
   a prediction. Read it first when something is wrong.
 - **`KKNotes.Native.exe --snapshot page.png`** draws a demo page (one stroke of each kind), saves it and
-  quits. It checks the drawing code without anyone at the screen.
+  quits. It checks the drawing code without anyone at the screen. Add `--demo small` for synthetic
+  small handwriting at a high zoom, drawn the old way and the zoom-aware way.
 
 ## What it does
 
@@ -35,7 +36,7 @@ windows-native\KKNotes.Native\bin\x64\Debug\net9.0-windows10.0.22621.0\KKNotes.N
 | **Tools** | Ballpoint (the current app's default pen), fountain pen (follows pressure and tilt), highlighter, stroke eraser. The current app's eight colours; widths 1–8 (pen) and 8–32 (highlighter). |
 | **Keys** | Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo, Ctrl+0 fit the page, F11 full screen, Esc leaves it. |
 | **Measuring** | A line under the toolbar shows the refresh rate, frames/s, pen samples/s, the input age at present, the draw time and the pen's live state (tip/hover, barrel, eraser, pressure, tilt): that is the *pen button test*. |
-| **Experiments** | The toolbar switches the prediction (system default, off, 10/20/30 ms) and the present mode (at once, or on v-sync). |
+| **Experiments** | The toolbar switches the prediction (system default, off, 10/20/30 ms), the present mode (at once, or on v-sync), and *Zoom-aware* ink (on by default; off draws new strokes as the current app does). |
 
 ## How the ink is drawn, and why
 
@@ -82,6 +83,33 @@ A port can drift unnoticed, so the tests run **the library itself**. The real Ja
 (`KKNotes.Core.Tests/Reference/`, MIT) runs under Jint, an interpreter for .NET, and its outline is
 compared point for point with the port's. That covers 8 strokes × 8 styles × live/finished, from a single dot to
 1,200 samples of handwriting, including the zigzag that exercises the corner caps.
+
+**Writing small at a high zoom.** The owner found writing small zoomed in "messy" **in both apps**. Two
+distances that both apps treat as noise are fixed in page units, tuned for 100 %, where a page unit is
+a pixel or two. At 400 % they cover four times as much of a letter on screen:
+
+- **Sample thinning** drops a sample closer than 0.4 units to the last one kept. In the Z13 test, small
+  slow writing at a high zoom kept 1 sample in 5 to 1 in 9 (the log's per-stroke line, "kept").
+- **perfect-freehand skips the last 3 units of every line** as pen-lift noise (`END_NOISE_THRESHOLD`, a
+  constant, not an option). It then joins the end on straight. At 400 % that is about 2.7 mm on
+  screen, much of a small letter. Wherever the pen curls as it lifts (a "t"'s foot, the tail of a "g",
+  the closing of an "o"), the straight join twists into a thin neck ending in a dot. Those were the
+  dots after "Let." and "extra." in the owner's screenshot.
+
+Both are now measured on the screen. A stroke remembers the zoom it was written at
+(`StrokeStyle.WritingZoom`, never below 1). The thinning distance is divided by it. For the outline,
+the stroke goes through perfect-freehand **scaled up by that zoom**, with points, size and tapers
+multiplied, and the outline comes back divided by it. Everything else perfect-freehand measures is
+relative to the size, so only the end skip changes: 3 units *on screen*. Doing it around the library
+rather than inside it keeps the port exact, and lets the current app make the identical change around
+the JavaScript original. The tests check the scaled path against the real library scaled the same
+way. They also check that a curl at a stroke's end is now inked and was cut off before. `--snapshot
+small.png --demo small` draws synthetic small writing both ways, old above and new below. *Zoom-aware*
+in the toolbar turns it off for new strokes, to compare. For the current app this needs a new
+`writingZoom` style field in `.notex`; until it has one, its strokes all count as written at 100 %.
+
+What it does not change: a 1-unit pen is thick for letters a few units tall, so small loops still fill
+in, and the ballpoint's hard-edged outline shows corners when magnified.
 
 Some differences are deliberate, and the reasons are below.
 

@@ -45,12 +45,21 @@ public class FreehandTests
         return JsonSerializer.Deserialize<double[][]>(json)!.Select(a => new Vec2(a[0], a[1])).ToList();
     }
 
+    /// <summary>
+    /// The app's outline against the library's. A stroke written zoomed in goes through the
+    /// library scaled up by its zoom and comes back scaled down, which is what the current app
+    /// would do around the JavaScript original, so the reference does the same.
+    /// </summary>
     private static void AssertSameOutline(IReadOnlyList<InkPoint> points, StrokeStyle style, bool complete)
     {
         var samples = Brushes.FreehandSamples(points, style);
         var options = Brushes.FreehandOptionsFor(style, complete, points);
-        var expected = Reference(samples, options, Brushes.Of(style)?.Easing ?? "linear");
-        var actual = Freehand.GetStroke(samples, options);
+        double k = style.NoiseScale;
+        var scaledSamples = samples.Select(p => p with { X = p.X * k, Y = p.Y * k }).ToList();
+        var scaledOptions = options with { Size = options.Size * k, StartTaper = options.StartTaper * k, EndTaper = options.EndTaper * k };
+        var expected = Reference(scaledSamples, scaledOptions, Brushes.Of(style)?.Easing ?? "linear")
+            .Select(v => new Vec2(v.X / k, v.Y / k)).ToList();
+        var actual = StrokeOutline.Get(points, style, complete);
 
         Assert.NotEmpty(expected);
         Assert.Equal(expected.Count, actual.Count);
@@ -125,6 +134,8 @@ public class FreehandTests
             ("marker", () => Brushes.PenStyle("marker", "#1f1f24", 4, "pen")),
             ("brush", () => Brushes.PenStyle("brush", "#1f1f24", 4, "pen")),
             ("highlighter", () => Brushes.HighlighterStyle("#facc15", 16)),
+            ("ballpoint 1 written at 400 %", () => Brushes.PenStyle("ballpoint", "#1f1f24", 1, "pen") with { WritingZoom = 4 }),
+            ("fountain written at 250 %", () => Brushes.PenStyle("fountain", "#1f1f24", 3, "pen") with { WritingZoom = 2.5 }),
         };
         foreach (var stroke in Strokes())
         {
@@ -144,6 +155,65 @@ public class FreehandTests
     {
         _ = name;
         AssertSameOutline(points, style, complete);
+    }
+
+    // ---- Writing small at a high zoom ------------------------------------------------------
+
+    /// <summary>
+    /// Ten units to the right, then a curl of radius 1 that turns back up and over: the end of a
+    /// small letter. Sampled every 0.1 unit, as slow writing at 400 % is.
+    /// </summary>
+    private static Stroke CurlStroke(double writingZoom)
+    {
+        var style = Brushes.PenStyle(Brushes.Ballpoint, "#000000", 1, "pen") with { WritingZoom = writingZoom };
+        var b = new StrokeBuilder(StrokeTools.Pen, style, "pen", 0);
+        for (double x = 0; x < 10; x += 0.1) b.Add(new InkPoint(x, 0, 0.5));
+        for (double a = 0; a <= Math.PI * 1.25; a += 0.1 / 1.0) b.Add(new InkPoint(10 + Math.Sin(a), -1 + Math.Cos(a), 0.5));
+        return b.Build();
+    }
+
+    /// <summary>Nonzero-winding point-in-polygon, as the outline is filled.</summary>
+    private static bool Inside(List<Vec2> polygon, double x, double y)
+    {
+        int winding = 0;
+        for (int i = 0; i < polygon.Count; i++)
+        {
+            var a = polygon[i];
+            var b = polygon[(i + 1) % polygon.Count];
+            double cross = (b.X - a.X) * (y - a.Y) - (x - a.X) * (b.Y - a.Y);
+            if (a.Y <= y && b.Y > y && cross > 0) winding++;
+            else if (a.Y > y && b.Y <= y && cross < 0) winding--;
+        }
+        return winding != 0;
+    }
+
+    [Fact]
+    public void AtHighZoomTheEndOfAStrokeKeepsItsShape()
+    {
+        var stroke = CurlStroke(writingZoom: 4);
+        var outline = StrokeOutline.Get(stroke.Points, stroke.Style, complete: true);
+        // Every sample of the curl is inked.
+        var curl = stroke.Points.Where(p => p.X >= 10).ToList();
+        Assert.NotEmpty(curl);
+        Assert.All(curl, p => Assert.True(Inside(outline, p.X, p.Y), $"({p.X:0.00}, {p.Y:0.00}) is not inked"));
+    }
+
+    [Fact]
+    public void WithPerfectFreehandsFixedSkipTheCurlIsCutOff()
+    {
+        // What both apps did: the last 3 page units are skipped whatever the zoom, so the outside of
+        // the curl is not inked. This pins the reason for WritingZoom.
+        var stroke = CurlStroke(writingZoom: 1);
+        var outline = StrokeOutline.Get(stroke.Points, stroke.Style, complete: true);
+        Assert.Contains(stroke.Points.Where(p => p.X >= 10), p => !Inside(outline, p.X, p.Y));
+    }
+
+    [Fact]
+    public void WritingZoomedOutOutlinesAsBefore()
+    {
+        var points = Writing(5, 150);
+        var style = Brushes.PenStyle(Brushes.Ballpoint, "#000000", 2, "pen");
+        Assert.Equal(StrokeOutline.Get(points, style, true), StrokeOutline.Get(points, style with { WritingZoom = 0.5 }, true));
     }
 
     [Fact]
