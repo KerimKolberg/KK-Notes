@@ -8,3 +8,9 @@ npm-debug.log*
 public/pdfjs
 src-tauri/target
 src-tauri/gen/schemas
+
+# Native Windows app (windows-native/)
+windows-native/**/bin/
+windows-native/**/obj/
+windows-native/.vs/
+*.user

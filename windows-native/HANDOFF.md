@@ -1,8 +1,13 @@
 # KK-Notes for Windows, native (WinUI 3): handoff
 
 This folder is where a native Windows version of KK-Notes is to be built in **WinUI 3** (C#,
-Windows App SDK). Nothing is in it yet but these notes. They are for a Claude Code session running
-**locally on the owner's Windows PC**, the only place a WinUI app can be built and run.
+Windows App SDK). These notes are for a Claude Code session running **locally on the owner's Windows
+PC**, the only place a WinUI app can be built and run.
+
+**Status (2026-10-10):** step 1, the pen prototype, is built: see [README.md](README.md) for what it
+does, how the ink is drawn and how to compare it with the current app. `InkCanvas` does not exist in
+WinUI 3, so it takes the second road below (independent input + Win2D). It is **waiting for the owner's
+verdict on the Z13** before step 2.
 
 ## Why
 
