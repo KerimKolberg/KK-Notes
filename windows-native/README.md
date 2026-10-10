@@ -33,7 +33,7 @@ windows-native\KKNotes.Native\bin\x64\Debug\net9.0-windows10.0.22621.0\KKNotes.N
 | **Pen** | Draws with the chosen tool. The **eraser end** erases. The **barrel button**, as in the current app: a click (under 300 ms) toggles pen ⇄ eraser, a hold borrows the eraser until it is let go, and a stroke made with it held erases. |
 | **Touch** | Never draws. One finger pans, two pinch to zoom, both with inertia. While the pen is in range, and for 700 ms after it was last seen, a finger is taken for a palm and ignored. |
 | **Mouse** | The left button draws, the middle button pans. The wheel scrolls, Shift+wheel scrolls sideways, Ctrl+wheel zooms. |
-| **Tools** | Ballpoint (the current app's default pen), fountain pen (follows pressure and tilt), highlighter, stroke eraser. The current app's eight colours; widths 1–8 (pen) and 8–32 (highlighter). |
+| **Tools** | Ballpoint (the current app's default pen), fountain pen (follows pressure and tilt), highlighter, stroke eraser. The current app's eight colours; widths 0.5–8 (pen; half a unit is for writing small zoomed in) and 8–32 (highlighter). |
 | **Keys** | Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo, Ctrl+0 fit the page, F11 full screen, Esc leaves it. |
 | **Measuring** | A line under the toolbar shows the refresh rate, frames/s, pen samples/s, the input age at present, the draw time and the pen's live state (tip/hover, barrel, eraser, pressure, tilt): that is the *pen button test*. |
 | **Experiments** | The toolbar switches the prediction (system default, off, 10/20/30 ms), the present mode (at once, or on v-sync), and *Zoom-aware* ink (on by default; off draws new strokes as the current app does). |
@@ -105,8 +105,10 @@ rather than inside it keeps the port exact, and lets the current app make the id
 the JavaScript original. The tests check the scaled path against the real library scaled the same
 way. They also check that a curl at a stroke's end is now inked and was cut off before. `--snapshot
 small.png --demo small` draws synthetic small writing both ways, old above and new below. *Zoom-aware*
-in the toolbar turns it off for new strokes, to compare. For the current app this needs a new
-`writingZoom` style field in `.notex`; until it has one, its strokes all count as written at 100 %.
+in the toolbar turns it off for new strokes, to compare. The current app does the same
+(`src/inking/engine/writingZoom.ts`) and saves it as `style.writingZoom` in `.notex`. It is stored only
+above 100 % and to three decimals, and this app rounds it the same way, so a stroke outlines alike in
+both.
 
 What it does not change: a 1-unit pen is thick for letters a few units tall, so small loops still fill
 in, and the ballpoint's hard-edged outline shows corners when magnified.

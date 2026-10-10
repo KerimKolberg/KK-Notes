@@ -267,7 +267,8 @@ internal sealed partial class InkSurface
                 ? Brushes.HighlighterStyle(settings.HighlighterColor, settings.HighlighterWidth)
                 : Brushes.PenStyle(settings.Brush, settings.PenColor, settings.PenWidth, pointerType);
             // The zoom it is written at, so small writing at a high zoom keeps its shape (StrokeStyle.WritingZoom).
-            style = style with { WritingZoom = _zoomAwareInk ? _camera.Zoom : 1 };
+            // To three decimals, as the current app records it, so the stroke outlines the same in both.
+            style = style with { WritingZoom = _zoomAwareInk ? Math.Round(_camera.Zoom, 3, MidpointRounding.AwayFromZero) : 1 };
             string tool = _activeTool == Tool.Highlighter ? StrokeTools.Highlighter : StrokeTools.Pen;
             var builder = new StrokeBuilder(tool, style, pointerType, now);
             builder.Add(p);
