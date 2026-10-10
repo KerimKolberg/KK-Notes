@@ -4,7 +4,8 @@
  */
 import { downloadBytes, safeFilename } from '../pdf/download';
 import type { Document } from '../document/types';
-import { borderlessFrame } from './borderless';
+import type { FullscreenStyle } from '../preferences/types';
+import { borderlessFrame, placementCorrection, type BorderlessFrame } from './borderless';
 import { NOTEX_EXTENSION, NOTEX_MIME, encodeNotex, encodeNotexBytes, parseNotex, type ParsedNotex } from './notex';
 import { isTauri, tauriDialog, tauriInvoke, tauriWindow } from './tauri';
 
@@ -268,19 +269,40 @@ async function enterBorderless(win: Awaited<ReturnType<typeof tauriWindow>>): Pr
   const monitor = await currentMonitor();
   const frame = monitor ? borderlessFrame(monitor) : null;
   if (!frame) return null;
-  const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
-  const [wasMaximized, position, size] = await Promise.all([win.isMaximized(), win.outerPosition(), win.outerSize()]);
+  // The inside's size, since that is what `setSize` sets: the outside's would grow the window by its frame each time.
+  const [wasMaximized, position, size] = await Promise.all([win.isMaximized(), win.outerPosition(), win.innerSize()]);
   // A maximised window ignores being placed, so it stops being one first.
   if (wasMaximized) await win.unmaximize();
   await win.setDecorations(false);
+  // Without it Windows 11 gives the window a thin border and rounded corners, as a window rather than a screen.
+  await win.setShadow(false).catch(() => {});
+  await place(win, frame);
+  return { wasMaximized, position: { x: position.x, y: position.y }, size: { width: size.width, height: size.height } };
+}
+
+/**
+ * Put the window's inside exactly on `frame`: placed, read back, and moved by what it came out off by
+ * (`placementCorrection` — Windows counts an invisible frame round the window in its position). A few rounds at most,
+ * a moment apart, since the title bar going takes effect on the window's own time.
+ */
+async function place(win: Awaited<ReturnType<typeof tauriWindow>>, frame: BorderlessFrame): Promise<void> {
+  const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
   await win.setPosition(new PhysicalPosition(frame.x, frame.y));
   await win.setSize(new PhysicalSize(frame.width, frame.height));
-  return { wasMaximized, position: { x: position.x, y: position.y }, size: { width: size.width, height: size.height } };
+  for (let round = 0; round < 3; round++) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const [outer, inner, innerSize] = await Promise.all([win.outerPosition(), win.innerPosition(), win.innerSize()]);
+    const fix = placementCorrection(frame, { outer, inner, innerSize });
+    if (!fix) return;
+    if (fix.size) await win.setSize(new PhysicalSize(frame.width, frame.height));
+    if (fix.position) await win.setPosition(new PhysicalPosition(fix.position.x, fix.position.y));
+  }
 }
 
 async function leaveBorderless(win: Awaited<ReturnType<typeof tauriWindow>>, restore: BorderlessRestore): Promise<void> {
   const { PhysicalPosition, PhysicalSize } = await import('@tauri-apps/api/dpi');
   await win.setDecorations(true);
+  await win.setShadow(true).catch(() => {});
   if (restore.wasMaximized) {
     await win.maximize();
     return;
@@ -292,12 +314,13 @@ async function leaveBorderless(win: Awaited<ReturnType<typeof tauriWindow>>, res
 /**
  * Toggle fullscreen; resolves the new state, or `null` when unsupported.
  *
- * On the desktop this takes the title bar off and fills the work area (see `borderless.ts`),
- * not the platform's fullscreen, which makes the mouse pointer lag on some PCs. The platform's
- * is the fallback only for a monitor that reports nothing about itself, and whichever is on is
- * the one that is turned off.
+ * On the desktop the `style` decides how: `window` takes the title bar off and fills the work area
+ * (see `borderless.ts`), the taskbar staying; `screen` is the platform's fullscreen, over the taskbar
+ * too, in which the mouse pointer lags on some PCs. The platform's is also the fallback for a monitor
+ * that reports nothing about itself. Whichever is on is the one turned off, whatever the setting says
+ * by then.
  */
-export async function toggleFullscreen(): Promise<boolean | null> {
+export async function toggleFullscreen(style: FullscreenStyle = 'window'): Promise<boolean | null> {
   if (isTauri()) {
     const win = await tauriWindow();
     if (borderless) {
@@ -310,12 +333,14 @@ export async function toggleFullscreen(): Promise<boolean | null> {
       await win.setFullscreen(false);
       return false;
     }
-    const restore = await enterBorderless(win);
-    if (restore) {
-      borderless = restore;
-      return true;
+    if (style === 'window') {
+      const restore = await enterBorderless(win);
+      if (restore) {
+        borderless = restore;
+        return true;
+      }
+      // A monitor that tells us nothing about itself: the platform's fullscreen it is.
     }
-    // A monitor that tells us nothing about itself: the platform's fullscreen it is.
     await win.setFullscreen(true);
     return true;
   }

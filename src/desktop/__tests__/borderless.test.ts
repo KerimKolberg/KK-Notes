@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BORDERLESS_GAP_PX, borderlessFrame } from '../borderless';
+import { BORDERLESS_GAP_PX, borderlessFrame, placementCorrection } from '../borderless';
 
 const monitor = { position: { x: 0, y: 0 }, size: { width: 2560, height: 1600 } };
 
@@ -31,5 +31,31 @@ describe('the borderless fullscreen frame', () => {
   it('gives up on a monitor that reports nothing usable, so the caller falls back', () => {
     expect(borderlessFrame({ position: { x: 0, y: 0 }, size: { width: 0, height: 0 } })).toBeNull();
     expect(borderlessFrame({ position: { x: 0, y: 0 }, size: { width: Number.NaN, height: 900 } })).toBeNull();
+  });
+});
+
+describe('putting the inside of the window where it was asked for', () => {
+  const frame = { x: 0, y: 0, width: 2560, height: 1551 };
+
+  it('leaves a window that is there alone, a pixel either way included', () => {
+    expect(placementCorrection(frame, { outer: { x: 0, y: 0 }, inner: { x: 0, y: 0 }, innerSize: { width: 2560, height: 1551 } })).toBeNull();
+    expect(placementCorrection(frame, { outer: { x: 0, y: 0 }, inner: { x: 1, y: 0 }, innerSize: { width: 2559, height: 1551 } })).toBeNull();
+  });
+
+  it('moves it back by the invisible frame Windows counts round it', () => {
+    // The Flow Z13 at 150 %: the inside 12 px in and 2 px down from where the window was put.
+    const fix = placementCorrection(frame, { outer: { x: 0, y: 0 }, inner: { x: 12, y: 2 }, innerSize: { width: 2560, height: 1551 } });
+    expect(fix).toEqual({ position: { x: -12, y: -2 }, size: false });
+  });
+
+  it('asks for the size again when it came out different', () => {
+    const fix = placementCorrection(frame, { outer: { x: -12, y: -2 }, inner: { x: 0, y: 0 }, innerSize: { width: 2536, height: 1539 } });
+    expect(fix).toEqual({ position: null, size: true });
+  });
+
+  it('works on a second monitor, wherever it is', () => {
+    const second = { x: -1920, y: 200, width: 1920, height: 1039 };
+    const fix = placementCorrection(second, { outer: { x: -1920, y: 200 }, inner: { x: -1909, y: 201 }, innerSize: { width: 1920, height: 1039 } });
+    expect(fix).toEqual({ position: { x: -1931, y: 199 }, size: false });
   });
 });

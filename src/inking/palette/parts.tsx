@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Brush, Check, Pen, PenLine, PenTool, Pencil, Pipette, Plus, Rainbow, Trash2, type LucideIcon } from 'lucide-react';
 import { useDesktopStore } from '../../desktop/desktopStore';
+import { actionRestyleFullscreen } from '../../desktop/fileActions';
 import { IconButton } from '../../ui/IconButton';
 import { Tooltip } from '../../ui/Tooltip';
 import { Row, Switch } from '../../ui/SettingsRow';
@@ -1283,6 +1284,8 @@ export function PaletteSettings({
     palettePinned,
     paletteSlide,
     setPaletteSlide,
+    fullscreenStyle,
+    setFullscreenStyle,
     pointerStyle,
     setPointerStyle,
     lowLatencyInk,
@@ -1303,6 +1306,8 @@ export function PaletteSettings({
       palettePinned: s.palettePinned,
       paletteSlide: s.paletteSlide,
       setPaletteSlide: s.setPaletteSlide,
+      fullscreenStyle: s.fullscreenStyle,
+      setFullscreenStyle: s.setFullscreenStyle,
       pointerStyle: s.pointerStyle,
       setPointerStyle: s.setPointerStyle,
       lowLatencyInk: s.lowLatencyInk,
@@ -1322,6 +1327,7 @@ export function PaletteSettings({
     paletteDock !== DEFAULT_PREFERENCES.paletteDock ||
     palettePinned !== DEFAULT_PREFERENCES.palettePinned ||
     paletteSlide !== DEFAULT_PREFERENCES.paletteSlide ||
+    fullscreenStyle !== DEFAULT_PREFERENCES.fullscreenStyle ||
     pointerStyle !== DEFAULT_PREFERENCES.pointerStyle ||
     lowLatencyInk !== DEFAULT_PREFERENCES.lowLatencyInk ||
     handwritingSearch !== DEFAULT_PREFERENCES.handwritingSearch ||
@@ -1461,10 +1467,40 @@ export function PaletteSettings({
       </p>
       {isDesktop && (
         <>
+          <Row label="Fullscreen (F11)">
+            <div className="flex flex-wrap gap-1" role="group" aria-label="Fullscreen style">
+              {(
+                [
+                  { style: 'window', label: 'Borderless' },
+                  { style: 'screen', label: 'Full screen' },
+                ] as const
+              ).map((choice) => (
+                <button
+                  key={choice.style}
+                  type="button"
+                  aria-pressed={fullscreenStyle === choice.style}
+                  data-fullscreen-style={choice.style}
+                  className={`h-7 rounded-md px-2 text-xs font-medium ${
+                    fullscreenStyle === choice.style
+                      ? 'bg-blue-600 text-white dark:bg-blue-500'
+                      : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700'
+                  }`}
+                  onClick={() => {
+                    if (choice.style === fullscreenStyle) return;
+                    setFullscreenStyle(choice.style);
+                    // Already fullscreen: into the one chosen now, rather than at the next F11.
+                    void actionRestyleFullscreen();
+                  }}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+          </Row>
           <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-fullscreen-note>
-            F11 takes the title bar off and fills the screen above the taskbar, so it behaves
-            like a maximised window. Windows&rsquo; own full screen is not used: on some PCs the
-            mouse pointer lags in it.
+            {fullscreenStyle === 'window'
+              ? 'Borderless takes the title bar off and fills the screen above the taskbar, like a maximised window. Full screen covers the taskbar too, but on some PCs the mouse pointer lags in it.'
+              : 'Full screen covers everything, the taskbar too. If the mouse pointer lags or blinks in it, Borderless fills the screen above the taskbar instead.'}
           </p>
         </>
       )}

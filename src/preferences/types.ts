@@ -79,6 +79,15 @@ export type PaletteDock = 'bottom' | 'top' | 'left' | 'right' | 'free';
 export const PALETTE_DOCKS: readonly PaletteDock[] = ['bottom', 'top', 'left', 'right', 'free'];
 
 /**
+ * What F11 does on the desktop. `window` takes the title bar off and fills the space a
+ * maximised window would (the taskbar stays); `screen` is the platform's own fullscreen,
+ * covering the monitor and the taskbar. See `desktop/borderless.ts` for why there are two.
+ */
+export type FullscreenStyle = 'window' | 'screen';
+
+export const FULLSCREEN_STYLES: readonly FullscreenStyle[] = ['window', 'screen'];
+
+/**
  * The pointer over a page while a pen tool is selected: the app's own small cross, the
  * system's crosshair, or the plain arrow. A way to tell whether the pointer that lags
  * in fullscreen on some tablets is the picture (a custom cursor image can take a
@@ -104,6 +113,8 @@ export interface Preferences {
    * wrapping onto as many lines as it takes to show everything at once. On unless turned off.
    */
   readonly paletteSlide: boolean;
+  /** What F11 does on the desktop: the borderless window above the taskbar, or the platform's fullscreen over it. */
+  readonly fullscreenStyle: FullscreenStyle;
   /**
    * What the pen's buttons do.
    *

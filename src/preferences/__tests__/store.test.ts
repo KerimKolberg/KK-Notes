@@ -11,6 +11,7 @@ import {
   isHexColor,
   normalize,
   normalizeDock,
+  normalizeFullscreenStyle,
   normalizeOrder,
   normalizePointerStyle,
   normalizeStylus,
@@ -252,11 +253,27 @@ describe('a toolbar that slides', () => {
   });
 });
 
-describe('a fullscreen style saved by an earlier version', () => {
-  it('is ignored: there is one way to go fullscreen now, and it is the borderless window', () => {
-    const read = normalize({ fullscreenStyle: 'screen', palettePinned: false });
-    expect('fullscreenStyle' in read).toBe(false);
-    expect(read.palettePinned).toBe(false);
+describe('the fullscreen style', () => {
+  it('starts as the borderless window, which behaves like a maximised one', () => {
+    expect(DEFAULT_PREFERENCES.fullscreenStyle).toBe('window');
+    expect(usePreferencesStore.getState().fullscreenStyle).toBe('window');
+  });
+
+  it('remembers the platform fullscreen if that is chosen', () => {
+    usePreferencesStore.getState().setFullscreenStyle('screen');
+    expect(usePreferencesStore.getState().fullscreenStyle).toBe('screen');
+    expect(normalize({ fullscreenStyle: 'screen' }).fullscreenStyle).toBe('screen');
+  });
+
+  it('accepts the two styles and nothing else', () => {
+    for (const style of ['window', 'screen']) expect(normalizeFullscreenStyle(style)).toBe(style);
+    for (const junk of ['exclusive', '', null, 3, undefined, ['screen']]) expect(normalizeFullscreenStyle(junk)).toBe('window');
+  });
+
+  it('is back to the borderless window after a reset', () => {
+    usePreferencesStore.getState().setFullscreenStyle('screen');
+    usePreferencesStore.getState().resetPreferences();
+    expect(usePreferencesStore.getState().fullscreenStyle).toBe('window');
   });
 });
 

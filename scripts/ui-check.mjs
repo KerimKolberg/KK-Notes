@@ -4233,6 +4233,99 @@ async function checkKeyboardMode(browser) {
 }
 
 /**
+ * F11 on Windows, with the shell and its window faked — down to the invisible frame Windows counts round a window,
+ * 12 px left and 2 px top as on the Flow Z13 at 150 %, which left the borderless window showing the desktop down its
+ * left side and running off the right. The window's inside has to end up on the work area exactly. And the choice
+ * between the borderless window and the platform's full screen is in the settings, and takes effect at once.
+ */
+async function checkFullscreenStyles(browser) {
+  console.log('fullscreen on Windows, 1280x800 (desktop shell and window faked):');
+  const seedCtx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const seedPage = await seedCtx.newPage();
+  await openDocument(seedPage);
+  const contents = await seedPage.evaluate(() => localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('notes.library.doc.'))));
+  await seedCtx.close();
+
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  await ctx.addInitScript(({ contents }) => {
+    const PATH = '/lib/Full.notex';
+    const FRAME = { left: 12, top: 2 };
+    const win = { maximized: true, fullscreen: false, decorated: true, outer: { x: -12, y: 0 }, inner: { width: 2560, height: 1500 } };
+    window.__win = win;
+    window.__calls = [];
+    let next = 1;
+    const value = (args) => JSON.parse(JSON.stringify(args.value));
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+    window.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } },
+      transformCallback: () => next++,
+      unregisterCallback: () => {},
+      invoke: async (cmd, args) => {
+        if (cmd.startsWith('plugin:window|')) window.__calls.push(cmd.slice('plugin:window|'.length) + (args && 'value' in args ? ` ${JSON.stringify(value(args))}` : ''));
+        switch (cmd) {
+          case 'plugin:window|current_monitor':
+            return { name: 'Z13', scaleFactor: 1.5, position: { x: 0, y: 0 }, size: { width: 2560, height: 1600 }, workArea: { position: { x: 0, y: 0 }, size: { width: 2560, height: 1552 } } };
+          case 'plugin:window|is_maximized': return win.maximized;
+          case 'plugin:window|is_fullscreen': return win.fullscreen;
+          case 'plugin:window|outer_position': return win.outer;
+          case 'plugin:window|inner_position': return { x: win.outer.x + FRAME.left, y: win.outer.y + FRAME.top };
+          case 'plugin:window|inner_size': return win.inner;
+          case 'plugin:window|unmaximize': win.maximized = false; return null;
+          case 'plugin:window|maximize': win.maximized = true; return null;
+          case 'plugin:window|set_decorations': win.decorated = value(args); return null;
+          case 'plugin:window|set_position': win.outer = value(args).Physical; return null;
+          case 'plugin:window|set_size': win.inner = value(args).Physical; return null;
+          case 'plugin:window|set_fullscreen': win.fullscreen = value(args); return null;
+          case 'plugin:event|listen': return next++;
+          case 'list_library': return { path: '/lib', relativePath: '', parentPath: null, entries: [] };
+          case 'create_library_document': return PATH;
+          case 'open_document': return { path: PATH, contents, info: { path: PATH, bytes: contents.length, modifiedMs: 1 } };
+          case 'ink_recognizers': return { names: [] };
+          case 'background_settings': return { supported: false, openAtLogin: false, startInTray: false, closeToTray: false };
+          case 'sync_status':
+          case 'sync_now': return { phase: 'offline', provider: 'Not connected', pending: 0, conflicts: [], lastSyncedMs: 0, message: null };
+          case 'list_recent': return [];
+          default: return null;
+        }
+      },
+    };
+  }, { contents });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.waitForSelector('[data-palette-settings-trigger]', { timeout: 10_000 });
+  const win = () => page.evaluate(() => ({ ...window.__win, inside: { x: window.__win.outer.x + 12, y: window.__win.outer.y + 2 } }));
+  const calls = () => page.evaluate(() => window.__calls.filter((c) => !/^(is_|outer_|inner_|current_)/.test(c)));
+  const settle = () => page.waitForTimeout(400);
+
+  await page.keyboard.press('F11');
+  await settle();
+  const placed = await win();
+  check('F11 takes the title bar off and the rounded corners with it', placed.decorated === false && (await calls()).includes('set_shadow false'), JSON.stringify(await calls()));
+  check('and puts the inside of the window on the work area exactly, the frame Windows counts moved off screen', placed.inside.x === 0 && placed.inside.y === 0 && placed.inner.width === 2560 && placed.inner.height === 1551, JSON.stringify(placed));
+
+  await page.click('[data-palette-settings-trigger]');
+  const offered = await page.waitForSelector('[data-fullscreen-style="screen"]', { timeout: 5_000 }).then(() => true, () => false);
+  check('the settings offer the borderless window and the full screen', offered && (await page.getAttribute('[data-fullscreen-style="window"]', 'aria-pressed')) === 'true');
+  await page.evaluate(() => (window.__calls.length = 0));
+  await page.click('[data-fullscreen-style="screen"]');
+  await settle();
+  const swapped = await win();
+  check('choosing Full screen while fullscreen goes straight into it, over the taskbar', swapped.fullscreen === true && swapped.decorated === true && swapped.maximized === true, `${JSON.stringify(await calls())}`);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => (window.__calls.length = 0));
+  await page.keyboard.press('F11');
+  await settle();
+  check('and F11 leaves it', (await win()).fullscreen === false && JSON.stringify(await calls()) === JSON.stringify(['set_fullscreen false']), JSON.stringify(await calls()));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-library-view], [data-palette-settings-trigger]', { timeout: 10_000 });
+  check('the choice is kept', await page.evaluate(() => JSON.parse(localStorage.getItem('notes.preferences.v1') ?? '{}').fullscreenStyle === 'screen'));
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Starting with Windows and the tray, with the shell faked: the settings show the section only where the shell has it,
  * each switch sends the settings it should ("in the tray" only once "open when Windows starts" is on), and the tray's
  * Quit keeps unsaved work in the draft before it asks the shell to quit.
@@ -4701,6 +4794,7 @@ try {
     checkSaveAsBytes,
     checkTouchpadPinch,
     checkBackgroundSettings,
+    checkFullscreenStyles,
     checkTyping,
     checkPageText,
     checkSlidingToolbar,

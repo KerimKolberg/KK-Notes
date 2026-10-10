@@ -176,45 +176,34 @@ the page or hovering just above it is put off and looked at again every 750 ms
 when it changes: it used to be sent to the shell on every change to the document
 store, which includes turning a page and making a selection.
 
-**Fullscreen** (`desktop/borderless.ts`, `fileService.toggleFullscreen`). F11 takes the
-title bar off and fills the work area — the monitor less the taskbar, and one physical pixel
-short at the bottom so a window on a monitor with an auto-hidden taskbar (whose work area is
-the whole monitor) does not cover it either. To Windows that is an ordinary window, composited
-like a maximised one. The platform's own fullscreen (tao's: resized to cover the monitor, the
-taskbar told to step aside, the same as Chromium's F11) is **not offered**: on the ROG Flow Z13 it
-made the mouse pointer lag from the moment it was on, with any pointer, and worse on a long
-scribble, while the borderless window was smooth at both 60 and 180 Hz (confirmed there, with
-the overlay showing frames arriving in bursts in the platform mode). Measured again at 180 Hz,
-both modes ran well, the platform one no lower than 50–60 fps; it stays out because the lag was at 60 Hz. It was a setting while
-that was being found out; a saved choice of it is now ignored. Leaving puts back what was
-there — a maximised window maximised again, otherwise its size and position. Only a monitor
-that reports no usable geometry falls back to the platform fullscreen. The window commands it
-needs are in the capabilities (`set-decorations`, `set-position`, `set-size`,
-`current-monitor`, `outer-position`, `outer-size`). The performance overlay's `mode` row
-says `borderless` or `windowed`.
+**Fullscreen styles** (`desktop/borderless.ts`, `fileService.toggleFullscreen`). F11 does one of
+two things, chosen in *Settings → Fullscreen (F11)* and defaulting to the first. **Borderless** takes
+the title bar off and fills the work area — the monitor less the taskbar, and one physical pixel short
+at the bottom so a window on a monitor with an auto-hidden taskbar (whose work area is the whole
+monitor) does not cover it either. To Windows that is an ordinary window, composited like a maximised
+one, which is what the ROG Flow Z13 was smooth in at both 60 and 180 Hz. **Full screen** is the
+platform's own (tao's borderless fullscreen: resized to cover the monitor, the taskbar told to step
+aside, the same as Chromium's F11), which covers the taskbar too but on that tablet made the mouse
+pointer lag from the moment it was on, with any pointer, and worse on a long scribble. For a while it
+was not offered at all; it is back as the choice for a PC whose pointer keeps up in it, and a change of
+style while fullscreen takes effect at once (`actionRestyleFullscreen`). Leaving puts back what was
+there — a maximised window maximised again, otherwise its size and position — and turns off whichever
+is on, whatever the setting says by then. A monitor that reports no usable geometry falls back to the
+platform fullscreen.
 
-**Starting with Windows, and the tray** (`src-tauri/src/background.rs`, `desktop/background.ts`,
-`desktop/BackgroundSettings.tsx`). Settings → *Windows* has three switches. *Open when Windows
-starts* registers the app with the autostart plugin (a `Run` entry), launched with `--autostart`
-so a login start can be told from one the user made; *…in the tray, without a window* (which
-waits for the first) makes that start show only the tray icon; *Keep running in the tray when
-closed* turns closing the window into hiding it. They are kept by the shell in
-`background.json` in its data folder, not with the preferences, because the shell needs them before the
-page has loaded; the first switch is read back from Windows' own login entry, not from the
-file, so it shows what Windows will actually do. The tray icon is there
-while either tray setting is on: a click opens the window (maximized, the first time), and its
-menu has *Open* and *Quit*. Quit asks the page first (`notex-quit-requested`): a recording in
-progress is finished and put in its note, unsaved work goes to the draft, then the page calls
-`quit_app` — and the shell quits after 8 s whatever the page does. Turning both tray settings off
-while the window is hidden shows it before the icon goes, so the app is never left running with
-no way back to it.
-
-**One instance** (`tauri-plugin-single-instance`). A second launch — the Start menu, a file
-double-clicked in Explorer — exits at once and hands its arguments to the running app, which
-comes forward (out of the tray if it is there) and opens the file through the same
-`notex-open-with` event Android's intents use, so it lands in a tab like any other opened file.
-Both plugins are desktop-only dependencies; on Android the commands report `supported: false`
-and the settings do not appear.
+The borderless window is **placed by its inside**. Windows counts an invisible resize frame round a
+window in its position — about 8 px a side scaled with the display, 12 px at 150 % — even with the
+title bar off, so a window put at the corner of the screen showed the desktop down its left and along
+its top and ran off the right edge (reported on the Flow Z13). The window is placed, where its inside
+(client area) went is read back (`innerPosition`, `innerSize`), and it is moved by the difference
+(`placementCorrection`, a few rounds at most, a moment apart since the frame changes on the window's
+own time), so the frame ends up off screen as it does for a maximised window. Its shadow is turned off
+too, which on Windows 11 is what gives an undecorated window a 1 px border and rounded corners. The
+window commands it needs are in the capabilities (`set-decorations`, `set-shadow`, `set-position`,
+`set-size`, `current-monitor`, `outer-position`, `inner-position`, `inner-size`). The performance
+overlay's `mode` row says `borderless`, `fullscreen` or `windowed`. `scripts/ui-check.mjs`
+(`checkFullscreenStyles`) presses F11 against a faked window with that frame, and switches style while
+fullscreen.
 
 **Stylus buttons.** `resolveEffectiveTool` maps hardware buttons per the
 *Stylus* settings in the palette. Two bits of `PointerEvent.buttons` are
@@ -2649,7 +2638,7 @@ unaffected, but the mouse pointer, in that mode, can end up drawn into the frame
 the *application's* frame rate — smooth while the app holds 60 fps and visibly late as
 soon as it drops, which a long stroke makes it do. That is an inference from the
 pattern, not something that could be measured here. It is met from two sides. The app
-no longer takes the native fullscreen at all (see **Fullscreen** in the
+does not take the native fullscreen unless asked to (see **Fullscreen styles** in the
 desktop shell section; confirmed on the tablet: the borderless window is smooth, the
 platform fullscreen lags with every pointer), and a mouse stroke costs what a pen stroke does
 (`MIN_SAMPLE_SPACING`, in *How it works*).
