@@ -242,10 +242,11 @@ public sealed partial class MainWindow : Window
         if (StatsText.Visibility != Visibility.Visible) return;
 
         int hz = _ink.RefreshRate;
-        string age = s.AgeMsAvg is double avg ? $"{avg:0.0} ms (max {s.AgeMsMax:0.0})" : "â€“";
-        StatsText.Text =
-            $"{(hz > 0 ? $"{hz} Hz" : "? Hz")} Â· {s.FramesPerSecond:0} frames/s Â· pen {s.SamplesPerSecond:0} samples/s Â· " +
-            $"input age at present {age} Â· draw {s.DrawMsAvg:0.00} ms (max {s.DrawMsMax:0.00}) Â· zoom {_ink.Zoom:P0} Â· " +
-            $"frame latency {(_ink.FrameLatencySet ? "1" : "default")} Â· input on {_ink.InputThreadInfo} Â· pen: {_ink.PenInfo}";
+        string age = s.AgeMsAvg is double avg ? $"{avg:0.0} ms (max {s.AgeMsMax:0.0})" : "–";
+        int errors = _ink.InputErrors;
+        StatsText.Text = (errors > 0 ? $"⚠ {errors} input errors (see %TEMP%\\KKNotes.Native.log) · " : "") +
+            $"{(hz > 0 ? $"{hz} Hz" : "? Hz")} · {s.FramesPerSecond:0} frames/s · pen {s.SamplesPerSecond:0} samples/s · " +
+            $"input age at present {age} · draw {s.DrawMsAvg:0.00} ms (max {s.DrawMsMax:0.00}) · zoom {_ink.Zoom:P0} · " +
+            $"frame latency {(_ink.FrameLatencySet ? "1" : "default")} · input on {_ink.InputThreadInfo} · pen: {_ink.PenInfo}";
     }
 }

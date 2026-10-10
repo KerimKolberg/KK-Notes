@@ -19,7 +19,9 @@ windows-native\KKNotes.Native\bin\x64\Debug\net9.0-windows10.0.22621.0\KKNotes.N
 
 - **The log** is `%TEMP%\KKNotes.Native.log`, started afresh at each launch. It records what was set up
   (the display's refresh rate and scale, the input thread, the frame latency, the system's prediction
-  time, the swap chain) and every error. Read it first when something is wrong.
+  time, the swap chain) and every error. Each stroke adds one line: how many samples arrived and how fast
+  (a pen on the Z13 should report a few hundred a second), how many were kept, and how many moves had
+  a prediction. Read it first when something is wrong.
 - **`KKNotes.Native.exe --snapshot page.png`** draws a demo page (one stroke of each kind), saves it and
   quits. It checks the drawing code without anyone at the screen.
 
@@ -48,7 +50,12 @@ So the prototype takes the second road, the same one Windows Ink takes inside:
 - **Prediction.** `PointerPredictor` (Windows App SDK) says where the pen is heading. Its default here is
   15 ms. The predicted points go on the end of the stroke being drawn, are redrawn from the real samples
   on the next event, and are never saved. Overshoot at sharp turns is the price. The toolbar can turn it
-  off or change it, to find what feels best.
+  off or change it, to find what feels best. **When it has no prediction it returns null, not an empty
+  list.** In the first test on the Z13 it did that on most moves. The code went over that null
+  unchecked, the exception took the move's real samples with it, and strokes kept little more than
+  where the pen landed and lifted: straight lines and unreadable writing. Now a move without a
+  prediction is simply drawn without one, and every pointer handler is guarded, so a failure is logged
+  and counted in the measurement line instead of silently losing ink.
 - **No queue of frames.** DXGI lets the CPU run up to **three frames** ahead of the screen by default, and
   each queued frame is a frame of lag. Win2D does not expose this, so `Interop/Win32.cs` sets
   `IDXGIDevice1::SetMaximumFrameLatency(1)` on Win2D's device directly. The log says whether it took.

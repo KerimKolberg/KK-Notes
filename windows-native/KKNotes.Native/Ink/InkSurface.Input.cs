@@ -139,8 +139,66 @@ internal sealed partial class InkSurface
     }
 
     // ---- Pointer events ------------------------------------------------------------------
+    //
+    // Each handler is guarded: an exception escaping one is logged and counted (the count is
+    // shown in the measurement line), never silently swallowed by WinRT along with the samples
+    // it was carrying. The first test lost most of every stroke exactly that way.
+
+    private int _inputErrors;
+
+    /// <summary>How many input events failed since launch (each one is in the log).</summary>
+    public int InputErrors => Volatile.Read(ref _inputErrors);
+
+    private void InputFailed(string where, Exception ex)
+    {
+        int n = Interlocked.Increment(ref _inputErrors);
+        if (n <= 5) Log.Write($"Input failed in {where}: {ex}");
+        else if (n % 100 == 0) Log.Write($"Input failed {n} times so far (latest in {where}: {ex.GetType().Name})");
+    }
 
     private void OnPointerPressed(InputPointerSource sender, PointerEventArgs e)
+    {
+        try { HandlePressed(e); }
+        catch (Exception ex) { InputFailed("pointer pressed", ex); }
+    }
+
+    private void OnPointerMoved(InputPointerSource sender, PointerEventArgs e)
+    {
+        try { HandleMoved(e); }
+        catch (Exception ex) { InputFailed("pointer moved", ex); }
+    }
+
+    private void OnPointerReleased(InputPointerSource sender, PointerEventArgs e)
+    {
+        try { HandleReleased(e); }
+        catch (Exception ex) { InputFailed("pointer released", ex); }
+    }
+
+    private void OnPointerExited(InputPointerSource sender, PointerEventArgs e)
+    {
+        try { HandleExited(e); }
+        catch (Exception ex) { InputFailed("pointer exited", ex); }
+    }
+
+    private void OnPointerCaptureLost(InputPointerSource sender, PointerEventArgs e)
+    {
+        try { HandleCaptureLost(e); }
+        catch (Exception ex) { InputFailed("pointer capture lost", ex); }
+    }
+
+    private void OnPointerWheelChanged(InputPointerSource sender, PointerEventArgs e)
+    {
+        try { HandleWheel(e); }
+        catch (Exception ex) { InputFailed("wheel", ex); }
+    }
+
+    // Per-stroke counts for the log line written when a stroke ends.
+    private int _strokeSamples;
+    private int _strokeMoves;
+    private int _strokePredictedMoves;
+    private ulong _strokeStartTimestamp;
+
+    private void HandlePressed(PointerEventArgs e)
     {
         var pt = e.CurrentPoint;
         double now = Win32.NowMs();
@@ -175,6 +233,10 @@ internal sealed partial class InkSurface
         _activePointer = pt.PointerId;
         _activeTool = EffectiveTool(pt);
         _lastTimestamp = pt.Timestamp;
+        _strokeStartTimestamp = pt.Timestamp;
+        _strokeSamples = 1;
+        _strokeMoves = 0;
+        _strokePredictedMoves = 0;
         var p = ToInk(pt);
 
         if (_activeTool == Tool.StrokeEraser)
@@ -206,7 +268,7 @@ internal sealed partial class InkSurface
         RequestFrame();
     }
 
-    private void OnPointerMoved(InputPointerSource sender, PointerEventArgs e)
+    private void HandleMoved(PointerEventArgs e)
     {
         var pt = e.CurrentPoint;
         double now = Win32.NowMs();
@@ -232,9 +294,12 @@ internal sealed partial class InkSurface
         }
 
         // Every sample since the last event, oldest first (the list's order is not documented).
-        var points = e.GetIntermediatePoints().Where(q => q.Timestamp > _lastTimestamp).OrderBy(q => q.Timestamp).ToList();
+        IEnumerable<PointerPoint> reported = e.GetIntermediatePoints() is { Count: > 0 } all ? all : [pt];
+        var points = reported.Where(q => q.Timestamp > _lastTimestamp).OrderBy(q => q.Timestamp).ToList();
         if (points.Count == 0) return;
         _lastTimestamp = points[^1].Timestamp;
+        _strokeMoves++;
+        _strokeSamples += points.Count;
 
         if (_activeTool == Tool.StrokeEraser)
         {
@@ -252,12 +317,9 @@ internal sealed partial class InkSurface
         }
         else
         {
-            List<InkPoint>? predicted = null;
-            if (_predictionMs != 0 && _predictor is not null)
-            {
-                predicted = [];
-                foreach (var q in _predictor.GetPredictedPoints(pt)) predicted.Add(ToInk(q));
-            }
+            // Asked before taking the lock, so the new samples and their prediction appear in
+            // the same frame: a frame with new samples but the old prediction would jog backwards.
+            var predicted = PredictAhead(pt);
             lock (_sync)
             {
                 if (_wet is { } wet)
@@ -273,7 +335,33 @@ internal sealed partial class InkSurface
         RequestFrame();
     }
 
-    private void OnPointerReleased(InputPointerSource sender, PointerEventArgs e)
+    /// <summary>
+    /// Where the system expects the pen to be shortly, in page units, or null when it has nothing
+    /// to say. <c>GetPredictedPoints</c> returns null, not an empty list, when it has no
+    /// prediction, and in the first test on the Z13 it did so on most moves; going over that
+    /// null unchecked threw away the real samples of the same move.
+    /// </summary>
+    private List<InkPoint>? PredictAhead(PointerPoint pt)
+    {
+        if (_predictionMs == 0 || _predictor is null) return null;
+        IList<PointerPoint>? ahead;
+        try
+        {
+            ahead = _predictor.GetPredictedPoints(pt);
+        }
+        catch (Exception ex)
+        {
+            InputFailed("prediction", ex);
+            return null;
+        }
+        if (ahead is null || ahead.Count == 0) return null;
+        var result = new List<InkPoint>(ahead.Count);
+        foreach (var q in ahead) result.Add(ToInk(q));
+        _strokePredictedMoves++;
+        return result;
+    }
+
+    private void HandleReleased(PointerEventArgs e)
     {
         var pt = e.CurrentPoint;
         switch (pt.PointerDeviceType)
@@ -294,7 +382,7 @@ internal sealed partial class InkSurface
         UpdateHoverRing(pt);
     }
 
-    private void OnPointerExited(InputPointerSource sender, PointerEventArgs e)
+    private void HandleExited(PointerEventArgs e)
     {
         var pt = e.CurrentPoint;
         if (_activePointer == pt.PointerId) return; // still drawing: the stroke goes on past the edge
@@ -311,14 +399,14 @@ internal sealed partial class InkSurface
         RequestFrame();
     }
 
-    private void OnPointerCaptureLost(InputPointerSource sender, PointerEventArgs e)
+    private void HandleCaptureLost(PointerEventArgs e)
     {
         var pt = e.CurrentPoint;
         if (_touches.Remove(pt.PointerId)) _gestures?.CompleteGesture();
         if (_activePointer == pt.PointerId) FinishStroke(null);
     }
 
-    private void OnPointerWheelChanged(InputPointerSource sender, PointerEventArgs e)
+    private void HandleWheel(PointerEventArgs e)
     {
         var pt = e.CurrentPoint;
         double delta = pt.Properties.MouseWheelDelta;
@@ -353,18 +441,38 @@ internal sealed partial class InkSurface
         }
         else
         {
+            Stroke? stroke = null;
             lock (_sync)
             {
                 if (_wet is { } wet)
                 {
-                    if (last is not null && last.Timestamp > _lastTimestamp) wet.Add(ToInk(last));
-                    _page.Add(wet.Build());
+                    if (last is not null && last.Timestamp > _lastTimestamp)
+                    {
+                        wet.Add(ToInk(last));
+                        _lastTimestamp = last.Timestamp;
+                        _strokeSamples++;
+                    }
+                    stroke = wet.Build();
+                    _page.Add(stroke);
                 }
                 _wet = null;
                 _predicted.Clear();
             }
+            if (stroke is not null) LogStroke(stroke);
         }
         RequestFrame();
+    }
+
+    /// <summary>
+    /// One line per stroke: how many samples arrived and how fast, how many were kept, and how
+    /// often the system had a prediction. A pen on the Z13 should report a few hundred a second.
+    /// </summary>
+    private void LogStroke(Stroke stroke)
+    {
+        double ms = (_lastTimestamp - _strokeStartTimestamp) / 1000.0;
+        string rate = ms > 0 ? $"{(_strokeSamples - 1) / (ms / 1000):0}/s" : "–";
+        Log.Write($"Stroke ({stroke.PointerType}, {stroke.Style.Brush ?? stroke.Tool}): {_strokeSamples} samples in {ms:0} ms ({rate}) " +
+            $"from {_strokeMoves} move events, {stroke.Points.Count} kept; prediction on {_strokePredictedMoves} of {_strokeMoves} moves");
     }
 
     /// <summary>Marks the strokes the eraser crosses going from a to b; called with <see cref="_sync"/> held.</summary>
@@ -466,7 +574,7 @@ internal sealed partial class InkSurface
             props.IsEraser ? "eraser" : null,
             props.IsInverted ? "inverted" : null,
         }.Where(s => s is not null))
-            + $" Â· pressure {props.Pressure:0.00} Â· tilt {props.XTilt:0}Â°/{props.YTilt:0}Â°";
+            + $" · pressure {props.Pressure:0.00} · tilt {props.XTilt:0}°/{props.YTilt:0}°";
     }
 
     private void OnBarrelTick()

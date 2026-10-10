@@ -41,7 +41,7 @@ internal sealed partial class InkSurface : IDisposable
     private int _erasingVersion;
     /// <summary>Where the eraser ring is drawn, in page units, or null when there is none.</summary>
     private Vec2? _ring;
-    /// <summary>Timestamp (Âµs) of the newest sample in the scene, to measure how old a frame's input is.</summary>
+    /// <summary>Timestamp (µs) of the newest sample in the scene, to measure how old a frame's input is.</summary>
     private long _newestInputUs;
 
     private volatile InkSettings _settings = InkSettings.Default;
