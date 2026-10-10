@@ -1143,6 +1143,17 @@ allows.
 
 ## Brush engine (`src/inking/engine/brushes.ts`)
 
+**Writing small, zoomed in.** Widths are in page pixels, so with the page zoomed in a 1 px line is several screen
+pixels, and letters only a few pixels high came out blotted: their loops filled, their ends lost. Three things
+answer it. Pens go down to **0.25 px** (`MIN_STROKE_SIZE`), and the thickness sliders move by notches
+(`STROKE_SIZE_STEPS`) that are fine below 1 px, so the fine widths are as easy to reach as the rest. A fine pen
+**smooths less** (`fineStreamline`: down to 40 % of the brush's smoothing at 0.25 px) and keeps samples closer
+together (`StrokeBuilder`: half its width apart, at most the usual 0.4), since smoothing that hides jitter in
+ordinary writing rounds off a small letter's curves. And a stroke finer than 2 px is **outlined scaled up** to
+2 px and scaled back (`getStrokeOutline`): perfect-freehand measures nearly everything against the stroke's size
+but passes over the samples in its last 3 units as a fixed number, which for a fine pen was a good part of a
+letter's tail. Widths stay in page units: zooming in does not make the pen finer by itself.
+
 The pen tool paints with one of five presets, picked from the palette's pen
 flyout. A
 brush decides three things at once: the perfect-freehand parameters baked

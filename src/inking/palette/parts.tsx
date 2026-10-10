@@ -21,7 +21,6 @@ import {
   MAX_CURVE_CYCLES,
   MAX_HIGHLIGHTER_OPACITY,
   MAX_HIGHLIGHTER_WIDTH,
-  MAX_STROKE_SIZE,
   MIN_CURVE_AMPLITUDE,
   MAX_ERASER_SIZE,
   MIN_CURVE_CYCLES,
@@ -30,11 +29,13 @@ import {
   MIN_HIGHLIGHTER_WIDTH,
   MAX_WASHI_OPACITY,
   MAX_WASHI_WIDTH,
-  MIN_STROKE_SIZE,
   MIN_WASHI_OPACITY,
   MIN_WASHI_WIDTH,
   STROKE_PATTERNS,
+  STROKE_SIZE_STEPS,
   STYLUS_TOOLS,
+  sizeToStep,
+  stepToSize,
 } from '../constants';
 import { ERASE_FILTERS, filterIsActive } from '../engine/eraseFilter';
 import { LASSO_MODES, type LassoMode } from '../engine/lasso';
@@ -406,12 +407,14 @@ export function ToolConfigRow({
           // Standing on end, biggest at the top like a fader. Only the compact layout:
           // the row keeps its ordinary slider.
           {...(compact ? { style: { writingMode: 'vertical-lr', direction: 'rtl' } as const } : {})}
-          min={MIN_STROKE_SIZE}
-          max={MAX_STROKE_SIZE}
-          step={0.5}
-          value={settings.size}
+          // By notch rather than by pixel, so the fine widths below 1 px are as easy to reach as the rest.
+          min={0}
+          max={STROKE_SIZE_STEPS.length - 1}
+          step={1}
+          value={sizeToStep(settings.size)}
           aria-label="Stroke thickness"
-          onChange={(e) => onSettingsChange({ size: Number(e.target.value) })}
+          aria-valuetext={`${settings.size}px`}
+          onChange={(e) => onSettingsChange({ size: stepToSize(Number(e.target.value)) })}
           data-thickness
         />
         {!compact && (

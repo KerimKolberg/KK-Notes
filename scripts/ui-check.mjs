@@ -1411,12 +1411,17 @@ async function checkQuickSettings(browser) {
       check('left: the quick widths fit the slim column', inside);
     }
 
-    // Holding one saves the slider's width into it.
-    await page.$eval('[data-thickness]', (el) => {
-      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      set.call(el, '3');
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+    // The slider goes by notches (`STROKE_SIZE_STEPS`): the first is the finest pen, 0.25 px, for writing small.
+    const notch = (n) =>
+      page.$eval('[data-thickness]', (el, n) => {
+        const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        set.call(el, String(n));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }, n);
+    await notch(0);
+    check(`${dock}: the slider goes down to a quarter of a pixel`, (await reading()) === '0.25px', await reading());
+    // Holding one saves the slider's width into it. Notch 8 is 3 px.
+    await notch(8);
     check(`${dock}: the slider still sets any width`, (await reading()) === '3px', await reading());
     const b = await (await page.$('[data-width-preset="1"]')).boundingBox();
     await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);

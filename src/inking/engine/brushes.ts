@@ -16,6 +16,7 @@
  * time, so a brush stays a single definition and strokes serialise as before
  * plus one short string.
  */
+import { MIN_STROKE_SIZE } from '../constants';
 import type { BrushId, InkPoint, StrokeStyle, ToolSettings } from '../types';
 
 export type { BrushId };
@@ -255,6 +256,21 @@ export function easingForStyle(style: StrokeStyle): (t: number) => number {
   return brush ? EASINGS[brush.easing] : EASINGS.linear;
 }
 
+/** Up to this width a pen is fine, and smooths less the finer it is. */
+const FINE_SIZE = 1.5;
+
+/**
+ * The input smoothing for a pen `size` wide. Smoothing lags each sample behind the pen by a share of a step, which
+ * in ordinary writing hides the sensor's jitter; in letters a few pixels high — written small with the page zoomed
+ * in — the same lag rounds off their curves and closes their loops. So a fine pen keeps more of what the hand did:
+ * down to 40 % of the brush's smoothing at the finest width.
+ */
+export function fineStreamline(streamline: number, size: number): number {
+  if (size >= FINE_SIZE) return streamline;
+  const t = Math.max(0, Math.min(1, (size - MIN_STROKE_SIZE) / (FINE_SIZE - MIN_STROKE_SIZE)));
+  return streamline * (0.4 + 0.6 * t);
+}
+
 /** Frozen render style for a new stroke drawn with `id`. */
 export function brushStyle(
   id: BrushId,
@@ -262,14 +278,15 @@ export function brushStyle(
   pointerType: 'pen' | 'touch' | 'mouse',
 ): StrokeStyle {
   const brush = brushById(id);
+  const size = Math.max(MIN_STROKE_SIZE, settings.size * brush.sizeScale);
   return {
     color: settings.color,
-    size: Math.max(0.5, settings.size * brush.sizeScale),
+    size,
     opacity: brush.opacity,
     compositeOperation: brush.composite,
     thinning: brush.thinning,
     smoothing: brush.smoothing,
-    streamline: brush.streamline,
+    streamline: fineStreamline(brush.streamline, size),
     // A device that reports no pressure still gets life from velocity, except
     // for brushes that are meant to be even-width — and a brush that works by
     // velocity wants it whatever the device reports.

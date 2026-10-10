@@ -4,6 +4,7 @@
  * stroke ids, so a selection stays valid across undo / redo of its own edits.
  */
 import type { BBox, GeometricStroke, Point, Shape, Stroke, StrokePattern } from '../types';
+import { MIN_STROKE_SIZE } from '../constants';
 import { createStrokeId } from './ids';
 import { bboxFromPoints, bboxIntersects, bboxUnion, EMPTY_BBOX } from './geometry';
 import { inLassoFilter, LASSO_ALL_LAYERS, type LassoFilter } from './lassoFilter';
@@ -464,7 +465,7 @@ function transformShape(shape: Shape, t: StrokeTransform): Shape {
 export function transformStroke(stroke: Stroke, t: StrokeTransform): Stroke {
   const { sx, sy } = scaleFactors(t);
   const widthFactor = t.kind === 'scale' ? Math.sqrt(sx * sy) : 1;
-  const style = widthFactor === 1 ? stroke.style : { ...stroke.style, size: Math.max(0.5, stroke.style.size * widthFactor) };
+  const style = widthFactor === 1 ? stroke.style : { ...stroke.style, size: Math.max(MIN_STROKE_SIZE, stroke.style.size * widthFactor) };
   if (stroke.kind === 'freehand') {
     const points = stroke.points.map((p) => transformPoint(p, t));
     return { ...stroke, points, style, bbox: freehandBBox(points, style) };
@@ -492,7 +493,7 @@ export function restyleStrokes(strokes: readonly Stroke[], ids: ReadonlySet<stri
     const style = {
       ...s.style,
       ...(change.color !== undefined && !isEraser ? { color: change.color } : {}),
-      ...(change.size !== undefined ? { size: Math.max(0.5, change.size) } : {}),
+      ...(change.size !== undefined ? { size: Math.max(MIN_STROKE_SIZE, change.size) } : {}),
       ...(change.pattern !== undefined ? { pattern: change.pattern } : {}),
     };
     if (style === s.style) return s;

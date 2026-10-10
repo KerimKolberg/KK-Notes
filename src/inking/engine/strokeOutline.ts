@@ -84,7 +84,23 @@ export function freehandSamples(points: readonly InkPoint[], style: StrokeStyle)
   return points.map((p) => ({ x: p.x, y: p.y, pressure: pencilPressure(p.pressure, p.tilt ?? 0, brush.tiltResponse) }));
 }
 
-/** Compute the outline polygon for a set of input samples. */
+/** Pens finer than this are outlined scaled up to it (see `getStrokeOutline`). */
+const OUTLINE_BASE_SIZE = 2;
+
+/** How much a stroke `size` wide is scaled up to be outlined: 1 for ordinary widths. */
+export function outlineScale(size: number): number {
+  return size > 0 && size < OUTLINE_BASE_SIZE ? OUTLINE_BASE_SIZE / size : 1;
+}
+
+/**
+ * Compute the outline polygon for a set of input samples.
+ *
+ * perfect-freehand works in the units it is given, and nearly everything it does is measured against the stroke's
+ * size — except that it passes over the samples in the last 3 units of a stroke, as a fixed number. For an ordinary
+ * pen that is less than a line's width; for a fine one writing small, with the page zoomed in, it is a good part
+ * of a letter. So a stroke finer than `OUTLINE_BASE_SIZE` is outlined scaled up to that width and the outline
+ * scaled back: everything else comes out as it would have, and those 3 units are a line's width and a half.
+ */
 export function getStrokeOutline(
   points: readonly InkPoint[],
   style: StrokeStyle,
@@ -92,9 +108,16 @@ export function getStrokeOutline(
   caps: CapOverrides = {},
 ): Outline {
   if (points.length === 0) return [];
+  const k = outlineScale(style.size);
   // perfect-freehand accepts `{x, y, pressure}` objects directly; InkPoint is
   // structurally compatible so no per-frame allocation is needed here.
-  return getStroke(freehandSamples(points, style) as FreehandPoint[], toFreehandOptions(style, complete, points, caps));
+  if (k === 1) return getStroke(freehandSamples(points, style) as FreehandPoint[], toFreehandOptions(style, complete, points, caps));
+  // Scaled up: the samples, the width and the tapers (lengths, so they scale too; a brush's speed-driven taper
+  // follows from the scaled samples).
+  const big = points.map((p) => ({ ...p, x: p.x * k, y: p.y * k }));
+  const bigStyle = { ...style, size: style.size * k, taperStart: style.taperStart * k, taperEnd: style.taperEnd * k };
+  const outline = getStroke(freehandSamples(big, bigStyle) as FreehandPoint[], toFreehandOptions(bigStyle, complete, big, caps));
+  return outline.map(([x, y]) => [x! / k, y! / k] as const);
 }
 
 /**

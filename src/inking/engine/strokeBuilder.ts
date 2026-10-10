@@ -92,7 +92,9 @@ export class StrokeBuilder {
     if (prev) {
       const dx = point.x - prev.x;
       const dy = point.y - prev.y;
-      if (dx * dx + dy * dy < MIN_SAMPLE_SPACING * MIN_SAMPLE_SPACING) {
+      // A fine pen keeps samples closer together: its letters are smaller than a coarse one's.
+      const spacing = Math.min(MIN_SAMPLE_SPACING, this.style.size * 0.5);
+      if (dx * dx + dy * dy < spacing * spacing) {
         if (dx !== 0 || dy !== 0) this.held = point;
         return;
       }

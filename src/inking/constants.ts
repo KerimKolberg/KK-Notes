@@ -68,8 +68,34 @@ export const HIGHLIGHTER_OPACITY = 0.35;
 export const MIN_HIGHLIGHTER_OPACITY = 0.1;
 export const MAX_HIGHLIGHTER_OPACITY = 0.9;
 
-export const MIN_STROKE_SIZE = 1;
+/**
+ * The thinnest a pen can be, in page px: well under one, for writing small with the page zoomed in, where a
+ * 1 px line is several screen pixels and fills the loops of letters a few pixels high.
+ */
+export const MIN_STROKE_SIZE = 0.25;
 export const MAX_STROKE_SIZE = 24;
+
+/**
+ * Where the thickness sliders stop: fine steps below 1 px, where a quarter of a pixel is a third of the line, and
+ * coarser ones above. An even 0.5 step from 0.25 left the fine end two notches long.
+ */
+export const STROKE_SIZE_STEPS: readonly number[] = [
+  0.25, 0.35, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 22, 24,
+];
+
+/** The slider notch nearest a size (a size set before the notches were these lands on the closest). */
+export function sizeToStep(size: number): number {
+  let best = 0;
+  for (let i = 1; i < STROKE_SIZE_STEPS.length; i++) {
+    if (Math.abs(STROKE_SIZE_STEPS[i]! - size) < Math.abs(STROKE_SIZE_STEPS[best]! - size)) best = i;
+  }
+  return best;
+}
+
+export function stepToSize(step: number): number {
+  const i = Math.min(STROKE_SIZE_STEPS.length - 1, Math.max(0, Math.round(step)));
+  return STROKE_SIZE_STEPS[i]!;
+}
 
 // ---- Hold-to-snap ---------------------------------------------------------
 

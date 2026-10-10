@@ -33,11 +33,12 @@ import {
   COLOR_PALETTE,
   MAX_CURVE_AMPLITUDE,
   MAX_CURVE_CYCLES,
-  MAX_STROKE_SIZE,
   MIN_CURVE_AMPLITUDE,
   MIN_CURVE_CYCLES,
-  MIN_STROKE_SIZE,
   STROKE_PATTERNS,
+  STROKE_SIZE_STEPS,
+  sizeToStep,
+  stepToSize,
 } from '../../inking/constants';
 import {
   arrangeUnits,
@@ -958,13 +959,14 @@ export const SelectionLayer = memo(function SelectionLayer({
             <span>Width</span>
             <input
               type="range"
-              min={MIN_STROKE_SIZE}
-              max={MAX_STROKE_SIZE}
-              step={0.5}
-              value={sizeValue}
+              min={0}
+              max={STROKE_SIZE_STEPS.length - 1}
+              step={1}
+              value={sizeToStep(sizeValue)}
               aria-label="Stroke width"
+              aria-valuetext={`${sizeValue}px`}
               className="h-1 w-20 accent-blue-400"
-              onChange={(e) => onSizeInput(Number(e.target.value))}
+              onChange={(e) => onSizeInput(stepToSize(Number(e.target.value)))}
               onPointerUp={commitSize}
               onKeyUp={commitSize}
               onBlur={commitSize}
