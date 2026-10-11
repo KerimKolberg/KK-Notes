@@ -2695,6 +2695,105 @@ async function checkLibrarySelection(browser) {
   await phone.close();
 }
 
+/**
+ * Leaving a note for the library keeps what was written: a note from the library is saved on the way out, one that
+ * has never been saved (a PDF just opened) is asked about — saved into the library, let go, or stayed with. And a PDF
+ * dropped on the home screen opens on its own, not beside the empty note opened before it.
+ */
+async function checkLeavingNotes(browser) {
+  console.log('leaving a note for the library, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-new-document]', { timeout: 20_000 });
+  const ink = () =>
+    page.evaluate(() => {
+      const c = document.querySelector('[data-page-index="0"] [data-layer="committed"]');
+      if (!c) return 0;
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+      return n;
+    });
+  const draw = async () => {
+    const box = await (await page.$('[data-page-index="0"]')).boundingBox();
+    await page.mouse.move(box.x + 120, box.y + 200);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 320, box.y + 260, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+  };
+  const home = async () => {
+    await page.click('[data-back-to-library]');
+    return page.waitForSelector('[data-library-view]', { timeout: 5_000 }).then(() => true, () => false);
+  };
+
+  // A note from the library: written in, then Home.
+  await page.click('[data-new-document]');
+  await page.waitForSelector('[data-back-to-library]', { timeout: 10_000 });
+  await draw();
+  check('a note from the library goes home without a question', (await home()) && (await page.$('[data-confirm-dialog]')) === null);
+  await page.waitForSelector('[data-library-kind="document"]', { timeout: 5_000 });
+  await page.click('[data-library-kind="document"]');
+  await page.waitForSelector('[data-back-to-library]', { timeout: 10_000 });
+  await page.waitForTimeout(400);
+  check('and what was written in it is still there when it is opened again', (await ink()) > 0, `${await ink()} inked pixels`);
+  await home();
+
+  // A PDF dropped on the home screen, with that note opened before it.
+  const pdf = (name) =>
+    page.evaluateHandle(
+      ({ name, bytes }) => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([new Uint8Array(bytes)], name, { type: 'application/pdf' }));
+        return transfer;
+      },
+      { name, bytes: tinyPdf(1, 'Lecture') },
+    );
+  await page.dispatchEvent('[data-library-view]', 'drop', { dataTransfer: await pdf('Lecture 1.pdf') });
+  await page.waitForSelector('[data-back-to-library]', { timeout: 15_000 });
+  await page.waitForTimeout(300);
+  check('a PDF dropped on the home screen opens under its own name', (await page.inputValue('[data-title]')) === 'Lecture 1', await page.inputValue('[data-title]'));
+  const tabs = await page.$$eval('[data-tab]', (els) => els.map((el) => el.textContent.trim()));
+  check('and on its own, not beside an empty "Untitled note"', !tabs.some((t) => t.includes('Untitled note')), JSON.stringify(tabs));
+
+  // Never saved: Home asks.
+  await draw();
+  await page.click('[data-back-to-library]');
+  const asked = await page.waitForSelector('[data-confirm-dialog]', { timeout: 3_000 }).then(() => true, () => false);
+  check('Home with a PDF written on but never saved asks first', asked && ((await page.textContent('[data-confirm-dialog]')) ?? '').includes('Lecture 1'));
+  await page.click('[data-confirm-cancel]');
+  check('Cancel stays in the note', (await page.$('[data-back-to-library]')) !== null && (await page.$('[data-library-view]')) === null);
+  await page.click('[data-back-to-library]');
+  await page.click('[data-confirm-ok]');
+  const saved = await page.waitForSelector('[data-library-view]', { timeout: 5_000 }).then(() => true, () => false);
+  const named = await page.waitForSelector('[data-library-entry*="Lecture 1"]', { timeout: 5_000 }).then(() => true, () => false);
+  check('Save to library puts it in the library and goes home', saved && named);
+  const count = await page.$$eval('[data-library-kind="document"]', (els) => els.length);
+
+  // Don't save: let go.
+  await page.dispatchEvent('[data-library-view]', 'drop', { dataTransfer: await pdf('Lecture 2.pdf') });
+  await page.waitForSelector('[data-back-to-library]', { timeout: 15_000 });
+  await draw();
+  await page.click('[data-back-to-library]');
+  await page.waitForSelector('[data-confirm-alternative]', { timeout: 3_000 }).catch(() => {});
+  await page.click('[data-confirm-alternative]');
+  await page.waitForSelector('[data-library-view]', { timeout: 5_000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  check("Don't save goes home and adds nothing", (await page.$$eval('[data-library-kind="document"]', (els) => els.length)) === count);
+  // The note left behind takes its tab with it: it used to stay, as an "Untitled note" beside the next PDF.
+  await page.dispatchEvent('[data-library-view]', 'drop', { dataTransfer: await pdf('Lecture 3.pdf') });
+  await page.waitForSelector('[data-back-to-library]', { timeout: 15_000 });
+  await page.waitForTimeout(300);
+  const after = await page.$$eval('[data-tab]', (els) => els.map((el) => el.textContent.trim()));
+  check('the next PDF opens alone, with no tab left from the note before', after.length <= 1 && !after.some((t) => t.includes('Lecture 2')), JSON.stringify(after));
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
 /** A small valid PDF of `count` pages, each with a line of text, as bytes. */
 /**
  * A small PDF built by hand: `count` US-letter pages, each saying "<label> page N" in large type at the top.
@@ -4785,6 +4884,7 @@ try {
     checkBookmarks,
     checkLibraryOrganising,
     checkLibrarySelection,
+    checkLeavingNotes,
     checkReadingDrop,
     checkContents,
     checkTextSelect,

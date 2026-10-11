@@ -190,6 +190,7 @@ mod desktop {
         CloseRequestApi, Emitter, Window,
     };
     use tauri_plugin_autostart::ManagerExt;
+    use tauri_plugin_fs::FsExt;
 
     const TRAY_ID: &str = "main";
     const MAIN_WINDOW: &str = "main";
@@ -327,6 +328,12 @@ mod desktop {
     pub fn second_instance(app: &AppHandle, args: Vec<String>, cwd: String) {
         show_main(app);
         let Some(path) = file_argument(&args, &cwd) else { return };
+        // The page reads the file through the fs plugin, whose scope is the app's own folder: a PDF from anywhere
+        // else was refused ("forbidden path") when the app was already running. This one file, named by the
+        // person who chose "Open with", is let in.
+        if let Err(error) = app.fs_scope().allow_file(&path) {
+            eprintln!("open with: {error}");
+        }
         let Some(window) = app.get_webview_window(MAIN_WINDOW) else { return };
         let detail = json!({ "uri": path, "mime": "" });
         let script = format!("window.dispatchEvent(new CustomEvent({OPEN_WITH_EVENT:?}, {{ detail: {detail} }}));");

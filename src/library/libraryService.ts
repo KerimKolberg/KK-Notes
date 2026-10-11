@@ -10,6 +10,7 @@
 import { isTauri, tauriInvoke } from '../desktop/tauri';
 import { encodeNotex } from '../desktop/notex';
 import { createDocument } from '../document/operations';
+import type { Document } from '../document/types';
 import {
   BROWSER_ROOT,
   copyBrowserEntries,
@@ -22,6 +23,7 @@ import {
   readBrowserDocument,
   restoreBrowserTrash,
   trashBrowserEntries,
+  updateBrowserDocument,
   writeBrowserDocument,
 } from './browserLibrary';
 import type { DocumentText, PdfPagePiece } from './search';
@@ -54,6 +56,19 @@ export async function createDocumentInLibrary(parent: string | null, name: strin
   const contents = encodeNotex({ ...createDocument(1), title: name });
   if (!isTauri()) return writeBrowserDocument(parent, name, contents);
   return tauriInvoke<string>('create_library_document', { parent, name, contents });
+}
+
+/** Put a document into the library as a new note, named after its title; returns its path. */
+export async function addDocumentToLibrary(doc: Document, parent: string | null = null): Promise<string> {
+  const name = doc.title.trim() || 'Untitled note';
+  const contents = encodeNotex(doc);
+  if (!isTauri()) return writeBrowserDocument(parent, name, contents);
+  return tauriInvoke<string>('create_library_document', { parent, name, contents });
+}
+
+/** Browser only: write a note that is already in the library over what it was. */
+export function updateBrowserLibraryDocument(doc: Document, path: string): void {
+  updateBrowserDocument(path, encodeNotex(doc));
 }
 
 export async function moveEntry(from: string, into: string | null): Promise<string> {

@@ -321,6 +321,16 @@ screen (an `IntersectionObserver` gates the work). A page that references a
 PDF is drawn without it: fetching the source to fill a 200 px card would undo
 the whole point.
 
+**Going home keeps what was written** (`library/leaveDocument.ts`, the House button in the top bar). It used to drop
+the open note, leaving only the crash draft. Now a note with a file (every note made in the library) is saved to it on
+the way out; one never saved anywhere — a blank note, a PDF just opened — asks: *Save to library* (under its title),
+*Don't save* (the draft goes too, or the next start would bring it back), or *Cancel*. Either way the note's tab goes
+with it (`tabStore.forgetActive`): left behind, it showed as an empty "Untitled note" beside the next PDF opened. A
+file handed to the app by *Open with* while it is already running is let into the fs plugin's scope for that one
+path (`background::second_instance`, and `get_startup_file` for one it was started with), which refused it as a
+"forbidden path" before. *Save As* offers PDF beside `.notex` (a PDF of the note; the note itself is not saved by
+it), and version history has a button between Undo and Redo (also a right-click on Undo).
+
 **Folders** are real directories and filing a note is a real move — drag a
 card onto a folder. Nothing overwrites: a name already taken gets a numbered
 suffix, because dragging a file onto a folder is not a request to destroy

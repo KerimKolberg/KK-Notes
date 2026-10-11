@@ -120,6 +120,19 @@ export function writeBrowserDocument(parent: string | null, name: string, conten
   return path;
 }
 
+/** Write a document that is already in the library over what it was. */
+export function updateBrowserDocument(path: string, contents: string): void {
+  const index = readIndex();
+  const entry = index.find((e) => e.path === path && !e.isFolder);
+  if (!entry) throw new Error('That note is no longer in the library.');
+  try {
+    localStorage.setItem(DOCUMENT_PREFIX + path, contents);
+  } catch {
+    throw new Error('This browser has run out of local storage for the library.');
+  }
+  writeIndex(index.map((e) => (e === entry ? { ...e, bytes: contents.length, modifiedMs: Date.now() } : e)));
+}
+
 export function readBrowserDocument(path: string): string | null {
   return localStorage.getItem(DOCUMENT_PREFIX + path);
 }

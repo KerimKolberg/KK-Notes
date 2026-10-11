@@ -14,6 +14,7 @@ import {
   Ellipsis,
   FileDown,
   FileUp,
+  History,
   House,
   Layers,
   Lock,
@@ -42,6 +43,10 @@ import { actionExportPdf } from '../../desktop/fileActions';
 import { togglePlayer, usePlayerStore } from '../../audio/player';
 import { startRecording, stopRecording, useRecorderStore } from '../../audio/recorder';
 import { FileMenu } from '../../desktop/FileMenu';
+import { useVersionsStore } from '../../desktop/versionsStore';
+import { useTabStore } from '../tabStore';
+import { ConfirmDialog } from '../../ui/ConfirmDialog';
+import { currentLeaveStep, forgetDraft, saveIntoLibrary, saveToItsFile } from '../../library/leaveDocument';
 import { IconButton } from '../../ui/IconButton';
 import { MAX_ZOOM, MIN_ZOOM } from '../constants';
 import { selectIsDirty, useDocumentStore } from '../store';
@@ -69,6 +74,21 @@ const VIEW_MODES: readonly ViewModeDescriptor[] = [
  */
 export function TopBar() {
   const backToLibrary = useRouteStore((s) => s.backToLibrary);
+  // Home with unsaved work: a note with a file is saved on the way; one without is asked about.
+  const [askingLeave, setAskingLeave] = useState(false);
+  const goHome = (): void => {
+    useTabStore.getState().forgetActive();
+    backToLibrary();
+  };
+  const leave = (): void => {
+    const step = currentLeaveStep();
+    if (step === 'go') goHome();
+    else if (step === 'save') void saveToItsFile().then((saved) => saved && goHome());
+    else setAskingLeave(true);
+  };
+  const leaveTitle = useDocumentStore((s) => s.document.title);
+  const filePath = useDocumentStore((s) => s.filePath);
+  const isDesktop = useDesktopStore((s) => s.isDesktop);
   const searchOpen = useSearchStore((s) => s.open);
   const toggleSearch = () => {
     useBookmarksStore.getState().close();
@@ -199,7 +219,7 @@ export function TopBar() {
           icon={House}
           label="Back to library"
           hint="closes this document"
-          onClick={backToLibrary}
+          onClick={leave}
           tooltipSide="bottom"
           data-back-to-library
         />
@@ -219,9 +239,27 @@ export function TopBar() {
           hint="Ctrl+Z"
           disabled={!canUndo || readOnly}
           onClick={performUndo}
+          // A right-click on Undo goes further back: to the note's earlier saves.
+          onContextMenu={(e) => {
+            e.preventDefault();
+            if (isDesktop && filePath) useVersionsStore.getState().show();
+          }}
           tooltipSide="bottom"
           data-undo
         />
+        {/* Version history, between Undo and Redo where going back in time already is (it used to be in the File
+            menu only). Desktop only: earlier saves are kept by the shell. */}
+        {isDesktop && (
+          <IconButton
+            icon={History}
+            label="Version history"
+            hint={filePath ? 'earlier saves of this note' : 'save the note to a file first'}
+            disabled={!filePath}
+            onClick={() => useVersionsStore.getState().show()}
+            tooltipSide="bottom"
+            data-version-history-button
+          />
+        )}
         <IconButton
           icon={Redo2}
           label="Redo"
@@ -357,6 +395,27 @@ export function TopBar() {
           ))}
         <MoreMenu actions={actions} />
       </div>
+      {askingLeave &&
+        createPortal(
+          <ConfirmDialog
+            title={`Save “${leaveTitle.trim() || 'Untitled note'}”?`}
+            confirmLabel="Save to library"
+            alternativeLabel="Don't save"
+            onCancel={() => setAskingLeave(false)}
+            onAlternative={() => {
+              setAskingLeave(false);
+              void forgetDraft();
+              goHome();
+            }}
+            onConfirm={() => {
+              setAskingLeave(false);
+              void saveIntoLibrary().then((saved) => saved && goHome());
+            }}
+          >
+            It is not in your library yet. Save it there to keep what you wrote, or leave without it.
+          </ConfirmDialog>,
+          document.body,
+        )}
     </header>
   );
 }

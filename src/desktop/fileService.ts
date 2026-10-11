@@ -72,7 +72,19 @@ function downloadText(text: string, filename: string, mime: string): void {
 export async function pickDocumentSavePath(title: string): Promise<string | null> {
   if (!isTauri()) return null;
   const { save } = await tauriDialog();
-  return save({ defaultPath: safeFilename(title, NOTEX_EXTENSION), filters: NOTEX_FILTERS });
+  // A PDF too, from the type list: what Save As is asked for when the note is to go to someone.
+  return save({ defaultPath: safeFilename(title, NOTEX_EXTENSION), filters: [...NOTEX_FILTERS, ...PDF_FILTERS] });
+}
+
+/** Whether a path chosen in Save As is a PDF rather than a note. */
+export function isPdfPath(path: string): boolean {
+  return /\.pdf$/i.test(path.split(/[?#]/)[0] ?? path);
+}
+
+/** Write the document as a PDF to a chosen path. */
+export async function exportPdfToPath(doc: Document, path: string): Promise<void> {
+  const { exportDocumentToPdf } = await import('../pdf/export');
+  await writeBinary(path, await exportDocumentToPdf(doc));
 }
 
 /**

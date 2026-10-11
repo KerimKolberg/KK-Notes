@@ -11,6 +11,8 @@ import {
   confirmDiscard,
   downloadDocument,
   exportPdf,
+  exportPdfToPath,
+  isPdfPath,
   listRecent,
   openDocumentFromPath,
   openDocumentWithPicker,
@@ -131,6 +133,18 @@ export async function actionSaveAs(): Promise<boolean> {
     }
     const path = await pickDocumentSavePath(doc.title);
     if (!path) return false;
+    if (isPdfPath(path)) {
+      // A PDF of the note, not the note: it stays as it was (and unsaved, if it was).
+      desktop.setBusy('export');
+      useDocumentStore.getState().setExporting(true);
+      try {
+        await exportPdfToPath(doc, path);
+      } finally {
+        useDocumentStore.getState().setExporting(false);
+      }
+      notify(`Saved a PDF of the note to ${path}`);
+      return false;
+    }
     await saveDocumentToPath(doc, path);
     useDocumentStore.getState().markSaved(path);
     await clearDraft();

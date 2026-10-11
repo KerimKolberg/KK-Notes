@@ -53,11 +53,12 @@ pub struct StartupFile(pub Mutex<Option<String>>);
 
 impl StartupFile {
     pub fn from_args() -> Self {
+        // A note, a PDF or a GoodNotes notebook: all three are registered with "Open with".
         let file = std::env::args().skip(1).find(|arg| {
             !arg.starts_with('-')
                 && Path::new(arg)
                     .extension()
-                    .map(|ext| ext.eq_ignore_ascii_case(NOTEX_EXTENSION))
+                    .map(|ext| [NOTEX_EXTENSION, "pdf", "goodnotes"].iter().any(|known| ext.eq_ignore_ascii_case(known)))
                     .unwrap_or(false)
         });
         Self(Mutex::new(file))
@@ -334,10 +335,21 @@ pub fn remove_recent(app: AppHandle, path: String) -> Result<Vec<RecentFile>, St
 // Startup
 // ---------------------------------------------------------------------------
 
-/// The `.notex` file the process was launched with, handed out once.
+/// The file the process was launched with, handed out once. A PDF or a notebook is read by the page through the fs
+/// plugin, so that one file is let into its scope here (as for a file handed to a running app).
 #[tauri::command]
-pub fn get_startup_file(state: State<'_, StartupFile>) -> Option<String> {
-    state.0.lock().ok().and_then(|mut guard| guard.take())
+pub fn get_startup_file(app: AppHandle, state: State<'_, StartupFile>) -> Option<String> {
+    let file = state.0.lock().ok().and_then(|mut guard| guard.take())?;
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_fs::FsExt;
+        if let Err(error) = app.fs_scope().allow_file(&file) {
+            eprintln!("startup file: {error}");
+        }
+    }
+    #[cfg(not(desktop))]
+    let _ = app;
+    Some(file)
 }
 
 #[cfg(test)]

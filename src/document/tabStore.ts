@@ -108,6 +108,11 @@ export interface TabStore {
   activate: (id: string) => Promise<void>;
   close: (id: string) => Promise<void>;
   /**
+   * The note being written in has been left for the library — saved, or let go — so its tab goes with it, without
+   * another tab being opened in its place. Left behind, it stayed as an "Untitled note" beside the next thing opened.
+   */
+  forgetActive: () => void;
+  /**
    * Drop the documents of tabs past the live budget, freeing their PDFs.
    *
    * Public because the rule is worth exercising directly in a test, and because
@@ -323,6 +328,15 @@ export const useTabStore = create<TabStore>()((set, get) => ({
 
     set({ tabs: remaining });
     if (leaving) void releaseSession(leaving, remaining);
+  },
+
+  forgetActive: () => {
+    const { tabs, activeId, splitId } = get();
+    if (!activeId) return;
+    const remaining = tabs.filter((tab) => tab.id !== activeId);
+    const leaving = captureSession();
+    set({ tabs: remaining, activeId: null, ...(splitId === activeId ? { splitId: null } : {}) });
+    void releaseSession(leaving, remaining);
   },
 
   adoptLoaded: (previous, previousId) => {

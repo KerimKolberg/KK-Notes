@@ -9,6 +9,9 @@ export interface ConfirmDialogProps {
   readonly danger?: boolean;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
+  /** A third answer between the two, such as "Don't save". */
+  readonly alternativeLabel?: string;
+  readonly onAlternative?: () => void;
 }
 
 /**
@@ -18,7 +21,7 @@ export interface ConfirmDialogProps {
  *
  * Escape and a press outside it cancel; the cancel button has the focus to begin with, so Enter does not delete.
  */
-export function ConfirmDialog({ title, children, confirmLabel, danger = false, onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({ title, children, confirmLabel, danger = false, onConfirm, onCancel, alternativeLabel, onAlternative }: ConfirmDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     cancelRef.current?.focus();
@@ -56,6 +59,16 @@ export function ConfirmDialog({ title, children, confirmLabel, danger = false, o
           >
             Cancel
           </button>
+          {alternativeLabel && onAlternative && (
+            <button
+              type="button"
+              className="h-9 rounded-lg px-3 text-sm font-medium text-rose-600 hover:bg-rose-50 focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-rose-300 dark:hover:bg-rose-950/50"
+              onClick={onAlternative}
+              data-confirm-alternative
+            >
+              {alternativeLabel}
+            </button>
+          )}
           <button
             type="button"
             className={`h-9 rounded-lg px-3 text-sm font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ${
