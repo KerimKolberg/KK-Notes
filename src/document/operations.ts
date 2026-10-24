@@ -288,3 +288,15 @@ export function formatPageList(indices: readonly number[]): string {
   }
   return parts.join(', ');
 }
+
+/**
+ * The note with only the pages at `indices`, numbered from 1 and named for them ("Physics (pages 2, 15, 20–25)", or
+ * "Physics (12 pages)" when the list gets long), for exporting just those. The cover stays behind with the rest.
+ */
+export function documentOfPages(doc: Document, indices: readonly number[]): Document {
+  const picked = normalizeIndices(indices, doc.pages.length);
+  const list = formatPageList(picked);
+  const which = picked.length === 1 ? `page ${list}` : list.length <= 30 ? `pages ${list}` : `${picked.length} pages`;
+  const { cover: _cover, ...rest } = doc;
+  return { ...rest, title: `${doc.title} (${which})`, pages: renumber(picked.map((i) => doc.pages[i]!)), activePageIndex: 0 };
+}

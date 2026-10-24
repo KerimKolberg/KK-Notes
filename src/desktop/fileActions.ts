@@ -2,6 +2,7 @@
  * File menu actions. Plain async functions over the stores so the menu,
  * keyboard shortcuts and startup logic share one implementation.
  */
+import { documentOfPages } from '../document/operations';
 import { selectIsDirty, useDocumentStore } from '../document/store';
 import { usePreferencesStore } from '../preferences/store';
 import { useDesktopStore } from './desktopStore';
@@ -158,13 +159,15 @@ export async function actionSaveAs(): Promise<boolean> {
   }
 }
 
-export async function actionExportPdf(): Promise<void> {
+/** Export the note as a PDF, or only the pages at `pageIndices` (the arranger's picked pages). */
+export async function actionExportPdf(pageIndices?: readonly number[]): Promise<void> {
   const desktop = useDesktopStore.getState();
   if (desktop.busy) return;
   desktop.setBusy('export');
   useDocumentStore.getState().setExporting(true);
   try {
-    const path = await exportPdf(useDocumentStore.getState().document);
+    const doc = useDocumentStore.getState().document;
+    const path = await exportPdf(pageIndices && pageIndices.length > 0 ? documentOfPages(doc, pageIndices) : doc);
     if (path) notify(`Exported PDF to ${path}`);
   } catch (err) {
     notify(`Export failed: ${errorMessage(err)}`);

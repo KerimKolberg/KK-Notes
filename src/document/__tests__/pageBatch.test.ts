@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createDocument,
   createPage,
+  documentOfPages,
   duplicatePagesAt,
   formatPageList,
   groupDropStart,
@@ -60,6 +61,25 @@ describe('picking several pages', () => {
     expect(copied[2]!.id).not.toBe('2');
     expect(copied[2]!.template).toBe(pages[1]!.template);
     expect(copied.map((p) => p.pageNumber)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+});
+
+describe('exporting only some pages', () => {
+  it('keeps those pages, numbered from 1, and names the note for them', () => {
+    const doc = { ...createDocument(1), title: 'Physics', pages: named(30), activePageIndex: 7 };
+    const part = documentOfPages(doc, [19, 1, 14, 20, 21]);
+    expect(ids(part.pages)).toEqual(['2', '15', '20', '21', '22']);
+    expect(part.pages.map((p) => p.pageNumber)).toEqual([1, 2, 3, 4, 5]);
+    expect(part.title).toBe('Physics (pages 2, 15, 20–22)');
+    expect(part.activePageIndex).toBe(0);
+    expect(documentOfPages(doc, [4]).title).toBe('Physics (page 5)');
+    expect(documentOfPages(doc, [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]).title).toBe('Physics (10 pages)');
+    expect(doc.pages.length).toBe(30);
+  });
+
+  it('leaves the cover behind', () => {
+    const doc = { ...createDocument(3), cover: { title: 'T', description: '', coverColor: '#123456', textColor: '#ffffff' } };
+    expect('cover' in documentOfPages(doc as never, [1])).toBe(false);
   });
 });
 

@@ -736,12 +736,16 @@ Mac) to pick a page without going to it, Shift-click for every page from the
 one picked last, or press and hold a page (pen, finger or mouse,
 `onLongPress` in `usePointerReorder`, which also keeps the click that ends the
 hold from un-picking it). A sticky bar stays at the top of the drawer while
-scrolling down a hundred pages. It shows how many are picked, *All* and *None*,
+scrolling down a hundred pages. It shows how many are picked, *All*, *Invert*
+(to keep a few pages: pick them, invert, delete) and *None*,
 and a *Pages* field that lists the picked pages ("2, 15, 20–25, 73";
 `formatPageList`) and picks whatever is typed into it (`parsePageList`). It also
 has *Move to* page n (the picked pages, in their order, start at page n:
 `movePagesTo`), *Duplicate* (each copy right after its page) and *Delete*,
 which asks first when more than one page goes and never deletes them all.
+*Export PDF* there exports only the picked pages (`documentOfPages`: those
+pages numbered from 1, the cover left out), named for them, e.g.
+"Physics (pages 2, 15, 20–25).pdf", or "Physics (12 pages)" for a long list.
 Dragging a picked page takes the others along and lands them where that page
 would land alone (`groupDropStart`). While pages are picked, template,
 background and spacing go to them (`PageTarget` takes a list of indices), and

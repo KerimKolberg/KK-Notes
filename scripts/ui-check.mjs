@@ -2393,7 +2393,28 @@ async function checkPagePicking(browser) {
   await page.waitForFunction(() => document.querySelectorAll('[data-thumbnail]').length === 8, null, { timeout: 3_000 }).catch(() => {});
   check('one Undo brings them all back', JSON.stringify(await order()) === JSON.stringify(dragged), `${(await order()).length}`);
 
-  await page.click(thumb(2), { modifiers: ['Control'] });
+  // Keep two pages: pick them, invert, and what is left to delete is everything else.
+  await page.click(thumb(0), { modifiers: ['Control'] });
+  await page.click(thumb(3), { modifiers: ['Control'] });
+  await page.click('[data-arranger-pick-invert]');
+  check('Invert picks the pages that were not picked', (await count()) === 6 && (await page.getAttribute(thumb(0), 'data-thumbnail-checked')) === 'false', `${await count()}`);
+  const kept = [(await order())[0], (await order())[3]];
+  const download = page.waitForEvent('download', { timeout: 15_000 }).catch(() => null);
+  await page.click('[data-arranger-picked-export]');
+  const file = await download;
+  check('Export PDF downloads only the picked pages, named for them', file !== null && file.suggestedFilename() === 'Untitled note (pages 2, 3, 5–8).pdf', file?.suggestedFilename() ?? 'no download');
+  if (file) {
+    const { PDFDocument } = await import('pdf-lib');
+    const pdf = await PDFDocument.load(readFileSync(await file.path()));
+    check('and the PDF has those six pages', pdf.getPageCount() === 6, `${pdf.getPageCount()} pages`);
+  }
+  await page.waitForFunction(() => !document.querySelector('[data-arranger-picked-export]')?.disabled, null, { timeout: 10_000 }).catch(() => {});
+  await page.click('[data-arranger-picked-delete]');
+  await page.locator('[data-confirm-dialog] button', { hasText: /^Delete$/ }).click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-thumbnail]').length === 2, null, { timeout: 3_000 }).catch(() => {});
+  check('and deleting them keeps just the two', JSON.stringify(await order()) === JSON.stringify(kept), JSON.stringify(await order()));
+
+  await page.click(thumb(1), { modifiers: ['Control'] });
   await page.keyboard.press('Escape');
   check('Escape lets go of the picked pages and leaves the arranger open', (await page.$('[data-arranger-picking]')) === null && (await page.$(OPEN)) !== null);
   check('no page errors', errors.length === 0, errors.join(' | '));
@@ -4939,6 +4960,8 @@ async function checkAudioRecording(browser) {
 
 const browser = await chromium.launch({
   executablePath,
+  // Without a UTF-8 locale (a bare container has none) Chromium names a download with "–" or "ü" in it "download".
+  env: { ...process.env, LANG: process.env.LANG || 'C.UTF-8' },
   // A microphone that plays a tone, allowed without asking, and sound that may play without a tap first.
   args: ['--no-sandbox', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'],
 });

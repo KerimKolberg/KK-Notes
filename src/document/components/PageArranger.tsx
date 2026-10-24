@@ -17,6 +17,7 @@ import { formatPageList, groupDropStart, parsePageList } from '../operations';
 import { useDocumentStore } from '../store';
 import { usePreferencesStore } from '../../preferences/store';
 import type { PageTemplate } from '../types';
+import { actionExportPdf } from '../../desktop/fileActions';
 import { ConfirmDialog } from '../../ui/ConfirmDialog';
 import { PageThumbnail } from './PageThumbnail';
 
@@ -39,9 +40,10 @@ export const ARRANGER_SLIDE_MS = 200;
  */
 export function PageArranger() {
   const open = useDocumentStore((s) => s.arrangerOpen);
-  const { pages, activePageIndex, readOnly, cover, title, documentId } = useDocumentStore(
+  const { pages, activePageIndex, readOnly, cover, title, documentId, exporting } = useDocumentStore(
     useShallow((s) => ({
       documentId: s.document.id,
+      exporting: s.exporting,
       pages: s.document.pages,
       activePageIndex: s.document.activePageIndex,
       readOnly: s.readOnly,
@@ -308,6 +310,15 @@ export function PageArranger() {
                 <button type="button" className={opButton} onClick={() => setPicked(new Set(pages.map((p) => p.id)))} data-arranger-pick-all>
                   All
                 </button>
+                <button
+                  type="button"
+                  className={opButton}
+                  title="Select the pages that are not selected, and let go of those that are"
+                  onClick={() => setPicked((was) => new Set(pages.filter((p) => !was.has(p.id)).map((p) => p.id)))}
+                  data-arranger-pick-invert
+                >
+                  Invert
+                </button>
                 <button type="button" className={opButton} disabled={!batch} onClick={() => setPicked(new Set())} data-arranger-pick-none>
                   None
                 </button>
@@ -361,6 +372,16 @@ export function PageArranger() {
                   Move
                 </button>
                 <span className="flex-1" />
+                <button
+                  type="button"
+                  className={opButton}
+                  disabled={!batch || exporting}
+                  title="Export only the selected pages as a PDF"
+                  onClick={() => void actionExportPdf(pickedIndices)}
+                  data-arranger-picked-export
+                >
+                  Export PDF
+                </button>
                 <button type="button" className={opButton} disabled={!batch} onClick={duplicate} data-arranger-picked-duplicate>
                   Duplicate
                 </button>

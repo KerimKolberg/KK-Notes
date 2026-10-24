@@ -41,7 +41,7 @@ Status column for the native app: `[ ]` not started, `[~]` partly, `[x]` done. U
 
 ## Pages and documents
 
-- [ ] Pages: A4 default (794 × 1123 px), add before/after, duplicate, delete, reorder (page arranger with thumbnails); pick several pages (Ctrl/Shift-click, hold, typed list "2, 15, 20-25") to move, duplicate, delete or restyle together
+- [ ] Pages: A4 default (794 × 1123 px), add before/after, duplicate, delete, reorder (page arranger with thumbnails); pick several pages (Ctrl/Shift-click, hold, typed list "2, 15, 20-25") to move, duplicate, delete, restyle or export as PDF together; invert the selection
 - [ ] Templates: blank, ruled (margin line), grid, engineering, isometric; spacing slider; background colour
 - [ ] Page defaults (template/colour for new notes) in settings
 - [ ] View modes: vertical continuous, horizontal continuous, single page, double page
