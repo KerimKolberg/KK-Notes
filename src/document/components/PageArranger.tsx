@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   COVER_COLOR_SWATCHES,
@@ -12,10 +12,12 @@ import {
   mmToPx,
   pxToMm,
 } from '../constants';
-import { usePointerReorder } from '../hooks/usePointerReorder';
+import { usePointerReorder, type SelectModifiers } from '../hooks/usePointerReorder';
+import { formatPageList, groupDropStart, parsePageList } from '../operations';
 import { useDocumentStore } from '../store';
 import { usePreferencesStore } from '../../preferences/store';
 import type { PageTemplate } from '../types';
+import { ConfirmDialog } from '../../ui/ConfirmDialog';
 import { PageThumbnail } from './PageThumbnail';
 
 const opButton =
@@ -37,8 +39,9 @@ export const ARRANGER_SLIDE_MS = 200;
  */
 export function PageArranger() {
   const open = useDocumentStore((s) => s.arrangerOpen);
-  const { pages, activePageIndex, readOnly, cover, title } = useDocumentStore(
+  const { pages, activePageIndex, readOnly, cover, title, documentId } = useDocumentStore(
     useShallow((s) => ({
+      documentId: s.document.id,
       pages: s.document.pages,
       activePageIndex: s.document.activePageIndex,
       readOnly: s.readOnly,
@@ -53,6 +56,9 @@ export function PageArranger() {
     addPage,
     duplicatePage,
     deletePage,
+    duplicatePages,
+    deletePages,
+    movePages,
     setPageTemplate,
     setPageBackground,
     setTemplateConfig,
@@ -67,6 +73,9 @@ export function PageArranger() {
         addPage: s.addPage,
         duplicatePage: s.duplicatePage,
         deletePage: s.deletePage,
+        duplicatePages: s.duplicatePages,
+        deletePages: s.deletePages,
+        movePages: s.movePages,
         setPageTemplate: s.setPageTemplate,
         setPageBackground: s.setPageBackground,
         setTemplateConfig: s.setTemplateConfig,
@@ -75,8 +84,27 @@ export function PageArranger() {
       })),
     );
   const [applyToAll, setApplyToAll] = useState(false);
-  const target = applyToAll ? ('all' as const) : activePageIndex;
-  const selected = pages[activePageIndex];
+  // Picking pages for a batch change: Select, Ctrl/Shift-click, or press and hold a page. Kept by page id, so a
+  // picked page stays picked when pages move around it.
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set());
+  const [anchor, setAnchor] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const pickedIndices = useMemo(
+    () => (picking ? pages.flatMap((p, i) => (picked.has(p.id) ? [i] : [])) : []),
+    [picking, pages, picked],
+  );
+  const batch = pickedIndices.length > 0;
+  const target = applyToAll ? ('all' as const) : batch ? pickedIndices : activePageIndex;
+  const selected = pages[batch ? pickedIndices[0]! : activePageIndex];
+  const stopPicking = useCallback(() => {
+    setPicking(false);
+    setPicked(new Set());
+    setAnchor(null);
+  }, []);
+  useEffect(() => {
+    if (!open) stopPicking();
+  }, [open, documentId, stopPicking]);
   // The layout a new note starts with, so a preferred template does not have
   // to be re-chosen for every page.
   const pageDefaults = usePreferencesStore((s) => s.pageDefaults);
@@ -85,18 +113,97 @@ export function PageArranger() {
   const spacingApplies = selected !== undefined && SPACED_TEMPLATES.includes(selected.template);
   const spacingLabel = selected?.template === 'ruled' ? 'Line spacing' : 'Box size';
 
-  const onSelect = useCallback((index: number) => jumpToPage(index), [jumpToPage]);
+  const onSelect = useCallback(
+    (index: number, { toggle, range }: SelectModifiers) => {
+      const id = pages[index]?.id;
+      if (!id) return;
+      if (readOnly || (!picking && !toggle && !range)) {
+        jumpToPage(index);
+        return;
+      }
+      setPicking(true);
+      const anchorIndex = anchor === null ? -1 : pages.findIndex((p) => p.id === anchor);
+      if (range && anchorIndex !== -1) {
+        const [a, b] = anchorIndex < index ? [anchorIndex, index] : [index, anchorIndex];
+        setPicked((was) => new Set([...(picking ? was : []), ...pages.slice(a, b + 1).map((p) => p.id)]));
+        return;
+      }
+      setPicked((was) => {
+        const next = new Set(picking ? was : []);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      setAnchor(id);
+    },
+    [anchor, jumpToPage, pages, picking, readOnly],
+  );
+  const onLongPress = useCallback(
+    (index: number) => {
+      const id = pages[index]?.id;
+      if (!id) return;
+      setPicked((was) => new Set([...(picking ? was : []), id]));
+      setPicking(true);
+      setAnchor(id);
+    },
+    [pages, picking],
+  );
+  // A picked page dragged takes the others with it.
+  const groupDrag = (from: number): boolean => pickedIndices.length > 1 && pickedIndices.includes(from);
+  const onMove = useCallback(
+    (from: number, to: number) => {
+      if (pickedIndices.length > 1 && pickedIndices.includes(from)) {
+        const start = groupDropStart(pickedIndices, from, to);
+        if (start !== null) movePages(pickedIndices, start);
+        return;
+      }
+      movePage(from, to);
+    },
+    [movePage, movePages, pickedIndices],
+  );
   // Read-only: thumbnails still navigate, but nothing reorders or edits.
-  const { drag, getItemProps } = usePointerReorder({ count: pages.length, onMove: movePage, onSelect, disabled: readOnly });
+  const { drag, getItemProps } = usePointerReorder({
+    count: pages.length,
+    onMove,
+    onSelect,
+    onLongPress,
+    disabled: readOnly,
+  });
+  const [listDraft, setListDraft] = useState('');
+  useEffect(() => setListDraft(formatPageList(pickedIndices)), [pickedIndices]);
+  const [moveTo, setMoveTo] = useState('1');
+  const pickList = (): void => {
+    const indices = parsePageList(listDraft, pages.length);
+    if (!indices) return;
+    setPicked(new Set(indices.map((i) => pages[i]!.id)));
+    setAnchor(indices.length > 0 ? pages[indices[indices.length - 1]!]!.id : null);
+  };
+  const moveToPage = (): void => {
+    const n = Number(moveTo);
+    if (!batch || !Number.isFinite(n)) return;
+    movePages(pickedIndices, Math.min(Math.max(1, Math.trunc(n)), pages.length - pickedIndices.length + 1) - 1);
+  };
+  const duplicate = (): void => (batch ? duplicatePages(pickedIndices) : duplicatePage(activePageIndex));
+  const remove = (): void => {
+    if (!batch) deletePage(activePageIndex);
+    else if (pickedIndices.length === 1) {
+      deletePages(pickedIndices);
+      stopPicking();
+    } else setConfirmDelete(true);
+  };
+  const allPicked = batch && pickedIndices.length >= pages.length;
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setArrangerOpen(false);
+      if (e.key !== 'Escape' || confirmDelete) return;
+      // Escape lets go of the picked pages first, and closes the arranger after.
+      if (picking) stopPicking();
+      else setArrangerOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, setArrangerOpen]);
+  }, [open, picking, confirmDelete, setArrangerOpen, stopPicking]);
 
   // `mounted` keeps the drawer in the DOM across the closing slide; `shown` is
   // the class the transition animates to. Splitting them is what makes the
@@ -163,9 +270,22 @@ export function PageArranger() {
           <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
             Pages <span className="ml-1 text-sm font-normal text-zinc-500 dark:text-zinc-400" data-arranger-count>{pages.length}</span>
           </h2>
-          <button type="button" className={opButton} onClick={() => setArrangerOpen(false)} aria-label="Close page arranger" data-arranger-close>
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className={opButton}
+              aria-pressed={picking}
+              disabled={readOnly}
+              title="Pick pages to delete, move, copy or restyle together (or Ctrl/Shift-click, or press and hold a page)"
+              onClick={() => (picking ? stopPicking() : setPicking(true))}
+              data-arranger-select
+            >
+              {picking ? 'Done' : 'Select'}
+            </button>
+            <button type="button" className={opButton} onClick={() => setArrangerOpen(false)} aria-label="Close page arranger" data-arranger-close>
+              Close
+            </button>
+          </div>
         </header>
 
         {/* One scroller for everything under the header. The settings used to
@@ -173,6 +293,90 @@ export function PageArranger() {
             short viewport squeezed the grid to nothing and clipped the rest
             with no way to reach it. */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
+          {picking && (
+            // Sticky, so it is at hand after scrolling down to page 73 of a hundred.
+            <div
+              className="sticky top-0 z-10 flex flex-col gap-2 border-b border-blue-200 bg-blue-50/95 px-4 py-3 text-sm backdrop-blur dark:border-blue-900 dark:bg-blue-950/95"
+              role="group"
+              aria-label="Selected pages"
+              data-arranger-picking
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="mr-auto font-medium text-blue-900 dark:text-blue-100" data-arranger-picked-count={pickedIndices.length}>
+                  {batch ? `${pickedIndices.length} of ${pages.length} selected` : 'Tap pages to select them'}
+                </span>
+                <button type="button" className={opButton} onClick={() => setPicked(new Set(pages.map((p) => p.id)))} data-arranger-pick-all>
+                  All
+                </button>
+                <button type="button" className={opButton} disabled={!batch} onClick={() => setPicked(new Set())} data-arranger-pick-none>
+                  None
+                </button>
+              </div>
+              <form
+                className="flex items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  pickList();
+                }}
+              >
+                <label htmlFor="arranger-pick-list" className="w-20 shrink-0 text-zinc-600 dark:text-zinc-300">
+                  Pages
+                </label>
+                <input
+                  id="arranger-pick-list"
+                  className="h-9 min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  placeholder="e.g. 2, 15, 20-25, 73"
+                  inputMode="numeric"
+                  value={listDraft}
+                  aria-invalid={listDraft.trim() !== '' && parsePageList(listDraft, pages.length) === null}
+                  onChange={(e) => setListDraft(e.target.value)}
+                  data-arranger-pick-list
+                />
+                <button type="submit" className={opButton} data-arranger-pick-list-apply>
+                  Select
+                </button>
+              </form>
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  moveToPage();
+                }}
+              >
+                <label htmlFor="arranger-move-to" className="w-20 shrink-0 text-zinc-600 dark:text-zinc-300">
+                  Move to
+                </label>
+                <input
+                  id="arranger-move-to"
+                  type="number"
+                  min={1}
+                  max={Math.max(1, pages.length - pickedIndices.length + 1)}
+                  className="h-9 w-20 rounded-lg border border-zinc-300 bg-white px-2 tabular-nums text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  value={moveTo}
+                  aria-label="Page the selected pages move to"
+                  onChange={(e) => setMoveTo(e.target.value)}
+                  data-arranger-move-to
+                />
+                <button type="submit" className={opButton} disabled={!batch || allPicked} data-arranger-move>
+                  Move
+                </button>
+                <span className="flex-1" />
+                <button type="button" className={opButton} disabled={!batch} onClick={duplicate} data-arranger-picked-duplicate>
+                  Duplicate
+                </button>
+                <button
+                  type="button"
+                  className={`${opButton} text-rose-700 dark:text-rose-300`}
+                  disabled={!batch || allPicked}
+                  title={allPicked ? 'A document needs at least one page' : 'Delete the selected pages'}
+                  onClick={remove}
+                  data-arranger-picked-delete
+                >
+                  Delete
+                </button>
+              </form>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800" role="group" aria-label="Page operations">
             <button type="button" className={opButton} onClick={() => addPage('before', activePageIndex)} disabled={readOnly}>
               Add before
@@ -180,23 +384,25 @@ export function PageArranger() {
             <button type="button" className={opButton} onClick={() => addPage('after', activePageIndex)} disabled={readOnly}>
               Add after
             </button>
-            <button type="button" className={opButton} onClick={() => duplicatePage(activePageIndex)} disabled={readOnly}>
-              Duplicate
+            <button type="button" className={opButton} onClick={duplicate} disabled={readOnly}>
+              {batch ? `Duplicate ${pickedIndices.length}` : 'Duplicate'}
             </button>
             <button
               type="button"
               className={`${opButton} text-rose-700 dark:text-rose-300`}
-              onClick={() => deletePage(activePageIndex)}
-              disabled={readOnly || pages.length <= 1}
+              onClick={remove}
+              disabled={readOnly || pages.length <= 1 || allPicked}
               title={
                 readOnly
                   ? 'The document is locked'
-                  : pages.length <= 1
+                  : pages.length <= 1 || allPicked
                     ? 'A document needs at least one page'
-                    : 'Delete page'
+                    : batch
+                      ? 'Delete the selected pages'
+                      : 'Delete page'
               }
             >
-              Delete
+              {batch ? `Delete ${pickedIndices.length}` : 'Delete'}
             </button>
             {readOnly && (
               <span className="inline-flex h-9 items-center text-sm text-zinc-500 dark:text-zinc-400" data-arranger-read-only>
@@ -206,6 +412,11 @@ export function PageArranger() {
           </div>
 
           <div className="flex flex-col gap-3 border-b border-zinc-200 px-4 py-3 text-sm dark:border-zinc-800" role="group" aria-label="Page appearance">
+            {batch && !applyToAll && (
+              <p className="text-xs font-medium text-blue-700 dark:text-blue-300" data-arranger-appearance-target>
+                Changes here go to the {pickedIndices.length === 1 ? 'selected page' : `${pickedIndices.length} selected pages`}.
+              </p>
+            )}
             <div className="flex items-center gap-2">
               <label htmlFor="arranger-template" className="w-20 text-zinc-600 dark:text-zinc-300">
                 Template
@@ -446,14 +657,30 @@ export function PageArranger() {
                 page={page}
                 index={index}
                 selected={index === activePageIndex}
-                dragging={drag?.from === index}
-                dropTarget={drag !== null && drag.over === index && drag.from !== index}
+                checked={picking ? picked.has(page.id) : undefined}
+                dragging={drag !== null && (groupDrag(drag.from) ? picked.has(page.id) : drag.from === index)}
+                dropTarget={drag !== null && drag.over === index && drag.from !== index && !(groupDrag(drag.from) && picked.has(page.id))}
                 itemProps={getItemProps(index)}
               />
             ))}
           </ol>
         </div>
       </aside>
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete ${pickedIndices.length} pages?`}
+          confirmLabel="Delete"
+          danger
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => {
+            setConfirmDelete(false);
+            deletePages(pickedIndices);
+            stopPicking();
+          }}
+        >
+          Pages {formatPageList(pickedIndices)}. Undo brings them back.
+        </ConfirmDialog>
+      )}
     </>
   );
 }

@@ -730,6 +730,25 @@ on the last page), template and background per page or for all pages, and
 single click to jump. The top bar shows `Page n / N`, a jump field, prev/next,
 continuous/single toggle, zoom and the arranger toggle.
 
+**Several pages at once.** For a long PDF, where the pages to change are 2, 15,
+20 and 73, the arranger picks pages: *Select* in its header, Ctrl-click (⌘ on a
+Mac) to pick a page without going to it, Shift-click for every page from the
+one picked last, or press and hold a page (pen, finger or mouse,
+`onLongPress` in `usePointerReorder`, which also keeps the click that ends the
+hold from un-picking it). A sticky bar stays at the top of the drawer while
+scrolling down a hundred pages. It shows how many are picked, *All* and *None*,
+and a *Pages* field that lists the picked pages ("2, 15, 20–25, 73";
+`formatPageList`) and picks whatever is typed into it (`parsePageList`). It also
+has *Move to* page n (the picked pages, in their order, start at page n:
+`movePagesTo`), *Duplicate* (each copy right after its page) and *Delete*,
+which asks first when more than one page goes and never deletes them all.
+Dragging a picked page takes the others along and lands them where that page
+would land alone (`groupDropStart`). While pages are picked, template,
+background and spacing go to them (`PageTarget` takes a list of indices), and
+the operation buttons say how many they act on. Each batch is one Undo step
+("deleting 4 pages"). Picks are kept by page id, so they stay right as pages
+move. Escape lets go of them before it closes the arranger.
+
 It starts *below* the top bar — `top: var(--topbar-h)`, the same token the bar
 sizes itself with — and the bar carries `relative z-40` so it always outranks
 the drawer (`z-30`) and its scrim (`z-20`). That is not cosmetic: on a phone

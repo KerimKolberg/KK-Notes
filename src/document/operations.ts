@@ -209,3 +209,82 @@ export function indexOfPage(pages: readonly Page[], pageId: string, fallback: nu
   const i = pages.findIndex((p) => p.id === pageId);
   return i === -1 ? clampIndex(fallback, pages.length) : i;
 }
+
+/** Indices as a sorted list without repeats or anything outside `0..length-1`. */
+export function normalizeIndices(indices: readonly number[], length: number): number[] {
+  return [...new Set(indices.map((i) => Math.trunc(i)))].filter((i) => i >= 0 && i < length).sort((a, b) => a - b);
+}
+
+/**
+ * Take the pages at `indices` out and put them back together, in their order, so the first of them ends up at
+ * `start` (counted in the result, so `0` is the front and `length - indices.length` the end). Pages 2, 15 and 20
+ * moved to 1 become pages 1, 2 and 3.
+ */
+export function movePagesTo(pages: readonly Page[], indices: readonly number[], start: number): Page[] {
+  const picked = normalizeIndices(indices, pages.length);
+  if (picked.length === 0) return renumber(pages);
+  const set = new Set(picked);
+  const moving = picked.map((i) => pages[i]!);
+  const rest = pages.filter((_, i) => !set.has(i));
+  const at = Math.min(Math.max(0, Math.trunc(start)), rest.length);
+  return renumber([...rest.slice(0, at), ...moving, ...rest.slice(at)]);
+}
+
+/**
+ * Where a group dragged by its page at `from` and dropped on the page at `over` starts (for `movePagesTo`): before
+ * that page when dragged up, after it when dragged down, as one page dragged alone lands. `null` when it was dropped
+ * on a page of its own.
+ */
+export function groupDropStart(indices: readonly number[], from: number, over: number): number | null {
+  const set = new Set(indices);
+  if (set.has(over)) return null;
+  const before = indices.filter((i) => i < over).length;
+  const rank = over - before;
+  return over > from ? rank + 1 : rank;
+}
+
+/** Take out the pages at `indices`; at least one page always stays (`null` when they are all of them). */
+export function removePages(pages: readonly Page[], indices: readonly number[]): Page[] | null {
+  const set = new Set(normalizeIndices(indices, pages.length));
+  if (set.size >= pages.length) return null;
+  return renumber(pages.filter((_, i) => !set.has(i)));
+}
+
+/** A copy of each page at `indices` right after it. */
+export function duplicatePagesAt(pages: readonly Page[], indices: readonly number[]): Page[] {
+  const set = new Set(normalizeIndices(indices, pages.length));
+  return renumber(pages.flatMap((page, i) => (set.has(i) ? [page, clonePage(page)] : [page])));
+}
+
+/**
+ * Page numbers as typed — "2, 15, 20-25, 73" — as indices, sorted. Ranges may run either way and use a dash or an
+ * en dash; numbers past the last page are left out. `null` when the text is not such a list.
+ */
+export function parsePageList(text: string, length: number): number[] | null {
+  const parts = text.split(/[,;\s]+/).filter(Boolean);
+  if (parts.length === 0) return null;
+  const out: number[] = [];
+  for (const part of parts) {
+    const m = /^(\d+)(?:[-–](\d+))?$/.exec(part);
+    if (!m) return null;
+    const a = Number(m[1]);
+    const b = m[2] === undefined ? a : Number(m[2]);
+    for (let n = Math.min(a, b); n <= Math.max(a, b) && n <= length; n++) if (n >= 1) out.push(n - 1);
+  }
+  return normalizeIndices(out, length);
+}
+
+/** Indices as page numbers the way `parsePageList` reads them, runs shortened: "2, 15, 20–25, 73". */
+export function formatPageList(indices: readonly number[]): string {
+  const sorted = [...new Set(indices)].sort((a, b) => a - b);
+  const parts: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j]! + 1) j++;
+    const a = sorted[i]! + 1;
+    const b = sorted[j]! + 1;
+    parts.push(j - i >= 2 ? `${a}–${b}` : j > i ? `${a}, ${b}` : `${a}`);
+    i = j + 1;
+  }
+  return parts.join(', ');
+}

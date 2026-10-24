@@ -55,10 +55,14 @@ import {
   clonePage,
   createDocument,
   createPage,
+  duplicatePagesAt,
   indexOfPage,
   insertPage,
   redoPage,
+  movePagesTo,
+  normalizeIndices,
   removePage,
+  removePages,
   removeStrokes,
   reorderPages,
   undoPage,
@@ -142,6 +146,12 @@ export interface DocumentStore {
   duplicatePage: (index: number) => void;
   deletePage: (index: number) => void;
   movePage: (from: number, to: number) => void;
+  /** Copy each of these pages, every copy right after its page; one step for Undo. */
+  duplicatePages: (indices: readonly number[]) => void;
+  /** Delete these pages (never all of them); one step for Undo. */
+  deletePages: (indices: readonly number[]) => void;
+  /** Gather these pages, in their order, so the first lands at `start` (see `movePagesTo`); one step for Undo. */
+  movePages: (indices: readonly number[], start: number) => void;
   setPageTemplate: (target: PageTarget, template: PageTemplate, config?: Partial<TemplateConfig>) => void;
   setPageBackground: (target: PageTarget, color: string) => void;
   /** Bookmark a page with a name ('' for none), or take its bookmark away (`null`). */
@@ -282,6 +292,11 @@ function updatePageById(doc: Document, pageId: string, fn: (page: Page) => Page)
 
 function updateTargets(doc: Document, target: PageTarget, fn: (page: Page) => Page): Document {
   if (target === 'all') return { ...doc, pages: doc.pages.map(fn) };
+  if (typeof target !== 'number') {
+    const set = new Set(normalizeIndices(target, doc.pages.length));
+    if (set.size === 0) return doc;
+    return { ...doc, pages: doc.pages.map((page, i) => (set.has(i) ? fn(page) : page)) };
+  }
   const index = clampIndex(target, doc.pages.length);
   const page = doc.pages[index];
   if (!page) return doc;
@@ -454,6 +469,51 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       // The viewer keeps following the page the reader was on.
       return {
         ...structured(s, 'moving a page', { ...doc, pages, activePageIndex: indexOfPage(pages, activeId, doc.activePageIndex) }),
+        scrollRequest: s.scrollRequest + 1,
+      };
+    })),
+
+  duplicatePages: (indices) =>
+    set(edit((s) => {
+      const doc = s.document;
+      const picked = normalizeIndices(indices, doc.pages.length);
+      if (picked.length === 0) return s;
+      const pages = duplicatePagesAt(doc.pages, picked);
+      // The reader goes to the first copy, as with one page.
+      const activePageIndex = picked[0]! + 1;
+      const label = picked.length === 1 ? 'duplicating a page' : `duplicating ${picked.length} pages`;
+      return { ...structured(s, label, { ...doc, pages, activePageIndex }), scrollRequest: s.scrollRequest + 1 };
+    })),
+
+  deletePages: (indices) =>
+    set(edit((s) => {
+      const doc = s.document;
+      const picked = normalizeIndices(indices, doc.pages.length);
+      const pages = picked.length === 0 ? null : removePages(doc.pages, picked);
+      if (!pages) return s;
+      const gone = new Set(picked.map((i) => doc.pages[i]!.id));
+      const activeId = doc.pages[doc.activePageIndex]?.id ?? '';
+      // Keep following the same page; if it went, stay where it was among those left.
+      const kept = doc.pages.slice(0, doc.activePageIndex).filter((p) => !gone.has(p.id)).length;
+      const activePageIndex = gone.has(activeId) ? clampIndex(kept, pages.length) : indexOfPage(pages, activeId, kept);
+      const label = picked.length === 1 ? 'deleting a page' : `deleting ${picked.length} pages`;
+      return {
+        ...structured(s, label, { ...doc, pages, activePageIndex }),
+        lassoSelection: s.lassoSelection && gone.has(s.lassoSelection.pageId) ? null : s.lassoSelection,
+        selectedMedia: s.selectedMedia && gone.has(s.selectedMedia.pageId) ? null : s.selectedMedia,
+      };
+    })),
+
+  movePages: (indices, start) =>
+    set(edit((s) => {
+      const doc = s.document;
+      const picked = normalizeIndices(indices, doc.pages.length);
+      const activeId = doc.pages[doc.activePageIndex]?.id ?? '';
+      const pages = movePagesTo(doc.pages, picked, start);
+      if (pages.every((p, i) => p.id === doc.pages[i]?.id)) return s;
+      const label = picked.length === 1 ? 'moving a page' : `moving ${picked.length} pages`;
+      return {
+        ...structured(s, label, { ...doc, pages, activePageIndex: indexOfPage(pages, activeId, doc.activePageIndex) }),
         scrollRequest: s.scrollRequest + 1,
       };
     })),

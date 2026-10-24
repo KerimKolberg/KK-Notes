@@ -440,5 +440,5 @@ export interface SerializedRecording {
 /** Where to insert relative to a reference page. */
 export type InsertPosition = 'before' | 'after';
 
-/** Target of a per-page setting change. */
-export type PageTarget = number | 'all';
+/** Target of a per-page setting change: one page, all of them, or the pages at these indices. */
+export type PageTarget = number | 'all' | readonly number[];

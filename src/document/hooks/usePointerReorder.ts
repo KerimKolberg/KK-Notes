@@ -8,7 +8,11 @@ export interface ReorderDragState {
 export interface UsePointerReorderOptions {
   readonly count: number;
   readonly onMove: (from: number, to: number) => void;
-  readonly onSelect: (index: number) => void;
+  /** A click: `toggle` with Ctrl (or ⌘) held, `range` with Shift. */
+  readonly onSelect: (index: number, modifiers: SelectModifiers) => void;
+  /** A press held still this long (any pointer); the click that ends it is not a selection. */
+  readonly onLongPress?: (index: number) => void;
+  readonly longPressMs?: number;
   /** Movement needed before a press becomes a drag (CSS px). */
   readonly threshold?: number;
   /** Touch must be held this long before it can drag (so short swipes still scroll). */
@@ -17,13 +21,18 @@ export interface UsePointerReorderOptions {
   readonly disabled?: boolean;
 }
 
+export interface SelectModifiers {
+  readonly toggle: boolean;
+  readonly range: boolean;
+}
+
 export interface ReorderItemProps {
   ref: (el: HTMLElement | null) => void;
   onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void;
   onPointerMove: (e: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: (e: ReactPointerEvent<HTMLElement>) => void;
   onPointerCancel: (e: ReactPointerEvent<HTMLElement>) => void;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent<HTMLElement>) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => void;
 }
 
@@ -35,6 +44,7 @@ interface Press {
   armed: boolean;
   dragging: boolean;
   holdTimer: ReturnType<typeof setTimeout> | null;
+  longTimer: ReturnType<typeof setTimeout> | null;
   rects: DOMRect[];
 }
 
@@ -47,6 +57,8 @@ export function usePointerReorder({
   count,
   onMove,
   onSelect,
+  onLongPress,
+  longPressMs = 500,
   threshold = 6,
   touchHoldMs = 250,
   disabled = false,
@@ -55,6 +67,8 @@ export function usePointerReorder({
   const pressRef = useRef<Press | null>(null);
   /** Clicks before this timestamp are the tail of a drag, not a selection. */
   const suppressClickUntilRef = useRef(0);
+  /** The press now ending was a long press, so the click it ends in is not a selection. */
+  const longPressedRef = useRef(false);
   const elements = useRef<Array<HTMLElement | null>>([]);
 
   const indexAt = useCallback((rects: DOMRect[], x: number, y: number, fallback: number): number => {
@@ -81,6 +95,7 @@ export function usePointerReorder({
   const endPress = useCallback(() => {
     const press = pressRef.current;
     if (press?.holdTimer) clearTimeout(press.holdTimer);
+    if (press?.longTimer) clearTimeout(press.longTimer);
     pressRef.current = null;
     setDrag(null);
   }, []);
@@ -101,8 +116,17 @@ export function usePointerReorder({
           armed: !isTouch,
           dragging: false,
           holdTimer: null,
+          longTimer: null,
           rects: [],
         };
+        if (onLongPress) {
+          press.longTimer = setTimeout(() => {
+            press.longTimer = null;
+            if (press.dragging || pressRef.current !== press) return;
+            longPressedRef.current = true;
+            onLongPress(index);
+          }, longPressMs);
+        }
         if (isTouch) {
           press.holdTimer = setTimeout(() => {
             press.armed = true;
@@ -110,6 +134,7 @@ export function usePointerReorder({
           }, touchHoldMs);
         }
         pressRef.current = press;
+        longPressedRef.current = false;
         try {
           e.currentTarget.setPointerCapture(e.pointerId);
         } catch {
@@ -123,6 +148,10 @@ export function usePointerReorder({
         const dy = e.clientY - press.startY;
         if (!press.dragging) {
           if (Math.hypot(dx, dy) < threshold) return;
+          if (press.longTimer) {
+            clearTimeout(press.longTimer);
+            press.longTimer = null;
+          }
           if (!press.armed) {
             // Touch moved before the hold elapsed: let the browser scroll instead.
             endPress();
@@ -150,9 +179,13 @@ export function usePointerReorder({
         const press = pressRef.current;
         if (press && press.pointerId === e.pointerId) endPress();
       },
-      onClick: () => {
+      onClick: (e) => {
+        if (longPressedRef.current) {
+          longPressedRef.current = false;
+          return;
+        }
         if (performance.now() < suppressClickUntilRef.current) return;
-        onSelect(index);
+        onSelect(index, { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey });
       },
       onKeyDown: (e) => {
         if (disabled || !e.altKey) return;
@@ -165,7 +198,7 @@ export function usePointerReorder({
         }
       },
     }),
-    [count, disabled, endPress, indexAt, onMove, onSelect, threshold, touchHoldMs],
+    [count, disabled, endPress, indexAt, longPressMs, onLongPress, onMove, onSelect, threshold, touchHoldMs],
   );
 
   return useMemo(() => ({ drag, getItemProps }), [drag, getItemProps]);

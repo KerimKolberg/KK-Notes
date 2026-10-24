@@ -2313,6 +2313,94 @@ async function checkAppLock(browser) {
 }
 
 /**
+ * Picking several pages in the arranger (Ctrl/Shift-click, a typed list, press and hold) and changing them at once:
+ * move, restyle, drag as a group, delete with a question, and Undo.
+ */
+async function checkPagePicking(browser) {
+  console.log('picking several pages in the arranger, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  await page.click('[data-arranger-toggle]');
+  await page.waitForSelector('[role="group"][aria-label="Page operations"] button');
+  const addAfter = page.locator('[role="group"][aria-label="Page operations"] button', { hasText: /after/i }).first();
+  for (let i = 0; i < 7; i++) await addAfter.click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-thumbnail]').length === 8);
+  await page.click('[data-thumbnail-index="0"] button');
+  const order = () => page.$$eval('[data-thumbnail]', (els) => els.map((el) => el.getAttribute('data-thumbnail')));
+  const count = () => page.$eval('[data-arranger-picked-count]', (el) => Number(el.getAttribute('data-arranger-picked-count'))).catch(() => -1);
+  const thumb = (i) => `[data-thumbnail-index="${i}"] button`;
+  const original = await order();
+
+  await page.click(thumb(1), { modifiers: ['Control'] });
+  await page.click(thumb(4), { modifiers: ['Control'] });
+  check('Ctrl-click picks pages without going to them', (await count()) === 2 && (await page.$$('[data-thumbnail-checked="true"]')).length === 2, `${await count()}`);
+  await page.click(thumb(6), { modifiers: ['Shift'] });
+  check('Shift-click picks the pages from the last one picked', (await count()) === 4, `${await count()}`);
+  check('the picked pages are listed by number', (await page.inputValue('[data-arranger-pick-list]')) === '2, 5–7', await page.inputValue('[data-arranger-pick-list]'));
+  await page.fill('[data-arranger-pick-list]', '2, 5');
+  await page.press('[data-arranger-pick-list]', 'Enter');
+  check('typing page numbers picks those pages', (await count()) === 2, `${await count()}`);
+
+  await page.fill('[data-arranger-move-to]', '1');
+  await page.click('[data-arranger-move]');
+  await page.waitForTimeout(150);
+  const moved = await order();
+  check('Move puts the picked pages together at the page asked for', moved[0] === original[1] && moved[1] === original[4] && moved.length === 8, JSON.stringify(moved.map((id) => original.indexOf(id) + 1)));
+  check('and they stay picked', (await count()) === 2 && (await page.inputValue('[data-arranger-pick-list]')) === '1, 2');
+
+  await page.selectOption('#arranger-template', 'grid');
+  await page.waitForTimeout(100);
+  check('a template chosen goes to the picked pages', (await page.inputValue('#arranger-template')) === 'grid' && (await page.$('[data-arranger-appearance-target]')) !== null);
+  await page.click('[data-arranger-pick-none]');
+  check('and not to the page being read', (await page.inputValue('#arranger-template')) === 'blank', await page.inputValue('#arranger-template'));
+
+  // Press and hold picks a page; dragging a picked page takes the others along.
+  await page.click('[data-arranger-select]');
+  check('Done stops picking', (await page.$('[data-arranger-picking]')) === null);
+  const held = await (await page.$(thumb(3))).boundingBox();
+  await page.mouse.move(held.x + held.width / 2, held.y + held.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(700);
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+  check('pressing and holding a page picks it', (await count()) === 1 && (await page.getAttribute(thumb(3), 'data-thumbnail-checked')) === 'true', `${await count()}`);
+  await page.click(thumb(5));
+  check('while picking, a tap picks too', (await count()) === 2);
+  const before = await order();
+  await page.$eval(thumb(7), (el) => el.scrollIntoView({ block: 'end' }));
+  const from = await (await page.$(thumb(5))).boundingBox();
+  const to = await (await page.$(thumb(7))).boundingBox();
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(from.x + from.width / 2 + 10, from.y + from.height / 2 + 10, { steps: 3 });
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  const dragged = await order();
+  check('dragging a picked page moves the picked pages together', dragged[6] === before[3] && dragged[7] === before[5], JSON.stringify(dragged.map((id) => before.indexOf(id) + 1)));
+
+  await page.click('[data-arranger-picked-delete]');
+  const asked = await page.waitForSelector('[data-confirm-dialog]', { timeout: 3_000 }).then(() => true, () => false);
+  check('deleting several pages asks first', asked);
+  await page.locator('[data-confirm-dialog] button', { hasText: /^Delete$/ }).click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-thumbnail]').length === 6, null, { timeout: 3_000 }).catch(() => {});
+  check('and deletes them', (await order()).length === 6 && (await page.$('[data-arranger-picking]')) === null, `${(await order()).length}`);
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Control+z');
+  await page.waitForFunction(() => document.querySelectorAll('[data-thumbnail]').length === 8, null, { timeout: 3_000 }).catch(() => {});
+  check('one Undo brings them all back', JSON.stringify(await order()) === JSON.stringify(dragged), `${(await order()).length}`);
+
+  await page.click(thumb(2), { modifiers: ['Control'] });
+  await page.keyboard.press('Escape');
+  check('Escape lets go of the picked pages and leaves the arranger open', (await page.$('[data-arranger-picking]')) === null && (await page.$(OPEN)) !== null);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Bookmarks: marking the page in view, the list, naming, jumping, the ribbon on the page and on its
  * thumbnail, Ctrl+D, and what happens to them when a note is saved and opened.
  */
@@ -4882,6 +4970,7 @@ try {
     checkVersionHistory,
     checkAppLock,
     checkBookmarks,
+    checkPagePicking,
     checkLibraryOrganising,
     checkLibrarySelection,
     checkLeavingNotes,
