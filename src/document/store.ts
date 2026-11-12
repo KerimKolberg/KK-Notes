@@ -30,6 +30,7 @@ import { keepStrokes, type EraseFilter } from '../inking/engine/eraseFilter';
 import type { Stroke } from '../inking/types';
 import { TEMPLATE_DEFAULT_SPACING, ZOOM_STEP } from './constants';
 import { withBookmark } from './bookmarks';
+import { rotatePage } from './rotatePage';
 import {
   canRedoStructure,
   depthsOf,
@@ -150,6 +151,8 @@ export interface DocumentStore {
   duplicatePages: (indices: readonly number[]) => void;
   /** Delete these pages (never all of them); one step for Undo. */
   deletePages: (indices: readonly number[]) => void;
+  /** Turn these pages a quarter turn per step (positive clockwise), what is on them with them; one step for Undo. */
+  rotatePages: (indices: readonly number[], quarterTurns: number) => void;
   /** Gather these pages, in their order, so the first lands at `start` (see `movePagesTo`); one step for Undo. */
   movePages: (indices: readonly number[], start: number) => void;
   setPageTemplate: (target: PageTarget, template: PageTemplate, config?: Partial<TemplateConfig>) => void;
@@ -253,7 +256,8 @@ export interface DocumentStore {
   newDocument: () => void;
   setFilePath: (path: string | null) => void;
   /** Record the current content as saved. */
-  markSaved: (path?: string | null) => void;
+  /** What is saved is now on disk: the note as it is, or as `written` (a save that took a while may have been overtaken). */
+  markSaved: (path?: string | null, written?: Document) => void;
 }
 
 /**
@@ -501,6 +505,23 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
         ...structured(s, label, { ...doc, pages, activePageIndex }),
         lassoSelection: s.lassoSelection && gone.has(s.lassoSelection.pageId) ? null : s.lassoSelection,
         selectedMedia: s.selectedMedia && gone.has(s.selectedMedia.pageId) ? null : s.selectedMedia,
+      };
+    })),
+
+  rotatePages: (indices, quarterTurns) =>
+    set(edit((s) => {
+      const doc = s.document;
+      const picked = normalizeIndices(indices, doc.pages.length);
+      if (picked.length === 0 || ((Math.round(quarterTurns) % 4) + 4) % 4 === 0) return s;
+      const chosen = new Set(picked);
+      const pages = doc.pages.map((page, i) => (chosen.has(i) ? rotatePage(page, quarterTurns) : page));
+      const label = picked.length === 1 ? 'turning a page' : `turning ${picked.length} pages`;
+      const turned = new Set(picked.map((i) => doc.pages[i]!.id));
+      return {
+        ...structured(s, label, { ...doc, pages }),
+        // A selection on a turned page would be somewhere its ink no longer is.
+        lassoSelection: s.lassoSelection && turned.has(s.lassoSelection.pageId) ? null : s.lassoSelection,
+        selectedMedia: s.selectedMedia && turned.has(s.selectedMedia.pageId) ? null : s.selectedMedia,
       };
     })),
 
@@ -959,12 +980,12 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
 
   setFilePath: (path) => set({ filePath: path }),
 
-  markSaved: (path) =>
+  markSaved: (path, written) =>
     set((s) => ({
-      savedPages: s.document.pages,
-      savedTitle: s.document.title,
-      savedCover: s.document.cover,
-      savedRecordings: s.document.recordings,
+      savedPages: (written ?? s.document).pages,
+      savedTitle: (written ?? s.document).title,
+      savedCover: (written ?? s.document).cover,
+      savedRecordings: (written ?? s.document).recordings,
       ...(path !== undefined ? { filePath: path } : {}),
     })),
 }));

@@ -68,12 +68,18 @@ function downloadText(text: string, filename: string, mime: string): void {
 // Documents
 // ---------------------------------------------------------------------------
 
-/** Native "Save As" picker; `null` when cancelled or in a browser. */
-export async function pickDocumentSavePath(title: string): Promise<string | null> {
+/**
+ * Native "Save As" picker; `null` when cancelled or in a browser. A note or a PDF, from the type list; a note whose file
+ * is a PDF is offered as a PDF first.
+ */
+export async function pickDocumentSavePath(title: string, currentPath: string | null = null): Promise<string | null> {
   if (!isTauri()) return null;
   const { save } = await tauriDialog();
-  // A PDF too, from the type list: what Save As is asked for when the note is to go to someone.
-  return save({ defaultPath: safeFilename(title, NOTEX_EXTENSION), filters: [...NOTEX_FILTERS, ...PDF_FILTERS] });
+  const pdf = currentPath !== null && isPdfPath(currentPath);
+  return save({
+    defaultPath: safeFilename(title, pdf ? 'pdf' : NOTEX_EXTENSION),
+    filters: pdf ? [...PDF_FILTERS, ...NOTEX_FILTERS] : [...NOTEX_FILTERS, ...PDF_FILTERS],
+  });
 }
 
 /** Whether a path chosen in Save As is a PDF rather than a note. */
@@ -81,10 +87,20 @@ export function isPdfPath(path: string): boolean {
   return /\.pdf$/i.test(path.split(/[?#]/)[0] ?? path);
 }
 
-/** Write the document as a PDF to a chosen path. */
-export async function exportPdfToPath(doc: Document, path: string): Promise<void> {
+/**
+ * Save the note as the PDF at `path`: its pages as any reader shows them, and the note inside, so it opens here again
+ * with its ink editable (`pdf/embeddedNote.ts`). What was at `path` is kept in the version history first, as a note's
+ * file is.
+ */
+export async function savePdfToPath(doc: Document, path: string): Promise<FileInfo> {
   const { exportDocumentToPdf } = await import('../pdf/export');
-  await writeBinary(path, await exportDocumentToPdf(doc));
+  const bytes = await exportDocumentToPdf(doc, { note: encodeNotexBytes(doc) });
+  if (isContentUri(path)) {
+    const { writeFile } = await import('@tauri-apps/plugin-fs');
+    await writeFile(path, bytes);
+    return { path, bytes: bytes.byteLength, modifiedMs: Date.now() };
+  }
+  return tauriInvoke<FileInfo>('save_document', bytes, { headers: { 'x-path': encodeURIComponent(path) } });
 }
 
 /**

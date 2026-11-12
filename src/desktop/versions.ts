@@ -25,10 +25,13 @@ export async function listVersions(path: string): Promise<NoteVersion[]> {
   return tauriInvoke<NoteVersion[]>('list_versions', { path });
 }
 
-/** Put a version back as the file at `path`; the shell keeps what was there first. */
-export async function restoreVersion(path: string, id: number): Promise<Document> {
+/**
+ * Put a version back as the file at `path`; the shell keeps what was there first. The note it holds, or `null` for a
+ * note saved as a PDF, which is then opened from `path` as any PDF is.
+ */
+export async function restoreVersion(path: string, id: number): Promise<Document | null> {
   const opened = await tauriInvoke<OpenedPayload>('restore_version', { path, id });
-  return parseNotex(opened.contents).document;
+  return opened.contents === '' ? null : parseNotex(opened.contents).document;
 }
 
 const MINUTE = 60_000;

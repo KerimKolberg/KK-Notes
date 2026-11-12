@@ -12,7 +12,6 @@ import {
   confirmDiscard,
   downloadDocument,
   exportPdf,
-  exportPdfToPath,
   isPdfPath,
   listRecent,
   openDocumentFromPath,
@@ -20,6 +19,7 @@ import {
   pickDocumentSavePath,
   removeRecent,
   saveDocumentToPath,
+  savePdfToPath,
   toggleFullscreen,
 } from './fileService';
 import { titleFromFileName } from './notex';
@@ -64,9 +64,16 @@ export async function actionOpenPath(path: string): Promise<void> {
   const desktop = useDesktopStore.getState();
   desktop.setBusy('open');
   try {
-    const opened = await openDocumentFromPath(path);
-    const doc = opened.document.title ? opened.document : { ...opened.document, title: titleFromFileName(path) };
-    useDocumentStore.getState().loadDocument(doc, path);
+    if (isPdfPath(path)) {
+      // A PDF from the recent list, or saved as one: opened as a PDF is anywhere else (`boot.ts`).
+      const { importPdfAsDocument } = await import('./boot');
+      await importPdfAsDocument(path);
+    } else {
+      const opened = await openDocumentFromPath(path);
+      const doc = opened.document.title ? opened.document : { ...opened.document, title: titleFromFileName(path) };
+      useDocumentStore.getState().loadDocument(doc, path);
+    }
+    const doc = useDocumentStore.getState().document;
     await clearDraft();
     useDesktopStore.getState().setRecent(await addRecent(path, doc.title));
     desktop.setNotice(null);
@@ -100,22 +107,46 @@ export async function actionOpen(): Promise<void> {
   }
 }
 
-/** Save to the current path, or fall through to Save As. Resolves true when saved. */
+/**
+ * Write the note to `path` in the file's own format: a `.notex`, or a PDF with what was written on it (and the note
+ * inside it, so it opens here again editable). The note is then that file's.
+ */
+async function writeTo(path: string): Promise<void> {
+  const doc = useDocumentStore.getState().document;
+  if (isPdfPath(path)) {
+    useDesktopStore.getState().setBusy('export');
+    useDocumentStore.getState().setExporting(true);
+    try {
+      await savePdfToPath(doc, path);
+    } finally {
+      useDocumentStore.getState().setExporting(false);
+    }
+  } else {
+    await saveDocumentToPath(doc, path);
+  }
+  // What was written, not what is on screen now: a stroke drawn while a PDF was being made is not in it.
+  useDocumentStore.getState().markSaved(path, doc);
+  await clearDraft();
+  useDesktopStore.getState().setRecent(await addRecent(path, doc.title));
+}
+
+/**
+ * Save to the note's file, as it is and where it is — a PDF opened here is written back as that PDF — or, for a note
+ * with no file yet, Save As, which asks where, what name and which format. Resolves true when saved.
+ */
 export async function actionSave(): Promise<boolean> {
   const { filePath } = useDocumentStore.getState();
   if (!filePath || !isTauri()) return actionSaveAs();
   const desktop = useDesktopStore.getState();
   desktop.setBusy('save');
   try {
-    const doc = useDocumentStore.getState().document;
-    await saveDocumentToPath(doc, filePath);
-    useDocumentStore.getState().markSaved(filePath);
-    await clearDraft();
-    useDesktopStore.getState().setRecent(await addRecent(filePath, doc.title));
+    await writeTo(filePath);
     return true;
   } catch (err) {
-    notify(`Save failed: ${errorMessage(err)}`);
-    return false;
+    // A file that cannot be written back (on Android, one another app only lent to read) is saved somewhere else.
+    notify(`Could not save to ${filePath}: ${errorMessage(err)}. Choose where to save it.`);
+    useDesktopStore.getState().setBusy(null);
+    return actionSaveAs();
   } finally {
     useDesktopStore.getState().setBusy(null);
   }
@@ -132,24 +163,10 @@ export async function actionSaveAs(): Promise<boolean> {
       useDocumentStore.getState().markSaved();
       return true;
     }
-    const path = await pickDocumentSavePath(doc.title);
+    const path = await pickDocumentSavePath(doc.title, useDocumentStore.getState().filePath);
     if (!path) return false;
-    if (isPdfPath(path)) {
-      // A PDF of the note, not the note: it stays as it was (and unsaved, if it was).
-      desktop.setBusy('export');
-      useDocumentStore.getState().setExporting(true);
-      try {
-        await exportPdfToPath(doc, path);
-      } finally {
-        useDocumentStore.getState().setExporting(false);
-      }
-      notify(`Saved a PDF of the note to ${path}`);
-      return false;
-    }
-    await saveDocumentToPath(doc, path);
-    useDocumentStore.getState().markSaved(path);
-    await clearDraft();
-    useDesktopStore.getState().setRecent(await addRecent(path, doc.title));
+    // Either format becomes the note's file: a note saved as a PDF is saved there again by Save.
+    await writeTo(path);
     return true;
   } catch (err) {
     notify(`Save failed: ${errorMessage(err)}`);

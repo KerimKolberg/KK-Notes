@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { History, X } from 'lucide-react';
 import { actionSave } from '../../desktop/fileActions';
 import { useDesktopStore } from '../../desktop/desktopStore';
-import { clearDraft } from '../../desktop/fileService';
+import { clearDraft, isPdfPath } from '../../desktop/fileService';
 import { useVersionsStore } from '../../desktop/versionsStore';
 import {
   describeAge,
@@ -66,7 +66,8 @@ export const VersionHistory = memo(function VersionHistory() {
           return;
         }
         const doc = await restoreVersion(filePath, version.id);
-        useDocumentStore.getState().loadDocument(doc, filePath);
+        if (doc) useDocumentStore.getState().loadDocument(doc, filePath);
+        else await (await import('../../desktop/boot')).importPdfAsDocument(filePath);
         await clearDraft();
         setNotice({ text: `Restored the version from ${describeTime(version.id)}. The note as it was is in the history too.` });
         close();
@@ -129,7 +130,7 @@ export const VersionHistory = memo(function VersionHistory() {
                       {describeTime(version.id)} <span className="font-normal text-zinc-400">· {describeAge(version.id, now)}</span>
                     </div>
                     <div className="truncate text-xs text-zinc-500 dark:text-zinc-400">
-                      {version.title || 'Untitled note'} · {describePages(version.pageCount)} · {describeSize(version.bytes)}
+                      {filePath && isPdfPath(filePath) ? 'PDF' : `${version.title || 'Untitled note'} · ${describePages(version.pageCount)}`} · {describeSize(version.bytes)}
                     </div>
                   </div>
                   {confirming === version.id ? (

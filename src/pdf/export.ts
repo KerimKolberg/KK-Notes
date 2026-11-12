@@ -63,7 +63,8 @@ import {
 } from '../document/constants';
 import { templateLines } from '../document/templates';
 import type { Document, FormField, FormValues, ImageLayer, MediaBox, MediaObject, Page, StickyNote, TableLayer, TextBox } from '../document/types';
-import { pagePointToPdf, PX_PER_POINT } from './pdfCoords';
+import { attachNote } from './embeddedNote';
+import { normalizeRotation, pagePointToPdf, PX_PER_POINT } from './pdfCoords';
 import { cssColorToPdf, fmt, strokeToPdfOps, type PdfOp, type PdfProjection, type RgbColor } from './pdfOps';
 
 export interface ExportOptions {
@@ -71,6 +72,8 @@ export interface ExportOptions {
   readonly includeTemplates?: boolean;
   /** pdf-lib object streams make files smaller but harder to inspect. Default false. */
   readonly useObjectStreams?: boolean;
+  /** The note as `.notex`, to put into the PDF so it opens again editable (`embeddedNote.ts`). */
+  readonly note?: Uint8Array;
 }
 
 const toColor = (c: RgbColor) => rgb(c.r, c.g, c.b);
@@ -694,6 +697,8 @@ export async function exportDocumentToPdf(document: Document, options: ExportOpt
       const [copied] = await out.copyPages(doc, [page.pdf.pageIndex]);
       if (!copied) continue;
       target = out.addPage(copied);
+      // A page turned in the arranger shows the source page turned: the copy carries the turn, as the projection does.
+      target.setRotation(degrees(normalizeRotation(page.pdf.rotation)));
       fieldRefs.push(...collectFieldRefs(out, target));
     } else {
       target = out.addPage([size.width, size.height]);
@@ -709,5 +714,6 @@ export async function exportDocumentToPdf(document: Document, options: ExportOpt
   }
 
   rebuildAcroForm(out, fieldRefs);
+  if (options.note) await attachNote(out, options.note, new Date());
   return out.save({ useObjectStreams: options.useObjectStreams ?? false });
 }

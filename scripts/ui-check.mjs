@@ -2414,6 +2414,22 @@ async function checkPagePicking(browser) {
   await page.waitForFunction(() => document.querySelectorAll('[data-thumbnail]').length === 2, null, { timeout: 3_000 }).catch(() => {});
   check('and deleting them keeps just the two', JSON.stringify(await order()) === JSON.stringify(kept), JSON.stringify(await order()));
 
+  // Turning picked pages: the thumbnail turns landscape, and one Undo turns it back.
+  const shape = (i) => page.$eval(`${thumb(i)} [style*="aspect-ratio"]`, (el) => { const r = el.getBoundingClientRect(); return r.width > r.height ? 'landscape' : 'portrait'; });
+  await page.click(thumb(0), { modifiers: ['Control'] });
+  await page.click('[data-arranger-picked-rotate-right]');
+  await page.waitForTimeout(150);
+  check('rotating turns the picked page landscape, and leaves the other alone', (await shape(0)) === 'landscape' && (await shape(1)) === 'portrait', `${await shape(0)}, ${await shape(1)}`);
+  await page.click('[data-arranger-picked-rotate-left]');
+  await page.waitForTimeout(150);
+  check('and turning it back makes it portrait again', (await shape(0)) === 'portrait');
+  await page.click('[data-arranger-picked-rotate-right]');
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(150);
+  check('one Undo takes a turn back', (await shape(0)) === 'portrait');
+  await page.click('[data-arranger-pick-none]');
+
   await page.click(thumb(1), { modifiers: ['Control'] });
   await page.keyboard.press('Escape');
   check('Escape lets go of the picked pages and leaves the arranger open', (await page.$('[data-arranger-picking]')) === null && (await page.$(OPEN)) !== null);

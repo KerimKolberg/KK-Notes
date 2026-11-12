@@ -226,6 +226,11 @@ pub fn restore_version(app: AppHandle, path: String, id: u64) -> Result<OpenedDo
     let bytes = fs::read(&version).map_err(|e| format!("Cannot read that version: {e}"))?;
     history::snapshot_always(&folder, target, now_ms())?;
     atomic_write(target, &bytes)?;
+    // A note saved as a PDF is not text: the app opens it again as the PDF it is, from the path.
+    let is_pdf = target.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+    if is_pdf {
+        return Ok(OpenedDocument { path: path.clone(), contents: String::new(), info: describe(target)? });
+    }
     read_document_file(target)
 }
 

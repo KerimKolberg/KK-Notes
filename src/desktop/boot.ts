@@ -9,7 +9,7 @@
  */
 import { createDocument, renumber as renumberPages } from '../document/operations';
 import { selectIsDirty, useDocumentStore } from '../document/store';
-import { fileBaseName, titleFromFileName } from './notex';
+import { fileBaseName, parseNotex, titleFromFileName } from './notex';
 import { classifyOpenWith, takeAndroidOpenWith, type OpenWithRequest } from './openWith';
 import { useDesktopStore } from './desktopStore';
 import { actionOpenPath } from './fileActions';
@@ -28,10 +28,10 @@ export const START_AT_LIBRARY: BootTarget = { view: 'library', path: null };
 /**
  * Open whatever a launch pointed at, whichever kind of document it is.
  *
- * A `.notex` opens as itself. A PDF becomes a *new* document with the PDF's
- * pages imported into it — the app does not edit PDFs in place, and someone
- * who tapped "open with" on a PDF wants to write on it, not to be shown a
- * file list. Returns `null` when the file is neither, or could not be read,
+ * A `.notex` opens as itself. A PDF becomes a document with the PDF's pages
+ * imported into it, whose file is that PDF: Save writes it back there, with
+ * what was written on it (`savePdfToPath`). Someone who tapped "open with" on
+ * a PDF wants to write on it, not to be shown a file list. Returns `null` when the file is neither, or could not be read,
  * so the caller falls through to the library rather than showing nothing.
  */
 export async function openRequested(request: OpenWithRequest): Promise<BootTarget | null> {
@@ -43,8 +43,7 @@ export async function openRequested(request: OpenWithRequest): Promise<BootTarge
     }
     if (kind === 'pdf') {
       await importPdfAsDocument(request.uri);
-      // A new, unsaved document: it has no path of its own yet.
-      return { view: 'document', path: null };
+      return { view: 'document', path: request.uri };
     }
     if (kind === 'goodnotes') {
       await importGoodNotesAsDocument(request.uri);
@@ -65,13 +64,11 @@ export async function openRequested(request: OpenWithRequest): Promise<BootTarge
  * because on Android the launch hands over a `content://` URI and only the
  * platform's content resolver can open one.
  */
-async function importPdfAsDocument(uri: string): Promise<void> {
+export async function importPdfAsDocument(uri: string): Promise<void> {
   const { readFile } = await import('@tauri-apps/plugin-fs');
   const bytes = await readFile(uri);
-  const { loadPdfData } = await import('../pdf/import');
   const name = fileBaseName(uri.split(/[?#]/)[0] ?? uri) || 'Imported PDF';
-  const copy = bytes.slice();
-  await adoptPdf(await loadPdfData(copy.buffer as ArrayBuffer, name), name);
+  await adoptPdfBytes(bytes, name, uri);
 }
 
 /**
@@ -100,9 +97,8 @@ async function importGoodNotesAsDocument(uri: string): Promise<void> {
  * document opened the other.
  */
 export async function importPdfFileAsDocument(file: File): Promise<void> {
-  const { loadPdfFile } = await import('../pdf/import');
   const name = fileBaseName(file.name) || 'Imported PDF';
-  await adoptPdf(await loadPdfFile(file), name);
+  await adoptPdfBytes(new Uint8Array(await file.arrayBuffer()), name, null);
 }
 
 /** The same, from a `File`. */
@@ -146,8 +142,32 @@ async function adoptGoodNotes(bytes: Uint8Array, fileName: string): Promise<void
   });
 }
 
+/**
+ * Turn a PDF's bytes into the open document. A PDF saved from this app opens as the note it was saved from, its ink
+ * still ink (`pdf/embeddedNote.ts`); any other PDF has its pages imported. `path` is the PDF's own file, which Save
+ * then writes back to, or `null` (a browser, which has no path to write to).
+ */
+async function adoptPdfBytes(bytes: Uint8Array, name: string, path: string | null): Promise<void> {
+  const { readEmbeddedNote } = await import('../pdf/embeddedNote');
+  const note = await readEmbeddedNote(bytes);
+  if (note !== null) {
+    // Named for the file, as any other PDF is: it may have been renamed since it was saved.
+    const { document } = parseNotex(note);
+    useDocumentStore.getState().loadDocument({ ...document, title: titleFromFileName(name) }, path);
+    if (!path) useDocumentStore.setState({ savedPages: null, savedTitle: null });
+    return;
+  }
+  const { loadPdfData } = await import('../pdf/import');
+  const copy = bytes.slice();
+  await adoptPdf(await loadPdfData(copy.buffer as ArrayBuffer, name), name, path);
+}
+
 /** Turn a loaded PDF into the open document. */
-async function adoptPdf(loaded: Awaited<ReturnType<typeof import('../pdf/import')['loadPdfData']>>, name: string): Promise<void> {
+async function adoptPdf(
+  loaded: Awaited<ReturnType<typeof import('../pdf/import')['loadPdfData']>>,
+  name: string,
+  path: string | null,
+): Promise<void> {
   const { buildPdfPages } = await import('../pdf/import');
   const pages = await buildPdfPages(
     loaded,
@@ -160,10 +180,11 @@ async function adoptPdf(loaded: Awaited<ReturnType<typeof import('../pdf/import'
   const store = useDocumentStore.getState();
   store.loadDocument(
     { ...createDocument(1), title: titleFromFileName(name), pages: renumberPages(pages) },
-    null,
+    path,
   );
-  // Imported but not saved anywhere: keep Save and autosave armed.
-  useDocumentStore.setState({ savedPages: null, savedTitle: null });
+  // As it is in its file: nothing to save until something is written on it. Without a file (a browser), imported
+  // but not saved anywhere: keep Save and autosave armed.
+  if (!path) useDocumentStore.setState({ savedPages: null, savedTitle: null });
 }
 
 /**

@@ -61,6 +61,7 @@ export function PageArranger() {
     duplicatePages,
     deletePages,
     movePages,
+    rotatePages,
     setPageTemplate,
     setPageBackground,
     setTemplateConfig,
@@ -78,6 +79,7 @@ export function PageArranger() {
         duplicatePages: s.duplicatePages,
         deletePages: s.deletePages,
         movePages: s.movePages,
+        rotatePages: s.rotatePages,
         setPageTemplate: s.setPageTemplate,
         setPageBackground: s.setPageBackground,
         setTemplateConfig: s.setTemplateConfig,
@@ -185,6 +187,7 @@ export function PageArranger() {
     if (!batch || !Number.isFinite(n)) return;
     movePages(pickedIndices, Math.min(Math.max(1, Math.trunc(n)), pages.length - pickedIndices.length + 1) - 1);
   };
+  const rotate = (quarterTurns: number): void => rotatePages(batch ? pickedIndices : [activePageIndex], quarterTurns);
   const duplicate = (): void => (batch ? duplicatePages(pickedIndices) : duplicatePage(activePageIndex));
   const remove = (): void => {
     if (!batch) deletePage(activePageIndex);
@@ -372,6 +375,12 @@ export function PageArranger() {
                   Move
                 </button>
                 <span className="flex-1" />
+                <button type="button" className={opButton} disabled={!batch} onClick={() => rotate(-1)} title="Rotate the selected pages left" aria-label="Rotate the selected pages left" data-arranger-picked-rotate-left>
+                  ⟲
+                </button>
+                <button type="button" className={opButton} disabled={!batch} onClick={() => rotate(1)} title="Rotate the selected pages right" aria-label="Rotate the selected pages right" data-arranger-picked-rotate-right>
+                  ⟳
+                </button>
                 <button
                   type="button"
                   className={opButton}
@@ -404,6 +413,12 @@ export function PageArranger() {
             </button>
             <button type="button" className={opButton} onClick={() => addPage('after', activePageIndex)} disabled={readOnly}>
               Add after
+            </button>
+            <button type="button" className={opButton} onClick={() => rotate(-1)} disabled={readOnly} title="Turn a quarter turn to the left" aria-label={batch ? 'Rotate the selected pages left' : 'Rotate page left'} data-arranger-rotate-left>
+              ⟲
+            </button>
+            <button type="button" className={opButton} onClick={() => rotate(1)} disabled={readOnly} title="Turn a quarter turn to the right" aria-label={batch ? 'Rotate the selected pages right' : 'Rotate page right'} data-arranger-rotate-right>
+              ⟳
             </button>
             <button type="button" className={opButton} onClick={duplicate} disabled={readOnly}>
               {batch ? `Duplicate ${pickedIndices.length}` : 'Duplicate'}

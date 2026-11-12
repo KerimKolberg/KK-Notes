@@ -323,13 +323,30 @@ the whole point.
 
 **Going home keeps what was written** (`library/leaveDocument.ts`, the House button in the top bar). It used to drop
 the open note, leaving only the crash draft. Now a note with a file (every note made in the library) is saved to it on
-the way out; one never saved anywhere — a blank note, a PDF just opened — asks: *Save to library* (under its title),
+the way out (a PDF opened from a file included, see below); one never saved anywhere — a blank note, a PDF dropped
+into the browser — asks: *Save to library* (under its title),
 *Don't save* (the draft goes too, or the next start would bring it back), or *Cancel*. Either way the note's tab goes
 with it (`tabStore.forgetActive`): left behind, it showed as an empty "Untitled note" beside the next PDF opened. A
 file handed to the app by *Open with* while it is already running is let into the fs plugin's scope for that one
 path (`background::second_instance`, and `get_startup_file` for one it was started with), which refused it as a
-"forbidden path" before. *Save As* offers PDF beside `.notex` (a PDF of the note; the note itself is not saved by
-it), and version history has a button between Undo and Redo (also a right-click on Undo).
+"forbidden path" before. Version history has a button between Undo and Redo (also a right-click on Undo).
+
+**Save writes the file back as it is, where it is** (`fileActions.actionSave`). A note's file can be a `.notex` or a
+PDF. A PDF opened from a file (Open with, the library's Open, the recent list) keeps that PDF as its file, and Save
+writes it back there with what was written on it; the earlier PDF goes into the version history first, as a note's
+file does. A note with no file yet (New) goes to *Save As*, which asks for the place, the name and the format, `.notex`
+or PDF; either becomes the note's file, so the next Save goes there too. Where a file cannot be written back (on
+Android a file another app only lent to read), Save says so and asks where to save instead.
+
+Ink written into a PDF is no longer ink: opened again, nothing could be erased. So a PDF saved here carries the note
+too, as an attached `.notex` (`pdf/embeddedNote.ts`), and opening that PDF here opens the note — the original PDF
+pages underneath, every stroke still a stroke — while every other reader shows the PDF with the writing on it. (The
+note holds the original PDF, so such a file is about twice the size of the PDF alone.) A PDF changed by another app
+after it was saved here must not come back without that change, so the save is stamped: the PDF's modification date,
+and the same date under a key of this app's own (`KKNotesSaved`). Another app's save updates the first and not the
+second, and a PDF whose two differ opens as the PDF it now is, writing and all. *Export PDF* stays a plain PDF without
+the note, for sending. Restoring an earlier version of a PDF reopens it as a PDF (`restore_version` returns no text for
+one).
 
 **Folders** are real directories and filing a note is a real move — drag a
 card onto a folder. Nothing overwrites: a name already taken gets a numbered
@@ -749,7 +766,12 @@ pages numbered from 1, the cover left out), named for them, e.g.
 Dragging a picked page takes the others along and lands them where that page
 would land alone (`groupDropStart`). While pages are picked, template,
 background and spacing go to them (`PageTarget` takes a list of indices), and
-the operation buttons say how many they act on. Each batch is one Undo step
+the operation buttons say how many they act on. ⟲ and ⟳ (beside Duplicate, and in the
+selection bar) turn the page, or the picked pages, a quarter turn (`document/rotatePage.ts`): the page swaps width and
+height, and its ink, pictures, notes, form fields and handwriting words turn with it, as does a PDF page underneath
+(its display rotation, which the export writes onto the copied page with `setRotation`). The page's own text stays
+upright and fills the turned page's margins, as a word processor's does. The page's own stroke Undo turns too, or an
+undo after a turn would bring ink back sideways. Each batch is one Undo step
 ("deleting 4 pages"). Picks are kept by page id, so they stay right as pages
 move. Escape lets go of them before it closes the arranger.
 

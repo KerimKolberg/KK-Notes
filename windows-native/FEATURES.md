@@ -41,7 +41,7 @@ Status column for the native app: `[ ]` not started, `[~]` partly, `[x]` done. U
 
 ## Pages and documents
 
-- [ ] Pages: A4 default (794 × 1123 px), add before/after, duplicate, delete, reorder (page arranger with thumbnails); pick several pages (Ctrl/Shift-click, hold, typed list "2, 15, 20-25") to move, duplicate, delete, restyle or export as PDF together; invert the selection
+- [ ] Pages: A4 default (794 × 1123 px), add before/after, duplicate, delete, reorder (page arranger with thumbnails); pick several pages (Ctrl/Shift-click, hold, typed list "2, 15, 20-25") to move, duplicate, delete, rotate, restyle or export as PDF together; invert the selection
 - [ ] Templates: blank, ruled (margin line), grid, engineering, isometric; spacing slider; background colour
 - [ ] Page defaults (template/colour for new notes) in settings
 - [ ] View modes: vertical continuous, horizontal continuous, single page, double page
@@ -74,6 +74,7 @@ Status column for the native app: `[ ]` not started, `[~]` partly, `[x]` done. U
 - [ ] PDF **table of contents** panel, jump to chapters
 - [ ] **Select PDF text**: copy, highlight
 - [ ] **Export PDF** with ink, text, notes, tables burnt in; export `.notex`
+- [ ] **Save** writes a note back to its own file, `.notex` or PDF; a PDF saved here carries the note as an attachment and reopens editable (`pdf/embeddedNote.ts`); New → Save asks place, name and format
 - [ ] Images: paste, drop, insert; move, resize, crop/rotate, lock
 - [ ] **Sticky notes** (rectangle, oval, speech bubble)
 - [ ] **Tables** (table generator: rows, columns, header, styles)
