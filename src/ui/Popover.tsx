@@ -83,7 +83,7 @@ export function Popover({ open, onClose, label, side = 'top', align = 'center', 
       window.removeEventListener('pointerdown', onPointerDown, true);
       window.removeEventListener('keydown', onKey);
     };
-  }, [open, onClose]);
+  }, [open, onClose, ref]);
 
   if (!open) return null;
   return (

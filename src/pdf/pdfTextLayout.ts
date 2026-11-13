@@ -5,7 +5,7 @@
  * reads the page under the pointer at every move, and the text of a page does not change.
  */
 import type { PdfPageRef } from '../document/types';
-import { runsFromItems, type RawTextItem, type RawTextStyle, type TextRun } from '../textselect/geometry';
+import { runsFromItems, type RawTextItem, type TextRun } from '../textselect/geometry';
 import { pdfPointToPage } from './pdfCoords';
 import { SourceCache } from './sourceCache';
 
@@ -21,7 +21,7 @@ export function pdfPageTextRuns(ref: PdfPageRef): Promise<readonly TextRun[]> {
     const content = await page.getTextContent();
     return runsFromItems(
       content.items as readonly RawTextItem[],
-      (content.styles ?? {}) as Readonly<Record<string, RawTextStyle>>,
+      (content.styles ?? {}),
       (x, y) => pdfPointToPage(x, y, ref.viewBox, ref.rotation, ref.scale),
     );
   });

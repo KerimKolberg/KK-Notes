@@ -326,7 +326,7 @@ describe('the shipped colours', () => {
     expect(COLOR_PALETTE[0]).toBe('#1f1f24');
     // Spot-check the hues rather than the exact hex: blue has more blue than red, and so on.
     const rgb = (hex: string): number[] => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
-    const [, blue, green, red, brown, purple, orange, pink] = COLOR_PALETTE.map(rgb) as number[][];
+    const [, blue, green, red, brown, purple, orange, pink] = COLOR_PALETTE.map(rgb);
     expect(blue![2]).toBeGreaterThan(blue![0]! * 2);
     expect(green![1]).toBeGreaterThan(green![0]! * 2);
     expect(red![0]).toBeGreaterThan(red![1]! * 3);

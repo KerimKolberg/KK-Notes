@@ -212,7 +212,7 @@ export function* walkMessages(fields: readonly PbField[], depth = 0): Generator<
       continue;
     }
     if (field.wire !== WIRE_LENGTH) continue;
-    let nested: PbField[] | null = null;
+    let nested: PbField[] | null;
     try {
       nested = decodeMessage(field.bytes, depth + 1);
     } catch {

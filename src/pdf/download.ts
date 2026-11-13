@@ -1,7 +1,7 @@
 /** Trigger a browser download of raw bytes. */
 export function downloadBytes(bytes: Uint8Array, filename: string, mime = 'application/pdf'): void {
   const copy = bytes.slice();
-  const blob = new Blob([copy.buffer as ArrayBuffer], { type: mime });
+  const blob = new Blob([copy.buffer], { type: mime });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;

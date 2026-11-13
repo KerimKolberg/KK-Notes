@@ -77,7 +77,7 @@ export function persistentPdfTextStore(): PdfTextStore {
       guard(
         async () => {
           const value: unknown = await withStore('readonly', (s) => s.get(id));
-          return Array.isArray(value) && value.every((v) => typeof v === 'string') ? (value as string[]) : null;
+          return Array.isArray(value) && value.every((v) => typeof v === 'string') ? (value) : null;
         },
         () => memory.get(id),
       ),

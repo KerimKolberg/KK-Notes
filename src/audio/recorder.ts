@@ -293,7 +293,7 @@ async function finishInto(released: Released | null): Promise<void> {
   if (!s) return;
   session = null;
   useRecorderStore.setState({ status: 'stopping' });
-  let recording: Recording | null = null;
+  let recording: Recording | null;
   try {
     recording = await finish(s);
   } finally {

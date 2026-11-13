@@ -19,7 +19,7 @@ const faded = new WeakMap<Stroke, Stroke>();
 function fade(stroke: Stroke): Stroke {
   let copy = faded.get(stroke);
   if (!copy) {
-    copy = { ...stroke, style: { ...stroke.style, opacity: stroke.style.opacity * LATER_OPACITY } } as Stroke;
+    copy = { ...stroke, style: { ...stroke.style, opacity: stroke.style.opacity * LATER_OPACITY } };
     faded.set(stroke, copy);
   }
   return copy;

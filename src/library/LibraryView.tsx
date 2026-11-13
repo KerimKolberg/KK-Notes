@@ -358,7 +358,7 @@ export function LibraryView() {
   );
 
   const trail = useMemo(() => crumbs(listing), [listing]);
-  const entries = listing?.entries ?? [];
+  const entries = useMemo(() => listing?.entries ?? [], [listing]);
   const searching = query.trim().length > 0;
   const search = useLibrarySearch(query, listing);
 
@@ -859,7 +859,7 @@ export function LibraryView() {
             [
               { id: 'all', label: 'All notes', filter: ALL_NOTES, icon: false },
               ...(favourites > 0 ? [{ id: 'fav', label: `Favourites · ${favourites}`, filter: { kind: 'favourites' } as LibraryFilter, icon: true }] : []),
-              ...tags.map((t) => ({ id: `tag:${t.tag}`, label: `${t.tag} · ${t.count}`, filter: { kind: 'tag', tag: t.tag } as LibraryFilter, icon: false })),
+              ...tags.map((t) => ({ id: `tag:${t.tag}`, label: `${t.tag} · ${t.count}`, filter: { kind: 'tag' as const, tag: t.tag }, icon: false })),
             ]
           ).map((chip) => {
             const active =

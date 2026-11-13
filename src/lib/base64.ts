@@ -42,7 +42,7 @@ export function base64Ascii(bytes: Uint8Array): Uint8Array {
     out[o++] = ENCODE[v >>> 18]!;
     out[o++] = ENCODE[(v >>> 12) & 63]!;
     out[o++] = rest === 2 ? ENCODE[(v >>> 6) & 63]! : PAD;
-    out[o++] = PAD;
+    out[o] = PAD;
   }
   return out;
 }

@@ -540,7 +540,7 @@ export function duplicateStrokes(
   for (const s of strokes) {
     if (!ids.has(s.id)) continue;
     const moved = transformStroke(s, { kind: 'translate', dx: offset.x, dy: offset.y });
-    copies.push({ ...moved, id: createStrokeId(), createdAt: performance.now() } as Stroke);
+    copies.push({ ...moved, id: createStrokeId(), createdAt: performance.now() });
   }
   // A copy of a group is a group of its own, not another member of the original's.
   const regrouped = regroupCopies(copies);
@@ -731,6 +731,6 @@ function regroupCopies(copies: readonly Stroke[]): Stroke[] {
       id = `g_${createStrokeId()}`;
       fresh.set(s.groupId, id);
     }
-    return { ...s, groupId: id } as Stroke;
+    return { ...s, groupId: id };
   });
 }

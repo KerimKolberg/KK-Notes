@@ -145,7 +145,7 @@ export function scheduleFlow(pageId: string): void {
     pendingPage = null;
     if (page) flowFrom(page);
   };
-  frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : (setTimeout(run, 0) as unknown as number);
+  frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : (setTimeout(run, 0));
 }
 
 /** Flow now, if a flow is waiting: before a key that crosses pages reads where the text is. */

@@ -12,7 +12,7 @@ export type InvokeArgs = Record<string, unknown> | ArrayBuffer | Uint8Array;
 
 export async function tauriInvoke<T>(command: string, args?: InvokeArgs, options?: { headers?: Record<string, string> }): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<T>(command, args as Parameters<typeof invoke>[1], options as Parameters<typeof invoke>[2]);
+  return invoke<T>(command, args, options as Parameters<typeof invoke>[2]);
 }
 
 export async function tauriDialog(): Promise<typeof import('@tauri-apps/plugin-dialog')> {

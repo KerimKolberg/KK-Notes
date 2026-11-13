@@ -176,7 +176,7 @@ function normalizePageDefaults(stored: unknown): PageDefaults | null {
   return {
     template: record.template as PageDefaults['template'],
     // Merged over the shipped config, so a field added later has a value.
-    templateConfig: { ...DEFAULT_TEMPLATE_CONFIG, ...(config as object) },
+    templateConfig: { ...DEFAULT_TEMPLATE_CONFIG, ...(config) },
     backgroundColor: isHexColor(record.backgroundColor) ? record.backgroundColor : LIGHT_PAGE_BACKGROUND,
   };
 }

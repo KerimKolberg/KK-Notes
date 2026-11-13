@@ -47,7 +47,7 @@ export function pdfSourcesJson(contents: string): string | null {
 export function pdfSourcesOf(contents: string, wanted: ReadonlySet<string>): Map<string, ArrayBuffer> {
   const out = new Map<string, ArrayBuffer>();
   if (wanted.size === 0) return out;
-  let sources: unknown = null;
+  let sources: unknown;
   const json = pdfSourcesJson(contents);
   try {
     if (json) sources = JSON.parse(json);

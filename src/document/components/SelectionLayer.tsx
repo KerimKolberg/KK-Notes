@@ -528,6 +528,7 @@ export const SelectionLayer = memo(function SelectionLayer({
   // How tall the toolbar really is: it wraps onto a second line once it has the curve
   // controls too, and guessing one line put it half off the top of the page.
   const [toolbarHeight, setToolbarHeight] = useState(TOOLBAR_HEIGHT);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- measured after every render on purpose; the guard below stops the loop
   useLayoutEffect(() => {
     const measured = toolbarRef.current?.offsetHeight ?? 0;
     if (measured > 0 && Math.abs(measured - toolbarHeight) > 1) setToolbarHeight(measured);

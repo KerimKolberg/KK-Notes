@@ -183,7 +183,6 @@ export async function importGoodNotes(bytes: Uint8Array, options: ImportOptions 
   const warnings: string[] = [];
   const found: Array<{ name: string; candidates: Candidate[] }> = [];
   let setAside = 0;
-  let unreadable = 0;
 
   for (const entry of [...entries].sort(byNaturalName)) {
     if (!mightHoldInk(entry)) continue;
@@ -195,8 +194,7 @@ export async function importGoodNotes(bytes: Uint8Array, options: ImportOptions 
     } catch {
       // An entry that is not protobuf at all is the normal case, not a failure:
       // an archive is full of plists, thumbnails and indexes. Only worth
-      // counting, in case *everything* failed.
-      unreadable += 1;
+      // counting: when *everything* failed, the listing says what was in the archive instead.
       continue;
     }
     const kept = candidates.filter((candidate) => candidate.confidence >= minConfidence);

@@ -28,7 +28,7 @@ import type { TextBox, TextStyle } from '../types';
  */
 
 const box = (style: Partial<TextStyle> = {}): TextBox =>
-  ({ ...createTextBox(A4_DIMENSIONS, 1), text: 'Hello', ...style }) as TextBox;
+  ({ ...createTextBox(A4_DIMENSIONS, 1), text: 'Hello', ...style });
 
 describe('the font catalogue', () => {
   it('names only fonts pdf-lib can actually embed', () => {
@@ -97,13 +97,13 @@ describe('textStyleOf', () => {
 
   it('rejects a size that would make the box unreadable or crash a measure', () => {
     for (const bad of [0, -12, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(textStyleOf(box({ fontSize: bad }) as TextBox).fontSize).toBe(DEFAULT_TEXT_STYLE.fontSize);
+      expect(textStyleOf(box({ fontSize: bad })).fontSize).toBe(DEFAULT_TEXT_STYLE.fontSize);
     }
-    expect(textStyleOf(box({ fontSize: 48 }) as TextBox).fontSize).toBe(48);
+    expect(textStyleOf(box({ fontSize: 48 })).fontSize).toBe(48);
   });
 
   it('treats a missing flag as off rather than as truthy', () => {
-    const style = textStyleOf(box({ bold: undefined as unknown as boolean }) as TextBox);
+    const style = textStyleOf(box({ bold: undefined as unknown as boolean }));
     expect(style.bold).toBe(false);
   });
 });

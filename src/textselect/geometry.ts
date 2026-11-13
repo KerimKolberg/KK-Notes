@@ -290,11 +290,10 @@ export function wordAround(runs: readonly TextRun[], caret: Caret): readonly [Ca
   if (!run) return null;
   const isWord = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}'’_-]/u.test(ch);
   let start = Math.min(caret.offset, run.text.length);
-  let end = start;
   // A caret just after a word takes that word.
   if (!isWord(run.text[start]) && isWord(run.text[start - 1])) start -= 1;
   if (!isWord(run.text[start])) return null;
-  end = start;
+  let end = start;
   while (start > 0 && isWord(run.text[start - 1])) start -= 1;
   while (end < run.text.length && isWord(run.text[end])) end += 1;
   return [

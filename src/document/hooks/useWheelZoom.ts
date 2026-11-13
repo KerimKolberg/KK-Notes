@@ -106,6 +106,7 @@ export function useWheelZoom({ scrollRef, previewRef, layoutRef, zoomRef, axisRe
     return () => {
       el.removeEventListener('wheel', onWheel);
       if (timer !== null) clearTimeout(timer);
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- the node on screen at clean-up is the one to reset
       if (gesture && previewRef.current) previewRef.current.style.transform = '';
     };
   }, [scrollRef, previewRef, layoutRef, zoomRef, axisRef, onCommit, setZoom]);

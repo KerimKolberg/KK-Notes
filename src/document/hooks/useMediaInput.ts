@@ -17,7 +17,7 @@ export interface DecodedImage {
 export async function readImageFile(file: Blob): Promise<DecodedImage> {
   const src = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
+    reader.onload = () => (typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Could not read image')));
     reader.onerror = () => reject(reader.error ?? new Error('Could not read image'));
     reader.readAsDataURL(file);
   });

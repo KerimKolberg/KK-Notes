@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createPage } from '../../../document/operations';
 import { blockText } from '../../../document/richText';
-import type { Page, RichBlock, TextBox } from '../../../document/types';
+import type { Page, RichBlock } from '../../../document/types';
 import { createFlowBox } from '../geometry';
 import { flowBoxOf, reflow, type Fit, type FlowMeasurer } from '../paginate';
 
@@ -95,7 +95,7 @@ describe('text flowing from page to page', () => {
     const box = flowBoxOf(pages[0])!;
     const withBreak: Page = {
       ...pages[0]!,
-      media: [{ ...box, rich: { blocks: [{ runs: [{ text: 'one' }] }, { pageBreak: true, runs: [{ text: 'two' }] }] } } as TextBox],
+      media: [{ ...box, rich: { blocks: [{ runs: [{ text: 'one' }] }, { pageBreak: true, runs: [{ text: 'two' }] }] } }],
     };
     const result = reflow({ pages: [withBreak], from: 0, measurer, newPage });
     expect(texts(result.pages)).toEqual([['one'], ['two']]);

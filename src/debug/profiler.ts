@@ -261,7 +261,7 @@ export function noteCommit(id: string, durationMs: number): void {
   const budget = frameBudgetMs();
   if (durationMs > budget) {
     record.slow++;
-    // eslint-disable-next-line no-console
+     
     console.warn(
       `[profiler] ${id} committed in ${durationMs.toFixed(1)}ms (> ${budget.toFixed(1)}ms): this blocked the frame.`,
     );

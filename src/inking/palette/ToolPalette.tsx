@@ -186,7 +186,7 @@ function PaletteSlotButton({ slot, index, arranging, itemProps, dragging, dropTa
     <>
       {divider}
       <span
-        ref={ref as unknown as React.Ref<HTMLSpanElement>}
+        ref={ref}
         role="button"
         tabIndex={0}
         aria-label={`Move ${PALETTE_SLOT_LABELS[slot]}`}

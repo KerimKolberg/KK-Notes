@@ -29,6 +29,7 @@ export function useViewportShift<T extends HTMLElement>(
   const ref = useRef<T>(null);
   const [shift, setShift] = useState(0);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- measured after every render on purpose (see above); it settles
   useLayoutEffect(() => {
     if (!enabled) {
       setShift(0);

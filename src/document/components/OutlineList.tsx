@@ -122,7 +122,7 @@ function SectionRows({ section, pageIndex, onPick }: { readonly section: Content
               }}
             >
               <span className="min-w-0 flex-1 truncate">{row.title}</span>
-              <span className="shrink-0 text-xs tabular-nums text-zinc-400">{missing ? '—' : row.pageIndex! + 1}</span>
+              <span className="shrink-0 text-xs tabular-nums text-zinc-400">{missing ? '—' : row.pageIndex + 1}</span>
             </button>
           </li>
         );

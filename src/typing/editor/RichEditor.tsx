@@ -126,7 +126,7 @@ export function RichEditor({ box, pageId, editable, placeholder, onChange, edges
   const baseKey = `${base.fontFamily}|${base.fontSize}|${base.color}|${base.align}`;
 
   useLayoutEffect(() => {
-    const view: EditorView = new EditorView(mount.current!, {
+    const view: EditorView = new EditorView(mount.current, {
       state: EditorState.create({ doc: toDoc(richOf(latest.current.box)), plugins: plugins() }),
       editable: () => latest.current.editable,
       attributes: attributesFor(richBaseOf(latest.current.box), latest.current.placeholder, latest.current.editable, latest.current.box.flow === true),
@@ -286,6 +286,7 @@ export function RichEditor({ box, pageId, editable, placeholder, onChange, edges
 
     return () => {
       unsubscribe();
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- `latest` holds props, not a node: the newest is wanted
       releaseController(latest.current.box.id);
       view.destroy();
       viewRef.current = null;

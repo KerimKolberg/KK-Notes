@@ -91,16 +91,16 @@ const paragraph: NodeSpec = {
     pageBreak: { default: false },
   },
   parseDOM: [
-    { tag: 'li > p', getAttrs: (p) => ({ ...parseItem((p as HTMLElement).parentElement!), ...parseOwn(p as HTMLElement) }) },
+    { tag: 'li > p', getAttrs: (p) => ({ ...parseItem((p).parentElement!), ...parseOwn(p) }) },
     // An item holding paragraphs of its own is read through them.
-    { tag: 'li', getAttrs: (li) => ((li as HTMLElement).querySelector(':scope > p') ? false : parseItem(li as HTMLElement)) },
+    { tag: 'li', getAttrs: (li) => ((li).querySelector(':scope > p') ? false : parseItem(li)) },
     { tag: 'h1', attrs: { kind: 'h1' } },
     { tag: 'h2', attrs: { kind: 'h2' } },
     { tag: 'h3', attrs: { kind: 'h3' } },
     { tag: 'h4', attrs: { kind: 'h3' } },
     { tag: 'h5', attrs: { kind: 'h3' } },
     { tag: 'h6', attrs: { kind: 'h3' } },
-    { tag: 'p', getAttrs: (p) => parseOwn(p as HTMLElement) },
+    { tag: 'p', getAttrs: (p) => parseOwn(p) },
   ],
   toDOM(node): DOMOutputSpec {
     const look = lookOf(node.attrs);
@@ -132,13 +132,16 @@ function valueMark(name: 'font' | 'size' | 'color' | 'highlight', read: (raw: st
       {
         tag: `span[${attr}]`,
         getAttrs: (el) => {
-          const value = read((el as HTMLElement).getAttribute(attr) ?? '');
+          const value = read((el).getAttribute(attr) ?? '');
           return value === null || value === undefined ? false : { value };
         },
       },
       ...extra,
     ],
-    toDOM: (mark) => ['span', { style: cssText(runCss({ [name]: mark.attrs.value })), [attr]: String(mark.attrs.value) }, 0],
+    toDOM: (mark) => {
+      const value: unknown = mark.attrs.value;
+      return ['span', { style: cssText(runCss({ [name]: value })), [attr]: String(value) }, 0];
+    },
   };
 }
 
@@ -166,7 +169,7 @@ export const schema = new Schema({
       parseDOM: [
         { tag: 'strong' },
         // Google Docs wraps everything in <b style="font-weight: normal">.
-        { tag: 'b', getAttrs: (el) => ((el as HTMLElement).style.fontWeight !== 'normal' ? null : false) },
+        { tag: 'b', getAttrs: (el) => ((el).style.fontWeight !== 'normal' ? null : false) },
         { style: 'font-weight', getAttrs: (value) => (/^(bold(er)?|[6-9]\d\d)$/.test(value) ? null : false) },
       ],
       toDOM: () => ['strong', 0],

@@ -6,7 +6,8 @@ import { DEFAULT_TEMPLATE_CONFIG, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM } from './con
 import { normalizeInkText } from '../handwriting/inkText';
 import { base64Ascii, decodeBase64, encodeBase64 } from '../lib/base64';
 import { pageTextFrame } from './media';
-import { clampIndex, renumber } from './operations';
+import { clampIndex, createPageId, renumber } from './operations';
+import { sanitizeCover, sanitizePage, sanitizePdfSources, sanitizeTitle } from './validate';
 import type {
   Document,
   InkText,
@@ -28,7 +29,7 @@ export function arrayBufferToBase64(buffer: ArrayBuffer): string {
 
 export function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const bytes = decodeBase64(base64);
-  return bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? (bytes.buffer as ArrayBuffer) : (bytes.slice().buffer as ArrayBuffer);
+  return bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? (bytes.buffer as ArrayBuffer) : (bytes.slice().buffer);
 }
 
 /**
@@ -65,8 +66,7 @@ function cachedBase64Bytes(buffer: ArrayBuffer): Uint8Array {
  */
 function mediaOf(page: SerializedPage): MediaObject[] {
   // Page text fills its page inside the margins, wherever the version that wrote the file put them.
-  if (page.media) return page.media.map((m) => (m.kind === 'text' && m.flow ? { ...m, ...pageTextFrame(page.dimensions) } : m));
-  return (page.images ?? []).map((image) => ({ ...image, kind: 'image' }) as MediaObject);
+  return (page.media ?? []).map((m) => (m.kind === 'text' && m.flow ? { ...m, ...pageTextFrame(page.dimensions) } : m));
 }
 
 export function toSerializablePage(page: Page): SerializedPage {
@@ -164,15 +164,20 @@ function recordingsOf(raw: unknown): Recording[] {
   return out;
 }
 
+/**
+ * A page from a file. What the file says is checked first (`validate.ts`): it is `unknown` until then, whatever type
+ * the caller believes it has.
+ */
 export function fromSerializablePage(
-  page: SerializedPage,
+  raw: unknown,
   index: number,
   sources: Readonly<Record<string, { name: string; pageCount: number; data: ArrayBuffer }>> = {},
 ): Page {
+  const page = sanitizePage(raw, createPageId);
   let pdf: PdfPageRef | undefined;
-  if (page.pdf) {
-    const source = sources[page.pdf.sourceId];
-    if (!source) throw new Error(`Missing PDF source ${page.pdf.sourceId}`);
+  // A page of a PDF the note no longer holds keeps its ink, on a blank page: better than a note that will not open.
+  const source = page.pdf ? sources[page.pdf.sourceId] : undefined;
+  if (page.pdf && source) {
     pdf = {
       sourceId: page.pdf.sourceId,
       sourceName: source.name,
@@ -188,7 +193,7 @@ export function fromSerializablePage(
     id: page.id,
     pageNumber: index + 1,
     dimensions: page.dimensions,
-    template: page.template,
+    template: page.template === 'pdf' && !pdf ? 'blank' : page.template,
     templateConfig: { ...DEFAULT_TEMPLATE_CONFIG, ...page.templateConfig },
     backgroundColor: page.backgroundColor,
     strokes: page.strokes,
@@ -198,7 +203,7 @@ export function fromSerializablePage(
     formFields: page.formFields ?? [],
     formValues: page.formValues ?? {},
     media: mediaOf(page),
-    ...(typeof page.bookmark === 'string' ? { bookmark: page.bookmark.slice(0, 200) } : {}),
+    ...(page.bookmark !== undefined ? { bookmark: page.bookmark.slice(0, 200) } : {}),
     ...withInkText(page.inkText),
   };
 }
@@ -222,19 +227,42 @@ export function normalizeViewMode(value: unknown): ViewMode {
   }
 }
 
+/** Most pages a note may have: far past any notebook, and short of what would take the app down just to list. */
+const MAX_PAGES = 20_000;
+
+/**
+ * A document from a file. The file is not trusted to be one (see `validate.ts`): only a wrong version or no pages at
+ * all refuses it; anything else that is wrong in it is dropped or put right where it is.
+ */
 export function fromSerializable(data: SerializedDocument): Document {
   if (data.version !== 1) throw new Error(`Unsupported document version ${String(data.version)}`);
-  if (!Array.isArray(data.pages) || data.pages.length === 0) throw new Error('A document needs at least one page');
+  const rawPages: unknown = data.pages;
+  if (!Array.isArray(rawPages) || rawPages.length === 0) throw new Error('A document needs at least one page');
+  if (rawPages.length > MAX_PAGES) throw new Error(`This note has ${rawPages.length} pages, more than can be opened`);
   const sources: Record<string, { name: string; pageCount: number; data: ArrayBuffer }> = {};
-  for (const [id, source] of Object.entries(data.pdfSources ?? {})) {
-    sources[id] = { name: source.name, pageCount: source.pageCount, data: base64ToArrayBuffer(source.data) };
+  for (const [id, source] of Object.entries(sanitizePdfSources(data.pdfSources))) {
+    try {
+      sources[id] = { name: source.name, pageCount: source.pageCount, data: base64ToArrayBuffer(source.data) };
+    } catch {
+      // Not base64: the pages of this PDF open blank, with their ink.
+    }
   }
-  const pages = renumber(data.pages.map((page, index) => fromSerializablePage(page, index, sources)));
-  const zoom = Number.isFinite(data.zoom) ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, data.zoom)) : DEFAULT_ZOOM;
+  // Two pages under one id would be one page to everything that looks a page up by it.
+  const seen = new Set<string>();
+  const pages = renumber(
+    rawPages.map((raw: unknown, index) => {
+      const page = fromSerializablePage(raw, index, sources);
+      const unique = seen.has(page.id) ? { ...page, id: createPageId() } : page;
+      seen.add(unique.id);
+      return unique;
+    }),
+  );
+  const zoom = typeof data.zoom === 'number' && Number.isFinite(data.zoom) ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, data.zoom)) : DEFAULT_ZOOM;
+  const cover = sanitizeCover(data.cover);
   return {
-    id: data.id,
-    title: data.title,
-    ...(data.cover ? { cover: data.cover } : {}),
+    id: typeof data.id === 'string' && data.id.length > 0 ? data.id : `doc_${createPageId()}`,
+    title: sanitizeTitle(data.title),
+    ...(cover ? { cover } : {}),
     pages,
     activePageIndex: clampIndex(data.activePageIndex, pages.length),
     viewMode: normalizeViewMode(data.viewMode),

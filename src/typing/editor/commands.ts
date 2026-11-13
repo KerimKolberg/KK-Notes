@@ -11,7 +11,7 @@ import { splitBlockAs, toggleMark } from 'prosemirror-commands';
 import type { Mark, MarkType, Node as PMNode } from 'prosemirror-model';
 import { TextSelection, type Command, type EditorState, type Transaction } from 'prosemirror-state';
 import { clampIndent, HEADING_SCALE, type RichBase } from '../../document/richText';
-import type { RichAlign, RichList, RichScript, TextFontId } from '../../document/types';
+import type { RichList, RichScript, TextFontId } from '../../document/types';
 import { nextSize, type FormatCommand, type FormatState } from '../format';
 import { schema, type BlockAttrs } from './schema';
 
@@ -97,19 +97,19 @@ export function runFormat(command: FormatCommand, base: RichBase): Command {
   const m = schema.marks;
   switch (command.type) {
     case 'toggle':
-      return toggleMark(m[command.mark]!);
+      return toggleMark(m[command.mark]);
     case 'script':
-      return (state, dispatch) => setMark(m.script!, allHave(state, m.script!, command.value) ? null : command.value)(state, dispatch);
+      return (state, dispatch) => setMark(m.script, allHave(state, m.script, command.value) ? null : command.value)(state, dispatch);
     case 'color':
-      return setMark(m.color!, command.value);
+      return setMark(m.color, command.value);
     case 'highlight':
-      return setMark(m.highlight!, command.value);
+      return setMark(m.highlight, command.value);
     case 'font':
-      return setMark(m.font!, command.value);
+      return setMark(m.font, command.value);
     case 'size':
-      return setMark(m.size!, command.value);
+      return setMark(m.size, command.value);
     case 'grow':
-      return (state, dispatch) => setMark(m.size!, nextSize(sizeAt(state, base), command.by))(state, dispatch);
+      return (state, dispatch) => setMark(m.size, nextSize(sizeAt(state, base), command.by))(state, dispatch);
     case 'clear':
       return (state, dispatch) => {
         if (!dispatch) return true;
@@ -140,7 +140,7 @@ function indentBy(by: 1 | -1): Command {
 export const splitParagraph: Command = splitBlockAs((node, atEnd) => {
   const a = node.attrs as BlockAttrs;
   return {
-    type: schema.nodes.paragraph!,
+    type: schema.nodes.paragraph,
     attrs: { ...a, kind: atEnd && a.kind !== 'p' ? 'p' : a.kind, checked: false, cont: false, pageBreak: false },
   };
 });
@@ -197,7 +197,7 @@ export const tick: Command = (state, dispatch) => {
 
 /** Shift+Enter: a new line in the same paragraph. */
 export const lineBreak: Command = (state, dispatch) => {
-  if (dispatch) dispatch(state.tr.replaceSelectionWith(schema.nodes.hard_break!.create()).scrollIntoView());
+  if (dispatch) dispatch(state.tr.replaceSelectionWith(schema.nodes.hard_break.create()).scrollIntoView());
   return true;
 };
 
@@ -208,18 +208,18 @@ export function formatStateOf(state: EditorState, base: RichBase): FormatState {
   const value = <T,>(type: MarkType): T | null => (marks.find((mk) => mk.type === type)?.attrs.value as T | undefined) ?? null;
   const a = state.selection.$from.parent.attrs as BlockAttrs;
   return {
-    bold: allHave(state, m.bold!),
-    italic: allHave(state, m.italic!),
-    underline: allHave(state, m.underline!),
-    strike: allHave(state, m.strike!),
-    script: value<RichScript>(m.script!),
-    color: value<string>(m.color!) ?? base.color,
-    highlight: value<string>(m.highlight!),
+    bold: allHave(state, m.bold),
+    italic: allHave(state, m.italic),
+    underline: allHave(state, m.underline),
+    strike: allHave(state, m.strike),
+    script: value<RichScript>(m.script),
+    color: value<string>(m.color) ?? base.color,
+    highlight: value<string>(m.highlight),
     size: sizeAt(state, base),
-    font: value<TextFontId>(m.font!) ?? base.fontFamily,
+    font: value<TextFontId>(m.font) ?? base.fontFamily,
     kind: a.kind,
     list: a.list,
-    align: (a.align ?? base.align) as RichAlign,
+    align: (a.align ?? base.align),
     indent: a.indent,
   };
 }

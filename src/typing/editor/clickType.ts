@@ -55,7 +55,7 @@ export function emptyLineStep(fontSize: number): number {
  * line, set across the page as the click was. False — the click left to the editor — on a line with text in it.
  */
 export function clickAndType(view: EditorView, x: number, y: number, fontSize: number): boolean {
-  const root = view.dom as HTMLElement;
+  const root = view.dom;
   const rect = root.getBoundingClientRect();
   // The page is zoomed: what the screen measures, in the page's own px.
   const scale = root.offsetWidth > 0 ? rect.width / root.offsetWidth : 1;

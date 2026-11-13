@@ -131,7 +131,7 @@ export function reflow({ pages: input, from, caret, measurer, newPage }: ReflowI
     const blocks = blocksOf(box);
     const hasCaret = caret?.pageId === page.id;
     if (!hasCaret && blocks.length === 1 && blockLength(blocks[0]!) === 0) return [];
-    return blocks.map((block, i) => (hasCaret && caret!.block === i ? { block, caret: caret!.offset } : { block }));
+    return blocks.map((block, i) => (hasCaret && caret.block === i ? { block, caret: caret.offset } : { block }));
   };
   /** How much fits, a page break counting as the end of the room. */
   const fitOf = (content: readonly Item[], base: RichBase, box: TextBox): Fit => {
@@ -211,8 +211,8 @@ export function reflow({ pages: input, from, caret, measurer, newPage }: ReflowI
         const [head, tail] = splitBlock(over.block, fit.split);
         const inHead = over.caret !== undefined && over.caret < fit.split;
         const inTail = over.caret !== undefined && !inHead;
-        keep.push({ block: head, ...(inHead ? { caret: over.caret! } : {}) });
-        carry.push({ block: tail, ...(inTail ? { caret: over.caret! - fit.split } : {}) });
+        keep.push({ block: head, ...(inHead ? { caret: over.caret } : {}) });
+        carry.push({ block: tail, ...(inTail ? { caret: over.caret - fit.split } : {}) });
       } else if (keep.length === 0) {
         // Not one line of it fits on an empty page (a picture-sized heading on a small page): it stays here
         // anyway rather than being pushed on for ever.

@@ -835,6 +835,7 @@ function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete
   const belowGap = 14 / zoom;
   const [toolbarHeight, setToolbarHeight] = useState(TOOLBAR_GUESS);
   const { ref: toolbarRef, shift: toolbarShift } = useViewportShift<HTMLDivElement>(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- measured after every render on purpose; the guard below stops the loop
   useLayoutEffect(() => {
     const measured = toolbarRef.current?.offsetHeight ?? 0;
     if (measured > 0 && Math.abs(measured - toolbarHeight) > 1) setToolbarHeight(measured);
@@ -958,7 +959,7 @@ function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete
                   type="button"
                   className="h-5 w-5 rounded-full ring-1 ring-white/40 hover:ring-white focus-visible:outline-2 focus-visible:outline-blue-300"
                   style={{ background: color }}
-                  onClick={() => onPatch({ color } as Partial<MediaObject>)}
+                  onClick={() => onPatch({ color })}
                   title={`Note colour ${color}`}
                   aria-label={`Note colour ${color}`}
                 />
@@ -973,7 +974,7 @@ function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete
                   className={`${toolbarButton} ${noteShapeOf(item) === option.id ? 'bg-blue-500 hover:bg-blue-500' : ''}`}
                   aria-pressed={noteShapeOf(item) === option.id}
                   data-note-shape-option={option.id}
-                  onClick={() => onPatch({ shape: option.id } as Partial<MediaObject>)}
+                  onClick={() => onPatch({ shape: option.id })}
                   title={option.hint}
                   aria-label={option.hint}
                 >

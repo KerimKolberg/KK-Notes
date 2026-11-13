@@ -37,7 +37,7 @@ export function expandToGroups(strokes: readonly Stroke[], ids: readonly string[
 
 /** Put the selected strokes in one group. */
 export function groupStrokes(strokes: readonly Stroke[], ids: ReadonlySet<string>, groupId: string): Stroke[] {
-  return strokes.map((s) => (ids.has(s.id) && s.groupId !== groupId ? ({ ...s, groupId } as Stroke) : s));
+  return strokes.map((s) => (ids.has(s.id) && s.groupId !== groupId ? ({ ...s, groupId }) : s));
 }
 
 /** Take the selected strokes out of whatever group they are in. */
@@ -45,7 +45,7 @@ export function ungroupStrokes(strokes: readonly Stroke[], ids: ReadonlySet<stri
   return strokes.map((s) => {
     if (!ids.has(s.id) || s.groupId === undefined) return s;
     const { groupId: _gone, ...rest } = s;
-    return rest as Stroke;
+    return rest;
   });
 }
 
@@ -190,7 +190,7 @@ export function regroup(strokes: readonly Stroke[]): Stroke[] {
       id = createGroupId();
       fresh.set(s.groupId, id);
     }
-    return { ...s, groupId: id } as Stroke;
+    return { ...s, groupId: id };
   });
 }
 
@@ -211,5 +211,5 @@ export function pastedCopies(items: readonly Stroke[], offset: Point, page: { re
   if (box.maxY > page.height) dy = page.height - box.maxY;
   if (box.minY + dy < 0) dy = -box.minY;
   const placed = dx === 0 && dy === 0 ? moved : moved.map((s) => transformStroke(s, { kind: 'translate', dx, dy }));
-  return regroup(placed).map((s) => ({ ...s, id: createStrokeId(), createdAt: performance.now() }) as Stroke);
+  return regroup(placed).map((s) => ({ ...s, id: createStrokeId(), createdAt: performance.now() }));
 }

@@ -15,7 +15,6 @@ import {
   rasterize,
   // @ts-expect-error -- untyped .mjs
 } from '../../../scripts/make-icons.mjs';
-// eslint-disable-next-line import/order
 import {
   PRODUCT_NAME,
   LAUNCHER_BACKGROUND,

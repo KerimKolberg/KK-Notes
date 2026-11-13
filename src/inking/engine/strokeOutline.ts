@@ -72,7 +72,7 @@ export function toFreehandOptions(
  */
 export function freehandSamples(points: readonly InkPoint[], style: StrokeStyle): readonly FreehandPoint[] {
   const brush = strokeBrush(style);
-  if (!brush || brush.tiltResponse === 0) return points as readonly FreehandPoint[];
+  if (!brush || brush.tiltResponse === 0) return points;
   let tilted = false;
   for (const p of points) {
     if (p.tilt) {
@@ -80,7 +80,7 @@ export function freehandSamples(points: readonly InkPoint[], style: StrokeStyle)
       break;
     }
   }
-  if (!tilted) return points as readonly FreehandPoint[];
+  if (!tilted) return points;
   return points.map((p) => ({ x: p.x, y: p.y, pressure: pencilPressure(p.pressure, p.tilt ?? 0, brush.tiltResponse) }));
 }
 
@@ -117,7 +117,7 @@ export function getStrokeOutline(
   const big = points.map((p) => ({ ...p, x: p.x * k, y: p.y * k }));
   const bigStyle = { ...style, size: style.size * k, taperStart: style.taperStart * k, taperEnd: style.taperEnd * k };
   const outline = getStroke(freehandSamples(big, bigStyle) as FreehandPoint[], toFreehandOptions(bigStyle, complete, big, caps));
-  return outline.map(([x, y]) => [x! / k, y! / k] as const);
+  return outline.map(([x, y]) => [x / k, y / k] as const);
 }
 
 /**

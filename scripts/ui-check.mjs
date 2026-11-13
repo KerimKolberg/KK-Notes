@@ -455,14 +455,6 @@ async function checkFileDrop(browser) {
       { name, bytes },
     );
 
-  /** A DataTransfer carrying the library's own move payload. */
-  const entryTransfer = () =>
-    page.evaluateHandle(() => {
-      const transfer = new DataTransfer();
-      transfer.setData('text/notes-entry', '/Week 1.notex');
-      return transfer;
-    });
-
   // The guard: a file dragged over any part of the window must have its default
   // prevented, or the drop navigates away instead of arriving.
   const prevented = await page.evaluate(async () => {
@@ -3737,7 +3729,7 @@ async function checkSnipping(browser) {
  */
 async function checkDragScroll(browser) {
   console.log('dragging a selection to the edge, 1280x800:');
-  const { ctx, page, errors, cx, cy, around } = await openPenDocument(browser);
+  const { ctx, page, errors, cx, cy } = await openPenDocument(browser);
   // Pages enough to scroll through.
   await page.click('[data-arranger-toggle]');
   await page.waitForSelector('[role="group"][aria-label="Page operations"] button');

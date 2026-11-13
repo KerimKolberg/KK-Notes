@@ -58,7 +58,7 @@ export function marksOf(run: RichMarks): RichMarks {
     const value = run[key];
     if (value !== undefined && value !== false) out[key] = value;
   }
-  return out as RichMarks;
+  return out;
 }
 
 export function sameMarks(a: RichMarks, b: RichMarks): boolean {
@@ -262,7 +262,7 @@ export function listMarkers(blocks: readonly RichBlock[]): (ListMarker | null)[]
       return { kind: 'bullet', ...BULLETS[level % BULLETS.length]! };
     }
     counters[level] = (counters[level] ?? 0) + 1;
-    return { kind: 'number', text: numberLabel(counters[level]!, level) };
+    return { kind: 'number', text: numberLabel(counters[level], level) };
   });
 }
 

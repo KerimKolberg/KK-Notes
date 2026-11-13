@@ -515,7 +515,7 @@ function drawTable(target: PDFPage, table: TableLayer, projection: PdfProjection
  * spaces, and anything else is a question mark.
  */
 function sanitizeText(text: string): string {
-  // eslint-disable-next-line no-control-regex
+   
   return text.replace(/\t/g, '    ').replace(/[^\x20-\x7E\xA0-\xFF€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ]/g, '?');
 }
 
@@ -645,7 +645,7 @@ export async function exportDocumentToPdf(document: Document, options: ExportOpt
   const textFonts = new Map<string, PDFFont>();
   for (const family of TEXT_FONTS) {
     for (const name of family.pdf) {
-      if (!textFonts.has(name)) textFonts.set(name, await out.embedFont(name as StandardFonts));
+      if (!textFonts.has(name)) textFonts.set(name, await out.embedFont(name));
     }
   }
   const fonts: Fonts = {

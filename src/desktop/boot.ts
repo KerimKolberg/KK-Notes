@@ -159,7 +159,7 @@ async function adoptPdfBytes(bytes: Uint8Array, name: string, path: string | nul
   }
   const { loadPdfData } = await import('../pdf/import');
   const copy = bytes.slice();
-  await adoptPdf(await loadPdfData(copy.buffer as ArrayBuffer, name), name, path);
+  await adoptPdf(await loadPdfData(copy.buffer, name), name, path);
 }
 
 /** Turn a loaded PDF into the open document. */

@@ -44,7 +44,7 @@ export function pageVisualFrom(raw: unknown): PageVisual | null {
     // `pdf` is dropped deliberately: without its source the hydrator would
     // throw, and fetching the source is exactly the cost being avoided.
     const { pdf: _pdf, ...rest } = raw as unknown as SerializedPage;
-    const page = fromSerializablePage(rest as SerializedPage, 0);
+    const page = fromSerializablePage(rest, 0);
     return {
       dimensions: page.dimensions,
       template: page.template,

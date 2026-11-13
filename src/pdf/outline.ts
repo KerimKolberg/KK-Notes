@@ -103,6 +103,6 @@ export function pdfOutline(ref: Pick<PdfPageRef, 'sourceId' | 'data'>): Promise<
   return cache.get(ref.sourceId, '', async () => {
     const { getPdfDocument } = await import('./pdfRenderer');
     const doc = await getPdfDocument(ref);
-    return resolveOutline(doc as unknown as OutlineDocument);
+    return resolveOutline(doc);
   });
 }

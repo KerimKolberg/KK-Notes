@@ -114,5 +114,6 @@ export function useHiDpiCanvas({
       mediaQuery?.removeEventListener('change', onDprChange);
     };
     // Deliberately mount-only: every input is a stable ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }

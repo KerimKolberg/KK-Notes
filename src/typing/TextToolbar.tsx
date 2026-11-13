@@ -34,7 +34,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { TEXT_FONTS, TEXT_SIZES } from '../document/media';
 import { countWords, richBaseOf, richOf, richPatch } from '../document/richText';
 import { useDocumentStore } from '../document/store';
-import type { RichAlign, RichBlockKind, TextBox, TextFontId } from '../document/types';
+import type { RichAlign, RichBlockKind, TextBox } from '../document/types';
 import { IconButton } from '../ui/IconButton';
 import { Popover, type PopoverSide } from '../ui/Popover';
 import { Tooltip } from '../ui/Tooltip';
@@ -132,7 +132,7 @@ export function TextToolbar({ vertical, popSide, onBusyChange }: TextToolbarProp
     const boxes = box.flow ? chainBoxes(store.document.pages, pageId) : [{ pageId, box }];
     const edits = boxes.map(({ pageId: p, box: b }) => {
       const whole = formatAll(richOf(b), richBaseOf(b), command);
-      return { pageId: p, mediaId: b.id, patch: { ...richPatch(whole.rich), ...(whole.base ?? {}) } as Partial<TextBox> };
+      return { pageId: p, mediaId: b.id, patch: { ...richPatch(whole.rich), ...(whole.base ?? {}) } };
     });
     store.editTexts(edits, 'format');
     if (box.flow && boxes[0]) scheduleFlow(boxes[0].pageId);
@@ -198,7 +198,7 @@ export function TextToolbar({ vertical, popSide, onBusyChange }: TextToolbarProp
         <Popover open={picker === 'font'} onClose={close} label="Font" side={popSide} align="center">
           <div className="flex w-48 flex-col gap-0.5" role="listbox" aria-label="Font">
             {TEXT_FONTS.map((font) => (
-              <Choice key={font.id} on={state?.font === font.id} onClick={() => pick({ type: 'font', value: font.id as TextFontId })} data={{ 'data-format-font': font.id }}>
+              <Choice key={font.id} on={state?.font === font.id} onClick={() => pick({ type: 'font', value: font.id })} data={{ 'data-format-font': font.id }}>
                 <span className="text-sm" style={{ fontFamily: font.css }}>
                   {font.label}
                 </span>

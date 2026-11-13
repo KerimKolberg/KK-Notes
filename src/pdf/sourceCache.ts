@@ -18,7 +18,7 @@ export class SourceCache<T> {
   private readonly entries = new Map<string, Entry<T>>();
 
   constructor(private readonly max: number) {
-    all.add(this as SourceCache<unknown>);
+    all.add(this);
   }
 
   /** The value for `key` of the source `sourceId`, read with `load` the first time it is asked for. */

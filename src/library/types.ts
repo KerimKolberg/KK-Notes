@@ -63,7 +63,7 @@ export interface ThumbnailSource {
   readonly title: string;
   readonly pageCount: number;
   /** The first page as `SerializedPage`, or `null` for an empty document. */
-  readonly page: unknown | null;
+  readonly page: unknown;
   readonly savedAt: string | null;
 }
 
