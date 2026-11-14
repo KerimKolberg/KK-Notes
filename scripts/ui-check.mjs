@@ -2338,7 +2338,9 @@ async function checkPagePicking(browser) {
   check('Ctrl-click picks pages without going to them', (await count()) === 2 && (await page.$$('[data-thumbnail-checked="true"]')).length === 2, `${await count()}`);
   await page.click(thumb(6), { modifiers: ['Shift'] });
   check('Shift-click picks the pages from the last one picked', (await count()) === 4, `${await count()}`);
-  check('the picked pages are listed by number', (await page.inputValue('[data-arranger-pick-list]')) === '2, 5–7', await page.inputValue('[data-arranger-pick-list]'));
+  // The list follows the picks a render later: wait for it rather than read it the instant after the click.
+  const listed = (want) => page.waitForFunction((w) => document.querySelector('[data-arranger-pick-list]')?.value === w, want, { timeout: 3_000 }).then(() => true, () => false);
+  check('the picked pages are listed by number', await listed('2, 5–7'), await page.inputValue('[data-arranger-pick-list]'));
   await page.fill('[data-arranger-pick-list]', '2, 5');
   await page.press('[data-arranger-pick-list]', 'Enter');
   check('typing page numbers picks those pages', (await count()) === 2, `${await count()}`);
@@ -2348,7 +2350,7 @@ async function checkPagePicking(browser) {
   await page.waitForTimeout(150);
   const moved = await order();
   check('Move puts the picked pages together at the page asked for', moved[0] === original[1] && moved[1] === original[4] && moved.length === 8, JSON.stringify(moved.map((id) => original.indexOf(id) + 1)));
-  check('and they stay picked', (await count()) === 2 && (await page.inputValue('[data-arranger-pick-list]')) === '1, 2');
+  check('and they stay picked', (await count()) === 2 && (await listed('1, 2')));
 
   await page.selectOption('#arranger-template', 'grid');
   await page.waitForTimeout(100);
