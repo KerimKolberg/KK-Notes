@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "description": "KK-Notes — a low-latency inking canvas for pen-first tablets and 2-in-1s (React + TypeScript).",
   "scripts": {
     "dev": "vite",

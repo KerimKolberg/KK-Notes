@@ -803,6 +803,8 @@ src/document/
 ├── layout.ts           page stacking, visible ranges, coordinate projection
 ├── templates.ts        line generator → SVG background / canvas painter
 ├── serialization.ts    JSON round trip
+├── validate.ts         checks what a file says before it is a document
+├── rotatePage.ts       quarter turns of a page and what is on it
 ├── store.ts            Zustand document store   toolStore.ts  shared tool settings
 ├── media.ts            image placement, anchored resize, rotation, z-order
 ├── gestures.ts         pinch / pan math, centroid anchoring across zoom changes
@@ -3209,7 +3211,9 @@ src/inking/
 ├── InkSurface.tsx          page-sized surface for the document viewer (zoom-aware)
 ├── palette/                floating tool palette
 │   ├── ToolPalette.tsx     icon groups, flyouts, colour and thickness rows
-│   └── parts.tsx           brush, highlighter, tape, line, eraser, plane, settings panels
+│   ├── parts.tsx           what the panels share: chips, the colour and width row, brush and stroke options
+│   ├── toolOptions.tsx     line, lasso, highlighter, tape, eraser and coordinate-plane panels
+│   └── PaletteSettings.tsx the palette's own settings: dock, pen buttons, colours, app-wide switches
 ├── InkingCanvas.module.css
 ├── types.ts                Stroke, StrokeStyle, ToolSettings, HistoryEntry, …
 ├── constants.ts
