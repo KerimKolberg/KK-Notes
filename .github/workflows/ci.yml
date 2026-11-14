@@ -1,0 +1,90 @@
+name: CI
+
+# Every push and pull request: what a contributor runs by hand (README, "Checks"), so a change that
+# breaks a test, the types, the bundle budget or the Rust shell is seen before an installer is built
+# from it. The installer and APK workflows stay manual; this one only reads the repository.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Lint, types, tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Known vulnerabilities in what ships or builds the app. Advisories appear without a commit,
+      # so this can turn red on its own: that is the point of it.
+      - run: npm audit --audit-level=high
+      - run: npm run lint
+      - run: npm test
+      # Type-checks, builds, and holds the bundle to its budget (scripts/check-bundle.mjs).
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 1
+
+  ui:
+    name: Browser checks
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      # Not a dependency of the project (it is large, and only this job drives a browser).
+      - name: Install Playwright's Chromium
+        run: |
+          npm install --no-save playwright-core@1.63.0
+          npx playwright-core install --with-deps chromium
+      - run: npm run check:ui -- --required
+
+  rust:
+    name: Rust shell and sync engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-ci-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: cargo-ci-${{ runner.os }}-
+      # The library, sync and HTTP crates have no webview in them and are tested natively.
+      - run: cargo test --manifest-path src-tauri/Cargo.toml -p notes-sync -p notex-http
+      # The shell is type-checked and linted for Windows from here, without the HTTPS feature
+      # (its assembly needs MSVC; the installer workflow builds it for real).
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc --tests --no-default-features
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc --no-default-features -- -D warnings

@@ -160,3 +160,15 @@ describe('.notex round trip', () => {
     expect(titleFromFileName('/tmp/.notex')).toBe('Untitled note');
   });
 });
+
+describe('a name typed into a save dialog', () => {
+  it('gets the extension it was saved as when it has none the app writes', async () => {
+    const { withExtension } = await import('../fileService');
+    const known = ['notex', 'json', 'pdf'];
+    expect(withExtension('C:\\Notes\\Physics', 'notex', known)).toBe('C:\\Notes\\Physics.notex');
+    expect(withExtension('/home/me/Physics.PDF', 'notex', known)).toBe('/home/me/Physics.PDF');
+    expect(withExtension('/home/me/v1.2 draft', 'pdf', known)).toBe('/home/me/v1.2 draft.pdf');
+    expect(withExtension('/home/me.notex/draft', 'notex', known)).toBe('/home/me.notex/draft.notex');
+    expect(withExtension('content://com.android.providers/document/42', 'notex', known)).toBe('content://com.android.providers/document/42');
+  });
+});

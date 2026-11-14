@@ -119,6 +119,15 @@ function sanitizeStrokes(raw: unknown): readonly Stroke[] {
 // What is placed on a page
 // ---------------------------------------------------------------------------
 
+/** Formatted text as the editor reads it: paragraphs, each of runs of words. */
+function isRich(v: unknown): boolean {
+  return (
+    isRaw(v) &&
+    Array.isArray(v.blocks) &&
+    v.blocks.every((b: unknown) => isRaw(b) && Array.isArray(b.runs) && b.runs.every((r: unknown) => isRaw(r) && isStr(r.text)))
+  );
+}
+
 function isBox(v: Raw): boolean {
   return isStr(v.id) && isNum(v.x) && isNum(v.y) && isNum(v.width) && v.width > 0 && isNum(v.height) && v.height > 0;
 }
@@ -150,10 +159,24 @@ export function sanitizeMedia(raw: unknown, legacyImage = false): MediaObject | 
         const cell: unknown = Array.isArray(raw.cells) ? raw.cells[i] : undefined;
         return isStr(cell) ? cell : '';
       });
-      return { ...box, rows, columns, cells } as unknown as MediaObject;
+      // Track sizes that are not one positive number per track are let go: the tracks are then equal.
+      const { columnFractions: _c, rowFractions: _r, ...table } = box as typeof box & { columnFractions?: unknown; rowFractions?: unknown };
+      const fractions = (v: unknown, n: number): boolean => Array.isArray(v) && v.length === n && v.every((f) => isNum(f) && f > 0);
+      return {
+        ...table,
+        rows,
+        columns,
+        cells,
+        ...(fractions(raw.columnFractions, columns) ? { columnFractions: raw.columnFractions } : {}),
+        ...(fractions(raw.rowFractions, rows) ? { rowFractions: raw.rowFractions } : {}),
+      } as unknown as MediaObject;
     }
-    case 'text':
-      return { ...box, text: isStr(raw.text) ? raw.text : '' } as unknown as MediaObject;
+    case 'text': {
+      // Formatting that is not in the shape the editor reads is let go; the plain words are kept beside it for this.
+      const { rich: _rich, ...plain } = box as typeof box & { rich?: unknown };
+      const text = isStr(raw.text) ? raw.text : '';
+      return { ...(isRich(raw.rich) ? box : plain), text } as unknown as MediaObject;
+    }
     default:
       return null;
   }
@@ -163,7 +186,9 @@ function sanitizeFormField(raw: unknown): FormField | null {
   if (!isRaw(raw) || !isStr(raw.id) || !isStr(raw.name) || !isStr(raw.kind)) return null;
   const box = raw.box;
   if (!isRaw(box) || !isNum(box.x) || !isNum(box.y) || !isNum(box.width) || !isNum(box.height)) return null;
-  return raw as unknown as FormField;
+  if (raw.options === undefined) return raw as unknown as FormField;
+  const options = Array.isArray(raw.options) ? raw.options.filter((o: unknown) => isRaw(o) && isStr(o.label) && isStr(o.value)) : [];
+  return { ...raw, options } as unknown as FormField;
 }
 
 function sanitizeFormValues(raw: unknown): FormValues {

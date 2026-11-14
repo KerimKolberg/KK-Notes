@@ -64,6 +64,15 @@ describe('a note from a file is checked before it is a note', () => {
     expect(sanitizeMedia({ ...box, kind: 'note', text: 9 })).toMatchObject({ text: '', color: '#fef08a' });
     expect(sanitizeMedia({ ...box, kind: 'table', rows: 2, columns: 2, cells: ['a', 3] })).toMatchObject({ cells: ['a', '', '', ''] });
     expect(sanitizeMedia({ ...box, kind: 'table', rows: 1e6, columns: 1e6 })).toBeNull();
+    expect(sanitizeMedia({ ...box, kind: 'table', rows: 1, columns: 2, cells: ['a', 'b'], columnFractions: [0.3, 0.7], rowFractions: 'tall' })).toEqual({ ...box, kind: 'table', rows: 1, columns: 2, cells: ['a', 'b'], columnFractions: [0.3, 0.7] });
+    const field = { id: 'f', name: 'n', kind: 'select', box: { x: 0, y: 0, width: 10, height: 10 } };
+    expect(sanitizePage({ formFields: [{ ...field, options: 'many' }, { ...field, options: [{ label: 'A', value: 'a' }, 7] }] }, id).formFields).toEqual([
+      { ...field, options: [] },
+      { ...field, options: [{ label: 'A', value: 'a' }] },
+    ]);
+    const rich = { blocks: [{ runs: [{ text: 'hi', bold: true }] }] };
+    expect(sanitizeMedia({ ...box, kind: 'text', text: 'hi', rich })).toMatchObject({ rich });
+    expect(sanitizeMedia({ ...box, kind: 'text', text: 'hi', rich: { blocks: [{ runs: 'hi' }] } })).not.toHaveProperty('rich');
     // Pictures of files written before notes and tables existed had no kind.
     expect(sanitizeMedia({ ...box, src: 'data:image/png;base64,AAAA' }, true)).toMatchObject({ kind: 'image' });
   });

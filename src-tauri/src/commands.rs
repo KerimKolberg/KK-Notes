@@ -65,6 +65,29 @@ impl StartupFile {
     }
 }
 
+/// The kinds of file the page may ask to have written: a note, and a PDF of one.
+const WRITABLE_EXTENSIONS: [&str; 3] = [NOTEX_EXTENSION, "json", "pdf"];
+/// The kinds it may ask to have read back as text.
+const READABLE_EXTENSIONS: [&str; 2] = [NOTEX_EXTENSION, "json"];
+
+/// Refuse a path that is not one of the app's own kinds of file.
+///
+/// These commands take a path from the page, because a document goes where its owner chose in a dialog.
+/// That also makes them the most that a page gone wrong could ask for, and what it could ask for was
+/// any file at all: a script in the Startup folder written, a key file read. A notes app has no reason
+/// to write a `.bat` or read an `id_rsa`, so only its own extensions pass, whatever the page says.
+fn ensure_kind(path: &Path, allowed: &[&str]) -> Result<(), String> {
+    let known = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| allowed.iter().any(|known| ext.eq_ignore_ascii_case(known)));
+    if known {
+        Ok(())
+    } else {
+        Err(format!("{} is not a kind of file KK-Notes reads or writes here", path.display()))
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -181,6 +204,7 @@ pub fn save_document(app: AppHandle, request: Request<'_>) -> Result<FileInfo, S
     let path = header_path(&request)?;
     let contents = raw_body(&request)?;
     let target = Path::new(&path);
+    ensure_kind(target, &WRITABLE_EXTENSIONS)?;
     if !is_content_uri(target) {
         if let Ok(folder) = history_folder(&app, target) {
             let _ = history::snapshot(&folder, target, now_ms());
@@ -221,6 +245,7 @@ pub fn list_versions(app: AppHandle, path: String) -> Result<Vec<history::Versio
 #[tauri::command]
 pub fn restore_version(app: AppHandle, path: String, id: u64) -> Result<OpenedDocument, String> {
     let target = Path::new(&path);
+    ensure_kind(target, &WRITABLE_EXTENSIONS)?;
     let folder = history_folder(&app, target)?;
     let version = history::version_path(&folder, id).ok_or_else(|| "That version is no longer kept.".to_string())?;
     let bytes = fs::read(&version).map_err(|e| format!("Cannot read that version: {e}"))?;
@@ -237,6 +262,7 @@ pub fn restore_version(app: AppHandle, path: String, id: u64) -> Result<OpenedDo
 /// Read a `.notex` document.
 #[tauri::command]
 pub fn open_document(path: String) -> Result<OpenedDocument, String> {
+    ensure_kind(Path::new(&path), &READABLE_EXTENSIONS)?;
     read_document_file(Path::new(&path))
 }
 
@@ -246,6 +272,7 @@ pub fn open_document(path: String) -> Result<OpenedDocument, String> {
 #[tauri::command]
 pub fn write_binary_file(request: Request<'_>) -> Result<FileInfo, String> {
     let path = header_path(&request)?;
+    ensure_kind(Path::new(&path), &WRITABLE_EXTENSIONS)?;
     atomic_write(Path::new(&path), raw_body(&request)?)
 }
 
@@ -387,6 +414,19 @@ mod tests {
         assert_eq!(list.len(), MAX_RECENT);
         assert_eq!(list[0].path, "/docs/3.notex");
         assert_eq!(list.iter().filter(|e| e.path == "/docs/3.notex").count(), 1);
+    }
+
+    #[test]
+    fn only_the_apps_own_kinds_of_file_pass() {
+        for path in ["C:\\Users\\me\\Notes\\Physics.notex", "/home/me/a.NOTEX", "export.pdf", "old.json"] {
+            assert!(ensure_kind(Path::new(path), &WRITABLE_EXTENSIONS).is_ok(), "{path}");
+        }
+        for path in ["C:\\Users\\me\\Startup\\run.bat", "/home/me/.ssh/id_rsa", "/home/me/.bashrc", "notes.notex.exe", "pdf", ""] {
+            assert!(ensure_kind(Path::new(path), &WRITABLE_EXTENSIONS).is_err(), "{path}");
+        }
+        // A PDF is written, never read back as text.
+        assert!(ensure_kind(Path::new("a.pdf"), &READABLE_EXTENSIONS).is_err());
+        assert!(ensure_kind(Path::new("a.notex"), &READABLE_EXTENSIONS).is_ok());
     }
 
     #[test]

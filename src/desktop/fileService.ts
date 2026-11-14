@@ -76,10 +76,23 @@ export async function pickDocumentSavePath(title: string, currentPath: string | 
   if (!isTauri()) return null;
   const { save } = await tauriDialog();
   const pdf = currentPath !== null && isPdfPath(currentPath);
-  return save({
+  const path = await save({
     defaultPath: safeFilename(title, pdf ? 'pdf' : NOTEX_EXTENSION),
     filters: pdf ? [...PDF_FILTERS, ...NOTEX_FILTERS] : [...NOTEX_FILTERS, ...PDF_FILTERS],
   });
+  return path === null ? null : withExtension(path, pdf ? 'pdf' : NOTEX_EXTENSION, [NOTEX_EXTENSION, 'json', 'pdf']);
+}
+
+/**
+ * The path with `extension` put on if it has none of `known`. A name typed without one into a save dialog comes back
+ * as typed on some platforms, and the shell writes only the app's own kinds of file (`ensure_kind`). A content URI
+ * (Android) is no file name and is left as it is.
+ */
+export function withExtension(path: string, extension: string, known: readonly string[]): string {
+  if (isContentUri(path)) return path;
+  const name = path.split(/[\\/]/).pop() ?? path;
+  const has = known.some((ext) => name.toLowerCase().endsWith(`.${ext.toLowerCase()}`));
+  return has ? path : `${path}.${extension}`;
 }
 
 /** Whether a path chosen in Save As is a PDF rather than a note. */
@@ -194,8 +207,9 @@ export async function exportPdf(doc: Document): Promise<string | null> {
     // Android turns into the `application/pdf` MIME of the CREATE_DOCUMENT
     // intent; without it the file is created as `application/octet-stream`
     // and nothing on the device offers to open it.
-    const path = await save({ defaultPath: safeFilename(doc.title, 'pdf'), filters: PDF_FILTERS });
-    if (!path) return null;
+    const picked = await save({ defaultPath: safeFilename(doc.title, 'pdf'), filters: PDF_FILTERS });
+    if (!picked) return null;
+    const path = withExtension(picked, 'pdf', ['pdf']);
     const bytes = await exportDocumentToPdf(doc);
     await writeBinary(path, bytes);
     return path;

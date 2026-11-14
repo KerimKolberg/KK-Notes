@@ -22,6 +22,7 @@ npm install
 npm run dev            # Vite dev server (web)
 npm test               # unit tests (vitest)
 npm run typecheck      # strict tsc
+npm run lint           # ESLint: hooks, promises nobody waits for, HTML built from strings
 npm run build          # typecheck + production bundle + bundle guard
 npm run check:bundle   # assert pdf.js / pdf-lib are lazy chunks
 npm run check:ui       # Playwright: stacking order and hit-testing at real viewport sizes
@@ -1019,7 +1020,43 @@ each wrapped in an error boundary that shows what happened instead (the message 
 says the work is not lost (it lives in the stores and in the autosave draft, not in the components), and offers **Try
 again** and **Reload the app**, which brings the draft back. The search, bookmarks, version history and snip tray are
 wrapped on their own: a panel that fails is put away with a notice giving the reason, and the rest of the screen carries
-on. The browser check damages a note's table on purpose and checks the message is shown.
+on. The browser check keeps a panel from arriving and makes a page throw while it is drawn, and checks both.
+
+### What is read from a file is checked first (`document/validate.ts`)
+
+A note comes from a file, and a file can say anything: it may have come through sync from another device, from someone
+else, from a newer version, or off a disk that lost half of it. The types say what the app *writes*; nothing held a
+file to them, and a table without cells, a stroke whose points were `null` or a page four million pixels tall each took
+the viewer down. So `fromSerializable` now checks a document part by part before it is one. What is sound passes
+through untouched and uncopied (one pass over the points, nothing allocated for a note that is well). What is not is
+dropped or put right on its own: a stroke that cannot be drawn is left out, a missing bounding box is worked out
+again, a page's sides are held between 32 and 20 000 px, a template or colour that is not one becomes the default, two
+pages under one id get an id each, and a page of a PDF the note no longer holds opens blank with its ink where the
+whole note used to be refused. A picture is taken only from a `data:image/` URL, which is all the app writes: any
+other address would have the app fetch something a file chose. Only a wrong version, no pages, or more than 20 000
+of them refuse a note.
+
+### Checks, and what guards the edges
+
+`npm run lint`, `npm test`, `npm run build`, the browser checks and the Rust checks run on every push
+(`.github/workflows/ci.yml`), with `npm audit` for known vulnerabilities in the dependencies; `cargo audit` does the
+same for the Rust side and is run by hand (`cargo install cargo-audit`, then `cargo audit` in `src-tauri/`). The
+installer and APK workflows stay manual.
+
+The page is the only thing that talks to the shell, and the shell does not take its word:
+
+- **The page loads nothing from outside.** The content security policy (`tauri.conf.json`) allows scripts and
+  connections from the app itself only, and the lint refuses `dangerouslySetInnerHTML`, `innerHTML` and `eval`, so a
+  note's text is only ever shown as text.
+- **The file commands write and read only the app's own kinds of file** (`commands.rs`, `ensure_kind`):
+  `save_document`, `write_binary_file` and `restore_version` take `.notex`, `.json` and `.pdf`, `open_document` takes
+  `.notex` and `.json`. They take a path from the page because a note goes where its owner chose in a dialog, which
+  also made them the most a page gone wrong could ask for: any file written, any file read. A name typed into a save
+  dialog without an extension is given one (`withExtension`).
+- **The library's commands stay inside the library** (`notes-sync/src/library.rs`, `within_root`), and the fs plugin's
+  scope is the app's data folder plus the single files handed to the app by *Open with*.
+- **Sign-in** uses the system browser with PKCE and a `state` checked on the way back, on a listener bound to
+  `127.0.0.1` only (`notes-sync/src/loopback.rs`).
 
 ## Interface (`src/ui/`, `src/inking/palette/`)
 

@@ -10,6 +10,7 @@
  *
  *   npm run check:ui                  # builds nothing; expects `dist/`
  *   npm run check:ui -- --url=http://localhost:5173
+ *   npm run check:ui -- --required    # fail, rather than skip, when it cannot run (CI)
  *
  * It needs `playwright-core` and a Chromium binary. Neither is a dependency of
  * this project (they are big, and CI installs them separately), so the script
@@ -34,8 +35,10 @@ const PHONE = { width: 412, height: 915, deviceScaleFactor: 2.625 };
 const DESKTOP = { width: 1280, height: 800, deviceScaleFactor: 1 };
 
 function skip(reason) {
-  console.log(`ui-check: skipped — ${reason}`);
-  process.exit(0);
+  // CI installs the browser and means the checks to run: there, not running is a failure (`--required`).
+  const required = args.includes('--required');
+  console.log(`ui-check: ${required ? 'could not run' : 'skipped'} — ${reason}`);
+  process.exit(required ? 1 : 0);
 }
 
 /** Where the environment keeps its browsers, if it keeps them anywhere. */
@@ -45,7 +48,7 @@ function findChromium() {
   if (!root || !existsSync(root)) return null;
   for (const entry of readdirSync(root)) {
     if (!entry.startsWith('chromium')) continue;
-    for (const rel of ['chrome-linux/chrome', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium', 'chrome-win/chrome.exe']) {
+    for (const rel of ['chrome-linux64/chrome', 'chrome-linux/chrome', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium', 'chrome-win64/chrome.exe', 'chrome-win/chrome.exe']) {
       const candidate = join(root, entry, rel);
       if (existsSync(candidate)) return candidate;
     }
@@ -3810,27 +3813,49 @@ async function checkDragScroll(browser) {
 }
 
 /**
- * A screen that throws while drawing must say so, not leave a black window: a note whose table has no cells (damaged,
- * or written by something else) makes the page fail to draw, and what shows is the message, with the work intact.
+ * A screen that throws while drawing must say so, not leave a black window. A damaged note no longer does it (what is
+ * read from a file is checked first: `document/validate.ts`), so two failures are made here: a panel that never
+ * arrives, which is closed with the reason, and a page that throws while it is drawn, which is the full message.
  */
 async function checkErrorBoundary(browser) {
   console.log('a screen that fails to draw, 1280x800:');
   const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
   const page = await ctx.newPage();
+  // From the start: the app fetches its panels ahead of need when it is idle.
+  await page.route('**/assets/SearchPanel-*.js', (route) => route.abort());
   await openDocument(page);
   await page.click('[data-back-to-library]');
   await page.waitForSelector('[data-library-view]', { timeout: 10_000 });
+  // A note whose table has no cells and whose stroke has no points used to take the page down.
   await page.evaluate(() => {
     const key = Object.keys(localStorage).find((k) => k.startsWith('notes.library.doc.'));
     const envelope = JSON.parse(localStorage.getItem(key));
     envelope.document.pages[0].media = [{ id: 'broken', kind: 'table', x: 50, y: 50, width: 300, height: 100, rotation: 0, zIndex: 1, rows: 2, columns: 2 }];
+    envelope.document.pages[0].strokes = [{ kind: 'freehand', id: 's', tool: 'pen', points: null }];
+    envelope.document.pages[0].dimensions = { width: 4e9, height: 'tall' };
     localStorage.setItem(key, JSON.stringify(envelope));
   });
   await page.click('[data-library-kind="document"]');
+  await page.waitForSelector('[data-page-index="0"]', { timeout: 10_000 });
+  await page.waitForTimeout(300);
+  check('a damaged note opens, with what could be read of it', (await page.$('[data-error-boundary]')) === null);
+  const size = await page.$eval('[data-page-index="0"]', (el) => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height }; });
+  check('on a page of a size that can be shown', size.w > 100 && size.w < 5000 && size.h > 100 && size.h < 5000, `${Math.round(size.w)}x${Math.round(size.h)}`);
+
+  // A panel that fails is put away with the reason; the note stays.
+  await page.click('[data-search-toggle]');
+  const told = await page.waitForFunction(() => /The search ran into a problem and was closed/.test(document.body.textContent ?? ''), null, { timeout: 10_000 }).then(() => true, () => false);
+  check('a panel that cannot be shown is closed, and says why', told && (await page.$('[data-error-boundary]')) === null && (await page.$('[data-page-index="0"]')) !== null);
+
+  // The page itself failing to draw: the screen's size is asked for while a thumbnail is drawn, and here asking throws.
+  await page.evaluate(() => {
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, get() { throw new TypeError('Cannot read the screen (ui-check)'); } });
+  });
+  await page.click('[data-arranger-toggle]');
   await page.waitForSelector('[data-error-boundary]', { timeout: 10_000 });
   check('the screen says something went wrong instead of going blank', (await page.textContent('[data-error-boundary]')).includes('Something went wrong showing this note'));
   const details = await page.textContent('[data-error-details]');
-  check('and shows what went wrong, to be read out', /TypeError|Cannot read/i.test(details ?? ''), (details ?? '').slice(0, 80));
+  check('and shows what went wrong, to be read out', /TypeError: Cannot read the screen/.test(details ?? ''), (details ?? '').slice(0, 80));
   check('with a way to try again and to reload', (await page.$('[data-error-retry]')) !== null);
   check('and the app around it is still there', (await page.$('#root')) !== null && (await page.$$('#root > div')).length === 1);
   await ctx.close();
