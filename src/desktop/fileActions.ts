@@ -137,16 +137,29 @@ async function writeTo(path: string): Promise<void> {
 export async function actionSave(): Promise<boolean> {
   const { filePath } = useDocumentStore.getState();
   if (!filePath || !isTauri()) return actionSaveAs();
-  const desktop = useDesktopStore.getState();
-  desktop.setBusy('save');
+  // A save already under way (a large PDF takes a moment) is the save: a second Ctrl+S must not start another
+  // write of the same file beside it.
+  if (useDesktopStore.getState().busy) return false;
+  const failure = await saveToOwnFile();
+  if (failure === null) return true;
+  // A file that cannot be written back (on Android, one another app only lent to read) is saved somewhere else.
+  notify(`Could not save to ${filePath}: ${failure}. Choose where to save it.`);
+  return actionSaveAs();
+}
+
+/**
+ * Write the note to the file it already has and nothing else: no dialog. `null` when it is saved, or why it is not
+ * (no file, or the write failed), for the caller to decide what follows: Save offers Save As, leaving the note asks.
+ */
+export async function saveToOwnFile(): Promise<string | null> {
+  const { filePath } = useDocumentStore.getState();
+  if (!filePath) return 'This note has no file yet';
+  useDesktopStore.getState().setBusy('save');
   try {
     await writeTo(filePath);
-    return true;
+    return null;
   } catch (err) {
-    // A file that cannot be written back (on Android, one another app only lent to read) is saved somewhere else.
-    notify(`Could not save to ${filePath}: ${errorMessage(err)}. Choose where to save it.`);
-    useDesktopStore.getState().setBusy(null);
-    return actionSaveAs();
+    return errorMessage(err);
   } finally {
     useDesktopStore.getState().setBusy(null);
   }

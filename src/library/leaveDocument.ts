@@ -7,7 +7,7 @@
  * stayed with.
  */
 import { selectIsDirty, useDocumentStore } from '../document/store';
-import { actionSave } from '../desktop/fileActions';
+import { actionSave, saveToOwnFile } from '../desktop/fileActions';
 import { clearDraft } from '../desktop/fileService';
 import { isTauri } from '../desktop/tauri';
 import { useDesktopStore } from '../desktop/desktopStore';
@@ -22,11 +22,19 @@ export function leaveStep(dirty: boolean, filePath: string | null): LeaveStep {
   return filePath ? 'save' : 'ask';
 }
 
-/** Save the open note to its own file. False (with a notice) when that failed: then the note stays open. */
+/**
+ * Save the open note to its own file, without asking anything. False (with a notice) when that failed — a full disk,
+ * or on Android a file another app only lent to read — and then leaving asks what to do with the note instead of
+ * opening a save dialog there is no way out of but to save.
+ */
 export async function saveToItsFile(): Promise<boolean> {
   const { filePath, document } = useDocumentStore.getState();
   if (!filePath) return false;
-  if (isTauri()) return actionSave();
+  if (isTauri()) {
+    const failure = await saveToOwnFile();
+    if (failure !== null) useDesktopStore.getState().setNotice({ text: `Could not save to ${filePath}: ${failure}` });
+    return failure === null;
+  }
   if (!filePath.startsWith(`${BROWSER_ROOT}/`)) return actionSave();
   try {
     updateBrowserLibraryDocument(document, filePath);

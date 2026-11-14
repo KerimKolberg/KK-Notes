@@ -12,8 +12,8 @@
  * the PDF's modification date, and the same date under a key of this app's own. Any app that writes the file updates
  * the first and not the second, and a PDF whose two differ opens as the PDF it now is.
  */
-import { decodePDFRawStream, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRawStream, PDFString } from 'pdf-lib';
-import { mayHoldNote, NOTE_STAMP_KEY } from './noteStamp';
+import { decodePDFRawStream, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRawStream, PDFRef, PDFString } from 'pdf-lib';
+import { mayHoldNote, NOTE_STAMP_KEY, wasAppendedTo } from './noteStamp';
 
 /** The attachment's name. */
 export const NOTE_ATTACHMENT = 'KK-Notes note.notex';
@@ -41,6 +41,41 @@ const text = (value: unknown): string | null =>
   value instanceof PDFString || value instanceof PDFHexString ? value.decodeText() : null;
 
 /**
+ * The PDF without the note attached to it, for a PDF that carries one that no longer matches it (changed by another
+ * app since). That PDF becomes the pages of a new note, and the next save attaches *that* note: with the old one
+ * left inside, every such round would wrap a note in a note and the file would grow by its own size each time.
+ * The bytes as they are when there is nothing to take out, or it cannot be taken out.
+ */
+export async function withoutEmbeddedNote(bytes: Uint8Array): Promise<Uint8Array> {
+  if (!mayHoldNote(bytes)) return bytes;
+  try {
+    const doc = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+    const names = doc.catalog.lookupMaybe(PDFName.of('Names'), PDFDict);
+    const files = names?.lookupMaybe(PDFName.of('EmbeddedFiles'), PDFDict);
+    const list = files?.lookupMaybe(PDFName.of('Names'), PDFArray);
+    if (!names || !list) return bytes;
+    let found = false;
+    for (let i = list.size() - 2; i >= 0; i -= 2) {
+      if (text(list.lookup(i)) !== NOTE_ATTACHMENT) continue;
+      const spec = list.get(i + 1);
+      const stream = list.lookupMaybe(i + 1, PDFDict)?.lookupMaybe(PDFName.of('EF'), PDFDict)?.get(PDFName.of('F'));
+      // The bytes themselves, not only the entry that names them: unlisted, they would still be written out.
+      if (stream instanceof PDFRef) doc.context.delete(stream);
+      if (spec instanceof PDFRef) doc.context.delete(spec);
+      list.remove(i + 1);
+      list.remove(i);
+      found = true;
+    }
+    if (!found) return bytes;
+    if (list.size() === 0) names.delete(PDFName.of('EmbeddedFiles'));
+    infoDict(doc)?.delete(PDFName.of(STAMP_KEY));
+    return await doc.save({ useObjectStreams: false });
+  } catch {
+    return bytes;
+  }
+}
+
+/**
  * The note saved into this PDF, as `.notex` text, or `null`: none in it, or the PDF has been changed since.
  *
  * A PDF this app never saved is the common case, and loading a large one twice only to find nothing is not free, so
@@ -48,7 +83,7 @@ const text = (value: unknown): string | null =>
  * `noteStamp.ts`).
  */
 export async function readEmbeddedNote(bytes: Uint8Array): Promise<string | null> {
-  if (!mayHoldNote(bytes)) return null;
+  if (!mayHoldNote(bytes) || wasAppendedTo(bytes)) return null;
   try {
     const doc = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
     const info = infoDict(doc);

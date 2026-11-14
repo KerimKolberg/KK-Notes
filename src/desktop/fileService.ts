@@ -80,7 +80,11 @@ export async function pickDocumentSavePath(title: string, currentPath: string | 
     defaultPath: safeFilename(title, pdf ? 'pdf' : NOTEX_EXTENSION),
     filters: pdf ? [...PDF_FILTERS, ...NOTEX_FILTERS] : [...NOTEX_FILTERS, ...PDF_FILTERS],
   });
-  return path === null ? null : withExtension(path, pdf ? 'pdf' : NOTEX_EXTENSION, [NOTEX_EXTENSION, 'json', 'pdf']);
+  if (path === null) return null;
+  // A content URI with no name in it says nothing of the kind chosen: it is the kind that was offered first, which
+  // is what Android made the file as (from the suggested name's extension).
+  if (pdf && isContentUri(path) && !/\.(notex|json)$/i.test(path.split(/[?#]/)[0] ?? path)) rememberPdfPath(path);
+  return withExtension(path, pdf ? 'pdf' : NOTEX_EXTENSION, [NOTEX_EXTENSION, 'json', 'pdf']);
 }
 
 /**
@@ -95,9 +99,22 @@ export function withExtension(path: string, extension: string, known: readonly s
   return has ? path : `${path}.${extension}`;
 }
 
-/** Whether a path chosen in Save As is a PDF rather than a note. */
+/**
+ * Files known to be PDFs whatever their address looks like. On Android a file arrives as a `content://` URI that
+ * often has no name in it at all (`…/document/1234`), and a PDF opened from one was taken for a note by its missing
+ * extension: Save then wrote the note's JSON over the PDF. What a file *is* was known when it was opened or made, so
+ * it is remembered here, for as long as the app runs, and the extension is only the answer for a path never seen.
+ */
+const knownPdfPaths = new Set<string>();
+
+/** This path (or content URI) holds a PDF: it was opened as one, or is being saved as one. */
+export function rememberPdfPath(path: string): void {
+  knownPdfPaths.add(path);
+}
+
+/** Whether a note's file is a PDF rather than a `.notex`: one remembered as a PDF, or named as one. */
 export function isPdfPath(path: string): boolean {
-  return /\.pdf$/i.test(path.split(/[?#]/)[0] ?? path);
+  return knownPdfPaths.has(path) || /\.pdf$/i.test(path.split(/[?#]/)[0] ?? path);
 }
 
 /**

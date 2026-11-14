@@ -83,7 +83,8 @@ export function TopBar() {
   const leave = (): void => {
     const step = currentLeaveStep();
     if (step === 'go') goHome();
-    else if (step === 'save') void saveToItsFile().then((saved) => saved && goHome());
+    // Saved to its file, home; a file that could not be written leaves the choice: into the library, let go, or stay.
+    else if (step === 'save') void saveToItsFile().then((saved) => (saved ? goHome() : setAskingLeave(true)));
     else setAskingLeave(true);
   };
   const leaveTitle = useDocumentStore((s) => s.document.title);

@@ -172,3 +172,16 @@ describe('a name typed into a save dialog', () => {
     expect(withExtension('content://com.android.providers/document/42', 'notex', known)).toBe('content://com.android.providers/document/42');
   });
 });
+
+describe('what kind of file a note has', () => {
+  it('is a PDF by its name, or because it was opened or made as one whatever its address looks like', async () => {
+    const { isPdfPath, rememberPdfPath } = await import('../fileService');
+    expect(isPdfPath('C:\\Notes\\Lecture.PDF')).toBe(true);
+    expect(isPdfPath('/home/me/Lecture.notex')).toBe(false);
+    // Android: a PDF handed over by another app, with no name in its address.
+    const uri = 'content://com.android.providers.downloads.documents/document/1234';
+    expect(isPdfPath(uri)).toBe(false);
+    rememberPdfPath(uri);
+    expect(isPdfPath(uri)).toBe(true);
+  });
+});

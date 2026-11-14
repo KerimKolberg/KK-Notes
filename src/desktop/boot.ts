@@ -13,7 +13,7 @@ import { fileBaseName, parseNotex, titleFromFileName } from './notex';
 import { classifyOpenWith, takeAndroidOpenWith, type OpenWithRequest } from './openWith';
 import { useDesktopStore } from './desktopStore';
 import { actionOpenPath } from './fileActions';
-import { clearDraft, getStartupFile, loadDraft } from './fileService';
+import { clearDraft, getStartupFile, loadDraft, rememberPdfPath } from './fileService';
 import { errorMessage } from '../lib/errors';
 import { mayHoldNote } from '../pdf/noteStamp';
 
@@ -69,6 +69,8 @@ export async function importPdfAsDocument(uri: string): Promise<void> {
   const { readFile } = await import('@tauri-apps/plugin-fs');
   const bytes = await readFile(uri);
   const name = fileBaseName(uri.split(/[?#]/)[0] ?? uri) || 'Imported PDF';
+  // Whatever the address looks like, this file is a PDF, and Save must write it back as one (`isPdfPath`).
+  rememberPdfPath(uri);
   await adoptPdfBytes(bytes, name, uri);
 }
 
@@ -150,7 +152,8 @@ async function adoptGoodNotes(bytes: Uint8Array, fileName: string): Promise<void
  */
 async function adoptPdfBytes(bytes: Uint8Array, name: string, path: string | null): Promise<void> {
   // The PDF library is fetched only for a PDF that carries the stamp of a note saved into it.
-  const note = mayHoldNote(bytes) ? await (await import('../pdf/embeddedNote')).readEmbeddedNote(bytes) : null;
+  const embedded = mayHoldNote(bytes) ? await import('../pdf/embeddedNote') : null;
+  const note = embedded ? await embedded.readEmbeddedNote(bytes) : null;
   if (note !== null) {
     // Named for the file, as any other PDF is: it may have been renamed since it was saved.
     const { document } = parseNotex(note);
@@ -159,7 +162,8 @@ async function adoptPdfBytes(bytes: Uint8Array, name: string, path: string | nul
     return;
   }
   const { loadPdfData } = await import('../pdf/import');
-  const copy = bytes.slice();
+  // A note in it that is out of date is left behind: the PDF as it now is becomes the pages.
+  const copy = embedded ? (await embedded.withoutEmbeddedNote(bytes)).slice() : bytes.slice();
   await adoptPdf(await loadPdfData(copy.buffer, name), name, path);
 }
 

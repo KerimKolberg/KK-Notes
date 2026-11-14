@@ -5,7 +5,8 @@ import { makeStroke } from '../../inking/__tests__/testUtils';
 import { createDocument, createPage } from '../../document/operations';
 import { rotatePage } from '../../document/rotatePage';
 import type { Document, PdfPageRef } from '../../document/types';
-import { readEmbeddedNote } from '../embeddedNote';
+import { readEmbeddedNote, withoutEmbeddedNote } from '../embeddedNote';
+import { mayHoldNote, wasAppendedTo } from '../noteStamp';
 import { exportDocumentToPdf } from '../export';
 
 function note(): Document {
@@ -44,6 +45,33 @@ describe('a note saved as a PDF', () => {
     const saved = await PDFDocument.load(await exportDocumentToPdf(doc, { note: encodeNotexBytes(doc) }));
     saved.setModificationDate(new Date(Date.now() + 60_000));
     expect(await readEmbeddedNote(await saved.save())).toBeNull();
+  });
+
+  it('opens as the PDF it now is once another app has added to it, even with the date untouched', async () => {
+    const doc = note();
+    const saved = await exportDocumentToPdf(doc, { note: encodeNotexBytes(doc) });
+    expect(wasAppendedTo(saved)).toBe(false);
+    // An incremental save: a second cross-reference section after the first file, nothing before it changed.
+    const tail = new TextEncoder().encode('\n1 0 obj\n<< >>\nendobj\nxref\n0 0\ntrailer\n<< >>\nstartxref\n0\n%%EOF\n');
+    const appended = new Uint8Array(saved.length + tail.length);
+    appended.set(saved);
+    appended.set(tail, saved.length);
+    expect(wasAppendedTo(appended)).toBe(true);
+    expect(await readEmbeddedNote(appended)).toBeNull();
+  });
+
+  it('leaves an out-of-date note behind, so a file saved round and round does not grow', async () => {
+    const doc = note();
+    const plain = await exportDocumentToPdf(doc);
+    const saved = await PDFDocument.load(await exportDocumentToPdf(doc, { note: encodeNotexBytes(doc) }));
+    saved.setModificationDate(new Date(Date.now() + 60_000));
+    const stale = await saved.save({ useObjectStreams: false });
+    expect(mayHoldNote(stale)).toBe(true);
+    const stripped = await withoutEmbeddedNote(stale);
+    expect(mayHoldNote(stripped)).toBe(false);
+    expect((await PDFDocument.load(stripped)).getPageCount()).toBe(2);
+    expect(stripped.length).toBeLessThan(plain.length * 1.2);
+    expect(await withoutEmbeddedNote(plain)).toBe(plain);
   });
 
   it('writes a turned PDF page turned', async () => {
