@@ -76,9 +76,13 @@ async function waitForServer(port, timeoutMs = 20_000) {
 // ---------------------------------------------------------------- assertions
 
 let failures = 0;
+const failed = [];
 function check(name, ok, detail = '') {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`);
-  if (!ok) failures += 1;
+  if (!ok) {
+    failures += 1;
+    failed.push(`${name}${detail ? ` — ${detail}` : ''}`);
+  }
 }
 
 /**
@@ -5062,5 +5066,6 @@ try {
   }
 }
 
-console.log(failures === 0 ? '\nui-check: all checks passed' : `\nui-check: ${failures} check(s) failed`);
+// Said again at the end: a failure is otherwise a line among a thousand, and a CI log shows its tail.
+console.log(failures === 0 ? '\nui-check: all checks passed' : `\nui-check: ${failures} check(s) failed\n${failed.map((f) => `  FAIL ${f}`).join('\n')}`);
 process.exit(failures === 0 ? 0 : 1);
