@@ -18,8 +18,11 @@ import {
   openDocumentWithPicker,
   pickDocumentSavePath,
   removeRecent,
+  FileChangedError,
+  confirmReplaceChangedFile,
   saveDocumentToPath,
   savePdfToPath,
+  type SaveOptions,
   toggleFullscreen,
 } from './fileService';
 import { titleFromFileName } from './notex';
@@ -111,18 +114,18 @@ export async function actionOpen(): Promise<void> {
  * Write the note to `path` in the file's own format: a `.notex`, or a PDF with what was written on it (and the note
  * inside it, so it opens here again editable). The note is then that file's.
  */
-async function writeTo(path: string): Promise<void> {
+async function writeTo(path: string, options: SaveOptions = {}): Promise<void> {
   const doc = useDocumentStore.getState().document;
   if (isPdfPath(path)) {
     useDesktopStore.getState().setBusy('export');
     useDocumentStore.getState().setExporting(true);
     try {
-      await savePdfToPath(doc, path);
+      await savePdfToPath(doc, path, options);
     } finally {
       useDocumentStore.getState().setExporting(false);
     }
   } else {
-    await saveDocumentToPath(doc, path);
+    await saveDocumentToPath(doc, path, options);
   }
   // What was written, not what is on screen now: a stroke drawn while a PDF was being made is not in it.
   useDocumentStore.getState().markSaved(path, doc);
@@ -142,24 +145,36 @@ export async function actionSave(): Promise<boolean> {
   if (useDesktopStore.getState().busy) return false;
   const failure = await saveToOwnFile();
   if (failure === null) return true;
+  if (failure === FILE_CHANGED) {
+    // Something else wrote the file while this note was open. Not written over unasked: that version may be an
+    // evening's writing on another device, brought in by sync.
+    if (!(await confirmReplaceChangedFile(filePath))) return false;
+    const second = await saveToOwnFile({ replace: true });
+    if (second === null) return true;
+    notify(`Save failed: ${second}`);
+    return false;
+  }
   // A file that cannot be written back (on Android, one another app only lent to read) is saved somewhere else.
   notify(`Could not save to ${filePath}: ${failure}. Choose where to save it.`);
   return actionSaveAs();
 }
 
+/** What `saveToOwnFile` answers when the file was changed by something else since the note was read from it. */
+export const FILE_CHANGED = 'The file was changed by something else (sync, or another app) since this note was opened';
+
 /**
  * Write the note to the file it already has and nothing else: no dialog. `null` when it is saved, or why it is not
  * (no file, or the write failed), for the caller to decide what follows: Save offers Save As, leaving the note asks.
  */
-export async function saveToOwnFile(): Promise<string | null> {
+export async function saveToOwnFile(options: SaveOptions = {}): Promise<string | null> {
   const { filePath } = useDocumentStore.getState();
   if (!filePath) return 'This note has no file yet';
   useDesktopStore.getState().setBusy('save');
   try {
-    await writeTo(filePath);
+    await writeTo(filePath, options);
     return null;
   } catch (err) {
-    return errorMessage(err);
+    return err instanceof FileChangedError ? FILE_CHANGED : errorMessage(err);
   } finally {
     useDesktopStore.getState().setBusy(null);
   }

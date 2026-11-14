@@ -206,11 +206,32 @@ pub fn save_document(app: AppHandle, request: Request<'_>) -> Result<FileInfo, S
     let target = Path::new(&path);
     ensure_kind(target, &WRITABLE_EXTENSIONS)?;
     if !is_content_uri(target) {
+        // The page says which version of the file its note came from (`x-expected-modified`, the time
+        // the file was last changed when it was read or last saved). A file changed since by something
+        // else — sync bringing in another device's writing, another app — is not written over unasked:
+        // the page is told, asks, and sends `x-replace` if the answer is to replace it.
+        let replace = request.headers().get("x-replace").is_some();
+        let expected = request.headers().get("x-expected-modified").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok());
+        if let (Some(expected), false) = (expected, replace) {
+            if changed_since(describe(target).ok().and_then(|info| info.modified_ms), expected) {
+                return Err(format!("{CHANGED_ON_DISK}: {} was changed by something else since it was opened", target.display()));
+            }
+        }
         if let Ok(folder) = history_folder(&app, target) {
-            let _ = history::snapshot(&folder, target, now_ms());
+            // What is replaced knowingly is always kept, however soon after the last version.
+            let _ = if replace { history::snapshot_always(&folder, target, now_ms()) } else { history::snapshot(&folder, target, now_ms()) };
         }
     }
     atomic_write(target, contents)
+}
+
+/// How a refused save begins, for the page to tell it from any other failure.
+pub const CHANGED_ON_DISK: &str = "changed-on-disk";
+
+/// Whether a file last changed at `now` is another version than the one the page read at `expected`.
+/// A file that is gone is not: there is nothing there to lose by writing.
+fn changed_since(now: Option<u64>, expected: u64) -> bool {
+    now.is_some_and(|now| now != expected)
 }
 
 /// The destination of a raw-body write: the percent-encoded `x-path` header.
@@ -427,6 +448,15 @@ mod tests {
         // A PDF is written, never read back as text.
         assert!(ensure_kind(Path::new("a.pdf"), &READABLE_EXTENSIONS).is_err());
         assert!(ensure_kind(Path::new("a.notex"), &READABLE_EXTENSIONS).is_ok());
+    }
+
+    #[test]
+    fn a_file_changed_since_it_was_read_is_noticed() {
+        assert!(!changed_since(Some(1_000), 1_000));
+        assert!(changed_since(Some(1_001), 1_000));
+        assert!(changed_since(Some(999), 1_000));
+        // Deleted meanwhile: nothing to write over.
+        assert!(!changed_since(None, 1_000));
     }
 
     #[test]

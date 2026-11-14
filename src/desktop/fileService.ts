@@ -8,6 +8,7 @@ import type { FullscreenStyle } from '../preferences/types';
 import { borderlessFrame, placementCorrection, type BorderlessFrame } from './borderless';
 import { NOTEX_EXTENSION, NOTEX_MIME, encodeNotex, encodeNotexBytes, parseNotex, type ParsedNotex } from './notex';
 import { isTauri, tauriDialog, tauriInvoke, tauriWindow } from './tauri';
+import { errorMessage } from '../lib/errors';
 
 export interface FileInfo {
   readonly path: string;
@@ -118,11 +119,57 @@ export function isPdfPath(path: string): boolean {
 }
 
 /**
+ * Which version of each file the open notes came from: when the file was last changed, as of reading it or last
+ * saving it. Sent with a save, so the shell can refuse to write over a file that something else has changed since
+ * (sync bringing in what was written on another device while this note sat open; another app). By path, for as long
+ * as the app runs: every tab's note is covered without each carrying it.
+ */
+const knownVersions = new Map<string, number>();
+
+/** The file at `path` is, as of now, what the open note holds: it was just read into it or written from it. */
+export function rememberFileVersion(info: Pick<FileInfo, 'path' | 'modifiedMs'> | null | undefined): void {
+  if (info && typeof info.modifiedMs === 'number') knownVersions.set(info.path, info.modifiedMs);
+}
+
+/** A save refused because the file was changed by something else since the note was read from it. */
+export class FileChangedError extends Error {
+  constructor(readonly path: string) {
+    super('The file was changed by something else since this note was opened');
+    this.name = 'FileChangedError';
+  }
+}
+
+/** How the shell's refusal begins (`commands.rs`, `CHANGED_ON_DISK`). */
+const CHANGED_ON_DISK = 'changed-on-disk';
+
+export interface SaveOptions {
+  /** Write over a file changed by something else since it was read; what is replaced goes into the version history. */
+  readonly replace?: boolean;
+}
+
+/** Write a note's file through the shell, saying which version of it the note came from. */
+async function writeNoteFile(path: string, bytes: Uint8Array, { replace = false }: SaveOptions): Promise<FileInfo> {
+  const expected = knownVersions.get(path);
+  const headers: Record<string, string> = { 'x-path': encodeURIComponent(path) };
+  if (replace) headers['x-replace'] = '1';
+  else if (expected !== undefined) headers['x-expected-modified'] = String(expected);
+  let info: FileInfo;
+  try {
+    info = await tauriInvoke<FileInfo>('save_document', bytes, { headers });
+  } catch (error) {
+    if (String(errorMessage(error)).startsWith(CHANGED_ON_DISK)) throw new FileChangedError(path);
+    throw error;
+  }
+  rememberFileVersion(info);
+  return info;
+}
+
+/**
  * Save the note as the PDF at `path`: its pages as any reader shows them, and the note inside, so it opens here again
  * with its ink editable (`pdf/embeddedNote.ts`). What was at `path` is kept in the version history first, as a note's
  * file is.
  */
-export async function savePdfToPath(doc: Document, path: string): Promise<FileInfo> {
+export async function savePdfToPath(doc: Document, path: string, options: SaveOptions = {}): Promise<FileInfo> {
   const { exportDocumentToPdf } = await import('../pdf/export');
   const bytes = await exportDocumentToPdf(doc, { note: encodeNotexBytes(doc) });
   if (isContentUri(path)) {
@@ -130,7 +177,7 @@ export async function savePdfToPath(doc: Document, path: string): Promise<FileIn
     await writeFile(path, bytes);
     return { path, bytes: bytes.byteLength, modifiedMs: Date.now() };
   }
-  return tauriInvoke<FileInfo>('save_document', bytes, { headers: { 'x-path': encodeURIComponent(path) } });
+  return writeNoteFile(path, bytes, options);
 }
 
 /**
@@ -141,14 +188,14 @@ export async function savePdfToPath(doc: Document, path: string): Promise<FileIn
  * hundreds of milliseconds on every save. A SAF content URI takes the fs plugin: it is not a path, and the native
  * writer cannot open one.
  */
-export async function saveDocumentToPath(doc: Document, path: string): Promise<FileInfo> {
+export async function saveDocumentToPath(doc: Document, path: string, options: SaveOptions = {}): Promise<FileInfo> {
   const bytes = encodeNotexBytes(doc);
   if (isContentUri(path)) {
     const { writeFile } = await import('@tauri-apps/plugin-fs');
     await writeFile(path, bytes);
     return { path, bytes: bytes.byteLength, modifiedMs: Date.now() };
   }
-  return tauriInvoke<FileInfo>('save_document', bytes, { headers: { 'x-path': encodeURIComponent(path) } });
+  return writeNoteFile(path, bytes, options);
 }
 
 /** Browser fallback: download the `.notex`. */
@@ -158,6 +205,7 @@ export function downloadDocument(doc: Document): void {
 
 export async function openDocumentFromPath(path: string): Promise<OpenedDocument> {
   const payload = await tauriInvoke<OpenedDocumentPayload>('open_document', { path });
+  rememberFileVersion(payload.info);
   return { ...parseNotex(payload.contents), path: payload.path };
 }
 
@@ -410,6 +458,19 @@ export async function toggleFullscreen(style: FullscreenStyle = 'window'): Promi
   }
   await document.documentElement.requestFullscreen();
   return true;
+}
+
+/** Ask whether to write over a file that something else changed while its note was open. */
+export async function confirmReplaceChangedFile(path: string): Promise<boolean> {
+  const message =
+    `"${path.split(/[\\/]/).pop() ?? path}" was changed by something else since you opened it ` +
+    '(sync from another device, or another app). Saving now replaces that version with what is on screen. ' +
+    'The replaced version is kept in the version history. To keep both, cancel and use Save As.';
+  if (isTauri()) {
+    const { ask } = await tauriDialog();
+    return ask(message, { title: 'This note changed on disk', kind: 'warning', okLabel: 'Replace it', cancelLabel: 'Cancel' });
+  }
+  return window.confirm(message);
 }
 
 export async function confirmDiscard(message: string): Promise<boolean> {

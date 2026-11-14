@@ -4,6 +4,7 @@
  * The shell does the keeping and the thinning (see `notes-sync`'s `history`); this is the
  * frontend's view of it: listing what is kept, putting one back, and saying when and how big.
  */
+import { rememberFileVersion } from './fileService';
 import { parseNotex } from './notex';
 import { tauriInvoke } from './tauri';
 import type { Document } from '../document/types';
@@ -19,6 +20,7 @@ export interface NoteVersion {
 interface OpenedPayload {
   readonly path: string;
   readonly contents: string;
+  readonly info?: { readonly path: string; readonly modifiedMs: number | null };
 }
 
 export async function listVersions(path: string): Promise<NoteVersion[]> {
@@ -31,6 +33,8 @@ export async function listVersions(path: string): Promise<NoteVersion[]> {
  */
 export async function restoreVersion(path: string, id: number): Promise<Document | null> {
   const opened = await tauriInvoke<OpenedPayload>('restore_version', { path, id });
+  // The file is now that version, written by this app: the next save is of the note it becomes.
+  rememberFileVersion(opened.info);
   return opened.contents === '' ? null : parseNotex(opened.contents).document;
 }
 
