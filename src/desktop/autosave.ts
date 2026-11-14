@@ -34,3 +34,15 @@ export function nextAutosaveStep({ penNearby, deferredMs }: AutosaveContext): Au
   if (!penNearby) return 'save';
   return deferredMs >= AUTOSAVE_MAX_DEFER_MS ? 'save' : 'wait';
 }
+
+/** Where unsaved writing goes when the app goes out of sight. */
+export type HiddenSaveStep = 'file' | 'draft';
+
+/**
+ * A note with a file of its own is saved to it, as going Home saves it. Not a PDF: writing one back means making the
+ * whole PDF again, seconds of work the system may not grant an app it is putting away, so that goes to the draft,
+ * which is quick. Nor while another save or an export is under way, and not in a browser, which has no file to write.
+ */
+export function hiddenSaveStep(input: { native: boolean; filePath: string | null; isPdf: boolean; busy: boolean }): HiddenSaveStep {
+  return input.native && input.filePath !== null && !input.isPdf && !input.busy ? 'file' : 'draft';
+}

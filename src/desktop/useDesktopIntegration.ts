@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
 import { selectIsDirty, useDocumentStore } from '../document/store';
-import { actionExportPdf, actionNew, actionOpen, actionSave, actionSaveAs, actionToggleFullscreen, refreshRecent } from './fileActions';
+import { actionExportPdf, actionNew, actionOpen, actionSave, actionSaveAs, actionToggleFullscreen, refreshRecent, saveToOwnFile } from './fileActions';
 import { isPenNearby } from '../inking/engine/gestureState';
-import { AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_RECHECK_MS, nextAutosaveStep } from './autosave';
-import { saveDraft, setWindowTitle } from './fileService';
+import { AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_RECHECK_MS, hiddenSaveStep, nextAutosaveStep } from './autosave';
+import { useDesktopStore } from './desktopStore';
+import { isPdfPath, saveDraft, setWindowTitle } from './fileService';
 import { isTauri } from './tauri';
 import { isEditableTarget } from '../lib/dom';
 
@@ -54,6 +55,27 @@ export function useDesktopIntegration(): void {
       unsubscribe();
       if (timer) clearTimeout(timer);
     };
+  }, []);
+
+  // The app going out of sight is the last moment it can count on. Android may end a backgrounded app without a
+  // word, and a window closed to the tray may not come back before the PC is shut down. So unsaved writing is put
+  // away then, not a second and a half later: into the note's own file where it has one (what going Home does, and
+  // as quietly), else into the crash draft.
+  useEffect(() => {
+    const putAway = (): void => {
+      if (document.visibilityState !== 'hidden') return;
+      const state = useDocumentStore.getState();
+      if (!selectIsDirty(state)) return;
+      const step = hiddenSaveStep({ native: isTauri(), filePath: state.filePath, isPdf: state.filePath !== null && isPdfPath(state.filePath), busy: useDesktopStore.getState().busy !== null });
+      if (step === 'file') {
+        // A file that will not take it (changed by sync meanwhile, read-only) leaves the draft to hold the work.
+        void saveToOwnFile().then((failure) => (failure === null ? undefined : saveDraft(state.document)));
+      } else {
+        void saveDraft(state.document);
+      }
+    };
+    document.addEventListener('visibilitychange', putAway);
+    return () => document.removeEventListener('visibilitychange', putAway);
   }, []);
 
   // Window title: "Title • — Notes". Only when it changes: this runs for every change

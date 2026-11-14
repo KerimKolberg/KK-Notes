@@ -21,3 +21,15 @@ describe('when a draft is written', () => {
     expect(AUTOSAVE_MAX_DEFER_MS).toBeGreaterThan(AUTOSAVE_DEBOUNCE_MS * 4);
   });
 });
+
+describe('when the app goes out of sight', () => {
+  it('saves a note to its own file, and anything else to the draft', async () => {
+    const { hiddenSaveStep } = await import('../autosave');
+    const note = { native: true, filePath: 'C:\\Notes\\Physics.notex', isPdf: false, busy: false };
+    expect(hiddenSaveStep(note)).toBe('file');
+    expect(hiddenSaveStep({ ...note, filePath: null })).toBe('draft');
+    expect(hiddenSaveStep({ ...note, isPdf: true })).toBe('draft');
+    expect(hiddenSaveStep({ ...note, busy: true })).toBe('draft');
+    expect(hiddenSaveStep({ ...note, native: false })).toBe('draft');
+  });
+});

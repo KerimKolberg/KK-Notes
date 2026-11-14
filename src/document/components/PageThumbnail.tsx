@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { THUMBNAIL_WIDTH } from '../constants';
 import type { ReorderItemProps } from '../hooks/usePointerReorder';
 import { useRasterBitmap } from '../hooks/useRasterBitmap';
@@ -18,7 +18,20 @@ export interface PageThumbnailProps {
 /** Thumbnail card: cached bitmap of the page plus its number. */
 export const PageThumbnail = memo(function PageThumbnail({ page, index, selected, checked, dragging, dropTarget, itemProps }: PageThumbnailProps) {
   const dpr = typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, 2);
-  const bitmap = useRasterBitmap(page.id, page, THUMBNAIL_WIDTH * dpr);
+  // Drawn only while it is on screen, or near it. The arranger lists every page, and a hundred-page PDF asked for a
+  // hundred pictures the moment it opened, to show six: seconds of work and more bitmaps than the cache keeps, so the
+  // ones in view were thrown out to make room for ones that were not. What was drawn stays on the canvas when the
+  // thumbnail scrolls away; only the asking stops.
+  const itemRef = useRef<HTMLLIElement>(null);
+  const [near, setNear] = useState(() => typeof IntersectionObserver !== 'function');
+  useEffect(() => {
+    const node = itemRef.current;
+    if (!node || typeof IntersectionObserver !== 'function') return;
+    const observer = new IntersectionObserver((entries) => setNear(entries.some((e) => e.isIntersecting)), { rootMargin: '400px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const bitmap = useRasterBitmap(page.id, near ? page : null, THUMBNAIL_WIDTH * dpr);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -39,7 +52,7 @@ export const PageThumbnail = memo(function PageThumbnail({ page, index, selected
   const aspect = `${page.dimensions.width} / ${page.dimensions.height}`;
 
   return (
-    <li className="list-none" data-thumbnail-index={index}>
+    <li ref={itemRef} className="list-none" data-thumbnail-index={index}>
       <button
         type="button"
         ref={ref}

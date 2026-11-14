@@ -349,6 +349,28 @@ second, and a PDF whose two differ opens as the PDF it now is, writing and all. 
 the note, for sending. Restoring an earlier version of a PDF reopens it as a PDF (`restore_version` returns no text for
 one).
 
+What a file *is* is not read off its name. On Android a file handed over by another app is a `content://` URI that
+often has no name in it at all (`…/document/1234`), and a PDF opened from one was taken for a note by its missing
+extension: Save wrote the note's JSON over the PDF. The kind is known when the file is opened or made, so it is
+remembered then (`rememberPdfPath`), and the extension answers only for a path never seen. A PDF saved here that
+another app has *appended* to (a second cross-reference section, which is how most readers save an annotation, some
+without touching the date) also opens as the PDF it now is (`noteStamp.ts`, `wasAppendedTo`), and the out-of-date note
+inside it is left behind on import, or each such round would wrap a note in a note and double the file.
+
+**A file changed by something else is not written over unasked.** A note sits open, or parked in a tab, while sync
+brings in what was written in it on another device; the next save used to replace that with what was on screen. Now
+every save says which version of the file the note came from (the file's modification time when it was read or last
+saved: `rememberFileVersion`, sent as `x-expected-modified`), and `save_document` refuses when the file has changed
+since. Save then asks: replace it (what is replaced always goes into the version history, however soon after the last
+version), or cancel and use Save As to keep both. Leaving a note never replaces silently: it says the file changed and
+offers *Save to library*, which makes a copy. A file that cannot be written at all (read-only on Android, a full
+disk) gets the same question on the way out, where it used to open a save dialog with no way out but to save.
+
+**Out of sight, saved.** Unsaved writing went to the crash draft a second and a half after the last stroke, which is
+no help to an app the system ends the moment it is put in the background, as Android may. When the window is hidden
+(`visibilitychange`), a note with a file of its own is saved to it at once, as going Home saves it; a PDF, which takes
+seconds to write back, and a note with no file go to the draft at once instead (`autosave.ts`, `hiddenSaveStep`).
+
 **Folders** are real directories and filing a note is a real move — drag a
 card onto a folder. Nothing overwrites: a name already taken gets a numbered
 suffix, because dragging a file onto a folder is not a request to destroy
@@ -747,6 +769,11 @@ the focused page. Operations: add before/after, duplicate, delete (disabled
 on the last page), template and background per page or for all pages, and
 single click to jump. The top bar shows `Page n / N`, a jump field, prev/next,
 continuous/single toggle, zoom and the arranger toggle.
+
+A thumbnail is drawn only while it is on screen or near it (an `IntersectionObserver` in `PageThumbnail`). The
+arranger lists every page, and a hundred-page PDF asked for a hundred pictures the moment it opened, to show six: more
+than the raster cache keeps (48), so the pages in view were thrown out to make room for thumbnails nobody could see.
+What was drawn stays on its canvas when it scrolls away; only the asking stops.
 
 **Several pages at once.** For a long PDF, where the pages to change are 2, 15,
 20 and 73, the arranger picks pages: *Select* in its header, Ctrl-click (⌘ on a
