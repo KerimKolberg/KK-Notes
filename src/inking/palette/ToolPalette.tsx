@@ -40,20 +40,9 @@ import { SlideStrip } from '../../ui/SlideStrip';
 import { PANEL_MARGIN, useDraggablePanel } from '../../ui/useDraggablePanel';
 import { useSafeAreaInsets } from '../../ui/useSafeAreaInsets';
 import type { ToolSettings, ToolType } from '../types';
-import {
-  BRUSH_ICONS,
-  BrushFlyout,
-  EraserOptions,
-  HighlighterOptions,
-  LassoOptions,
-  LineOptions,
-  PaletteSettings,
-  PlaneOptions,
-  StrokeOptions,
-  ToolConfigRow,
-  WashiOptions,
-  brushLabel,
-} from './parts';
+import { BRUSH_ICONS, BrushFlyout, StrokeOptions, ToolConfigRow, brushLabel } from './parts';
+import { PaletteSettings } from './PaletteSettings';
+import { EraserOptions, HighlighterOptions, LassoOptions, LineOptions, PlaneOptions, WashiOptions } from './toolOptions';
 
 export interface ToolPaletteProps {
   settings: Readonly<ToolSettings>;

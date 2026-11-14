@@ -15,6 +15,7 @@ import { useDesktopStore } from './desktopStore';
 import { actionOpenPath } from './fileActions';
 import { clearDraft, getStartupFile, loadDraft } from './fileService';
 import { errorMessage } from '../lib/errors';
+import { mayHoldNote } from '../pdf/noteStamp';
 
 export interface BootTarget {
   /** Where to go. */
@@ -148,8 +149,8 @@ async function adoptGoodNotes(bytes: Uint8Array, fileName: string): Promise<void
  * then writes back to, or `null` (a browser, which has no path to write to).
  */
 async function adoptPdfBytes(bytes: Uint8Array, name: string, path: string | null): Promise<void> {
-  const { readEmbeddedNote } = await import('../pdf/embeddedNote');
-  const note = await readEmbeddedNote(bytes);
+  // The PDF library is fetched only for a PDF that carries the stamp of a note saved into it.
+  const note = mayHoldNote(bytes) ? await (await import('../pdf/embeddedNote')).readEmbeddedNote(bytes) : null;
   if (note !== null) {
     // Named for the file, as any other PDF is: it may have been renamed since it was saved.
     const { document } = parseNotex(note);

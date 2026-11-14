@@ -13,10 +13,11 @@
  * the first and not the second, and a PDF whose two differ opens as the PDF it now is.
  */
 import { decodePDFRawStream, PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFRawStream, PDFString } from 'pdf-lib';
+import { mayHoldNote, NOTE_STAMP_KEY } from './noteStamp';
 
 /** The attachment's name. */
 export const NOTE_ATTACHMENT = 'KK-Notes note.notex';
-const STAMP_KEY = 'KKNotesSaved';
+const STAMP_KEY = NOTE_STAMP_KEY;
 
 /** Put the note into the PDF being made, and stamp it. Before `save()`, which is when pdf-lib writes attachments. */
 export async function attachNote(out: PDFDocument, notex: Uint8Array, when: Date): Promise<void> {
@@ -39,24 +40,15 @@ function infoDict(doc: PDFDocument): PDFDict | undefined {
 const text = (value: unknown): string | null =>
   value instanceof PDFString || value instanceof PDFHexString ? value.decodeText() : null;
 
-/** Whether `needle` (ASCII) is somewhere in `bytes`. */
-function contains(bytes: Uint8Array, needle: string): boolean {
-  const first = needle.charCodeAt(0);
-  outer: for (let i = bytes.indexOf(first); i !== -1 && i <= bytes.length - needle.length; i = bytes.indexOf(first, i + 1)) {
-    for (let j = 1; j < needle.length; j++) if (bytes[i + j] !== needle.charCodeAt(j)) continue outer;
-    return true;
-  }
-  return false;
-}
-
 /**
  * The note saved into this PDF, as `.notex` text, or `null`: none in it, or the PDF has been changed since.
  *
  * A PDF this app never saved is the common case, and loading a large one twice only to find nothing is not free, so
- * the bytes are looked through for the stamp first.
+ * the bytes are looked through for the stamp first (callers that can, do that before fetching this module at all:
+ * `noteStamp.ts`).
  */
 export async function readEmbeddedNote(bytes: Uint8Array): Promise<string | null> {
-  if (!contains(bytes, STAMP_KEY)) return null;
+  if (!mayHoldNote(bytes)) return null;
   try {
     const doc = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
     const info = infoDict(doc);

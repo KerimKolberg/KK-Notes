@@ -82,6 +82,8 @@ jobs:
             src-tauri/target
           key: cargo-ci-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: cargo-ci-${{ runner.os }}-
+      # Compiling the shell's Windows resources (its icon and manifest) from Linux takes LLVM's `llvm-rc`.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends llvm
       # The library, sync and HTTP crates have no webview in them and are tested natively.
       - run: cargo test --manifest-path src-tauri/Cargo.toml -p notes-sync -p notex-http
       # The shell is type-checked and linted for Windows from here, without the HTTPS feature

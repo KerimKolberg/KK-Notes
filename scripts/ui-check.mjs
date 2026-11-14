@@ -4018,7 +4018,8 @@ let server = null;
 if (!(await isListening(PORT))) {
   if (urlArg) skip(`nothing is listening on ${BASE}`);
   if (!existsSync('dist/index.html')) skip('dist/ is missing — run `npm run build` first');
-  server = spawn('node', ['node_modules/vite/bin/vite.js', 'preview', '--port', String(PORT), '--strictPort'], {
+  // On the address the wait below looks at: left to itself, `localhost` can come up on IPv6 only.
+  server = spawn('node', ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', String(PORT), '--strictPort'], {
     stdio: 'ignore',
     detached: true,
   });
