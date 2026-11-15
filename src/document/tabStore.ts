@@ -12,6 +12,7 @@
  * the strip cannot cost frames.
  */
 import { create } from 'zustand';
+import { isPdfPath } from '../desktop/fileService';
 import { isTauri } from '../desktop/tauri';
 import { createStrokeId } from '../inking/engine/ids';
 import { useDocumentStore } from './store';
@@ -209,6 +210,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     set({ tabs: [...withCapture, opened], activeId: id, clock: clock + 1 });
     restoreSession(session);
     void get().park();
+    void afterSwitch(captured?.id ?? null, id);
     return id;
   },
 
@@ -293,12 +295,15 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     });
     restoreSession(session);
     void get().park();
+    void afterSwitch(captured?.id ?? null, id);
   },
 
   close: async (id) => {
     const { tabs, activeId } = get();
     const closing = tabs.find((tab) => tab.id === id);
     if (!closing) return;
+    // Closed is let go: its draft with it, or the next start would bring back what was closed.
+    void forgetTabDraft(id);
     // A closed document cannot stay on screen beside the editor.
     if (get().splitId === id) set({ splitId: null });
 
@@ -406,6 +411,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         clock: clock + 2,
       });
       void get().park();
+      void afterSwitch(ownTab, id);
       return id;
     }
 
@@ -433,6 +439,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       clock: clock + 1,
     });
     void get().park();
+    void afterSwitch(restored?.id ?? null, id);
     return id;
   },
 
@@ -493,7 +500,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   park: async () => {
     const { tabs, activeId } = get();
     if (!activeId) return;
-    const ids = tabsToPark(tabs, [activeId, get().splitId]);
+    const ids = tabsToPark(tabs, [activeId, get().splitId], undefined, isPdfPath);
     if (ids.length === 0) return;
     const parked = tabs.map((tab) => (ids.includes(tab.id) ? parkTab(tab) : tab));
     set({ tabs: parked });
@@ -503,6 +510,122 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     }
   },
 }));
+
+// ---------------------------------------------------------------------------
+// Unsaved writing in a tab that is not on screen
+// ---------------------------------------------------------------------------
+//
+// Only the note on screen had a crash draft. One with unsaved writing put behind another tab lived in memory alone,
+// and a crash, a dead battery or Android ending the app took it. So when a tab goes out of sight with unsaved
+// writing it is put somewhere that outlives the app: its own file if it has one (as going Home saves it), else a
+// draft of its own, which the next start brings back as a tab. None of this is on the drawing path: it runs when a
+// tab is switched, opened or closed.
+
+async function forgetTabDraft(id: string): Promise<void> {
+  try {
+    const { clearTabDrafts } = await import('../desktop/fileService');
+    await clearTabDrafts(id);
+  } catch {
+    /* a draft that stays is a tab brought back needlessly, not work lost */
+  }
+}
+
+/** Write a note that has a file of its own to it; false when it has none, is a PDF, or would not be written. */
+async function saveToItsOwnFile(session: TabSession): Promise<boolean> {
+  const path = session.filePath;
+  if (!path || isPdfPath(path)) return false;
+  try {
+    if (isTauri()) {
+      const { saveDocumentToPath } = await import('../desktop/fileService');
+      // Refused if something else changed the file meanwhile (sync): then the draft holds the work instead.
+      await saveDocumentToPath(session.document, path);
+      return true;
+    }
+    const { BROWSER_ROOT, updateBrowserLibraryDocument } = await import('../library/libraryService');
+    if (!path.startsWith(`${BROWSER_ROOT}/`)) return false;
+    updateBrowserLibraryDocument(session.document, path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Put a tab's unsaved writing somewhere that outlives the app. Exported for the tests. */
+export async function protectTab(id: string): Promise<void> {
+  const before = useTabStore.getState().tabs.find((tab) => tab.id === id)?.session;
+  if (!before || !sessionIsDirty(before)) return;
+  if (await saveToItsOwnFile(before)) {
+    const saved: TabSession = {
+      ...before,
+      savedPages: before.document.pages,
+      savedTitle: before.document.title,
+      savedCover: before.document.cover,
+      savedRecordings: before.document.recordings,
+    };
+    // Only if the tab still holds what was written out: it may have been shown and written in again meanwhile.
+    if (useTabStore.getState().activeId === id) {
+      const live = useDocumentStore.getState();
+      if (live.document === before.document) live.markSaved(before.filePath, before.document);
+    } else {
+      useTabStore.setState((state) => ({
+        tabs: state.tabs.map((t) => (t.id === id && t.session === before ? { ...t, session: saved, dirty: false } : t)),
+      }));
+    }
+    await forgetTabDraft(id);
+    return;
+  }
+  try {
+    const { saveTabDraft } = await import('../desktop/fileService');
+    await saveTabDraft(id, before.document);
+  } catch {
+    /* best effort, as every draft is */
+  }
+}
+
+/**
+ * A tab has just been put behind another. The one left is protected; the one shown takes over the draft of the note
+ * on screen (which until now held the other), and gives up the draft it had while it was out of sight.
+ */
+async function afterSwitch(outgoingId: string | null, incomingId: string): Promise<void> {
+  if (outgoingId && outgoingId !== incomingId) await protectTab(outgoingId);
+  try {
+    const { clearDraft, saveDraft } = await import('../desktop/fileService');
+    if (useTabStore.getState().activeId !== incomingId) return;
+    const live = captureSession();
+    if (sessionIsDirty(live)) await saveDraft(live.document);
+    else await clearDraft();
+    await forgetTabDraft(incomingId);
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
+ * Bring back, as tabs behind the open note, the notes whose drafts a start found (`boot.ts`). They are unsaved work:
+ * each keeps its draft, under its tab's id, until it is saved, closed or shown.
+ */
+export function restoreDraftTabs(drafts: readonly { id: string; document: Document }[]): void {
+  if (drafts.length === 0) return;
+  const tabs = useTabStore.getState();
+  tabs.adoptCurrent();
+  const { clock } = useTabStore.getState();
+  const taken = new Set(useTabStore.getState().tabs.map((tab) => tab.id));
+  const restored: Tab[] = drafts
+    .filter((draft) => !taken.has(draft.id))
+    .slice(0, Math.max(0, MAX_TABS - taken.size))
+    .map((draft, index) => {
+      const session: TabSession = {
+        document: draft.document,
+        filePath: null,
+        savedPages: null,
+        savedTitle: null,
+        savedCover: undefined,
+        readOnly: false,
+      };
+      return { id: draft.id, title: tabTitle(session), path: null, session, dirty: true, usedAt: clock - drafts.length + index };
+    });
+  useTabStore.setState((state) => ({ tabs: [...state.tabs, ...restored] }));
+}
 
 /**
  * Put a recording in a note that is open in a tab but not the one on screen (its recording went on as the tabs were

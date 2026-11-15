@@ -520,6 +520,67 @@ async function checkFileDrop(browser) {
 }
 
 /**
+ * Unsaved writing in a tab that is not on screen survives the app ending: each such tab has a draft of its own, and
+ * the next start brings them all back, the one that was on screen in front and the others in tabs behind it.
+ */
+async function checkTabDrafts(browser) {
+  console.log('unsaved tabs after the app ends, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: DESKTOP.width, height: DESKTOP.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-library-view]', { timeout: 20_000 });
+  const drop = async (name) => {
+    const transfer = await page.evaluateHandle(
+      ({ name, bytes }) => {
+        const t = new DataTransfer();
+        t.items.add(new File([new Uint8Array(bytes)], name, { type: 'application/octet-stream' }));
+        return t;
+      },
+      { name, bytes: [...goodnotesFixture()] },
+    );
+    const target = (await page.$('[data-library-view]')) ? '[data-library-view]' : '[data-page-stage]';
+    await page.dispatchEvent(target, 'dragover', { dataTransfer: transfer });
+    await page.dispatchEvent(target, 'drop', { dataTransfer: transfer });
+    await page.waitForSelector('[data-report-dismiss]', { state: 'visible', timeout: 8_000 }).catch(() => undefined);
+    await page.click('[data-report-dismiss]').catch(() => undefined);
+  };
+  const tabDrafts = () => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('notes.autosave.draft.tab.')).length);
+  const titles = () => page.$$eval('[data-tab] [role="tab"]', (els) => els.map((el) => el.textContent?.trim() ?? ''));
+
+  // Two imported notebooks, neither saved anywhere: the first goes behind the second.
+  await drop('First.goodnotes');
+  await drop('Second.goodnotes');
+  await page.waitForSelector('[data-tab-strip]', { state: 'visible', timeout: 5_000 });
+  const kept = await page.waitForFunction(() => Object.keys(localStorage).some((k) => k.startsWith('notes.autosave.draft.tab.')), null, { timeout: 5_000 }).then(() => true, () => false);
+  check('a tab put behind another with unsaved writing gets a draft of its own', kept && (await tabDrafts()) === 1, `${await tabDrafts()}`);
+  const front = await page.waitForFunction(() => (localStorage.getItem('notes.autosave.draft') ?? '').includes('"Second"'), null, { timeout: 5_000 }).then(() => true, () => false);
+  check('and the draft of the note on screen is the note now on screen', front);
+
+  // The app ends without a word, and is started again.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-tab-strip]', { state: 'visible', timeout: 15_000 }).catch(() => undefined);
+  const back = await titles();
+  check('the next start brings both back, in tabs', back.length === 2 && back.some((t) => t.includes('First')) && back.some((t) => t.includes('Second')), JSON.stringify(back));
+  check('with the one that was on screen in front', (await page.$eval('[data-tab][data-tab-active]', (e) => e.textContent ?? '').catch(() => '')).includes('Second'));
+  check('and says so', await page.waitForFunction(() => /Restored autosaved draft.*1 more unsaved note/.test(document.body.textContent ?? ''), null, { timeout: 5_000 }).then(() => true, () => false));
+
+  // Shown again, the tab hands its draft to the note on screen; closed, its draft goes with it.
+  await page.click('[data-tab]:not([data-tab-active]) [role="tab"]');
+  const handed = await page.waitForFunction(() => (localStorage.getItem('notes.autosave.draft') ?? '').includes('"First"'), null, { timeout: 5_000 }).then(() => true, () => false);
+  check('a tab shown again is the note on screen, in the draft as well', handed);
+  await page.waitForFunction(() => Object.keys(localStorage).filter((k) => k.startsWith('notes.autosave.draft.tab.')).length === 1, null, { timeout: 5_000 }).catch(() => undefined);
+  check('and the tab now behind it has the one draft there is', (await tabDrafts()) === 1, `${await tabDrafts()}`);
+  await page.click('[data-tab]:not([data-tab-active]) [data-tab-close]');
+  await page.click('[data-close-discard]', { timeout: 3_000 }).catch(() => undefined);
+  await page.waitForFunction(() => Object.keys(localStorage).filter((k) => k.startsWith('notes.autosave.draft.tab.')).length === 0, null, { timeout: 5_000 }).catch(() => undefined);
+  check('a closed tab takes its draft with it', (await tabDrafts()) === 0, `${await tabDrafts()}`);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Tabs.
  *
  * Driven through the real drop path, because the interesting claim is the one
@@ -5014,6 +5075,7 @@ try {
     checkGoodNotesImport,
     checkFileDrop,
     checkTabs,
+    checkTabDrafts,
     checkSplit,
     checkToolbar,
     checkDocks,

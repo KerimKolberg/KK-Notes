@@ -87,6 +87,16 @@ describe('what may be parked', () => {
     expect(isParkable(tab({ session: imported, path: null }))).toBe(false);
   });
 
+  it('keeps a note whose file is a PDF in memory: coming back means importing it again', () => {
+    const isPdf = (path: string) => path.endsWith('.pdf');
+    const pdfTab = tab({ id: 'pdf', path: '/docs/Lecture.pdf', usedAt: 0 });
+    expect(isParkable(pdfTab, isPdf)).toBe(false);
+    expect(isParkable(tab(), isPdf)).toBe(true);
+    const tabs = [pdfTab, tab({ id: 'a', usedAt: 1 }), tab({ id: 'b', usedAt: 2 }), tab({ id: 'c', usedAt: 3 }), tab({ id: 'd', usedAt: 4 })];
+    expect(tabsToPark(tabs, ['d'], 3, isPdf)).not.toContain('pdf');
+    expect(tabsToPark(tabs, ['d'], 3, isPdf).length).toBe(2);
+  });
+
   it('does not park what is already parked', () => {
     const parked = tab({ session: null });
     expect(isParkable(parked)).toBe(false);

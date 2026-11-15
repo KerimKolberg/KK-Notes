@@ -88,9 +88,15 @@ export const MAX_LIVE_TABS = 3;
  */
 export const MAX_TABS = 12;
 
-/** Is the document in this tab worth keeping in memory, or can disk hold it? */
-export function isParkable(tab: Tab): boolean {
-  return tab.session !== null && !tab.dirty && tab.path !== null;
+/**
+ * Is the document in this tab worth keeping in memory, or can disk hold it?
+ *
+ * A note whose file is a PDF stays in memory: coming back from disk means importing the PDF again, which is not the
+ * quick re-read a `.notex` is, and the reader that brings a parked tab back reads notes only. (PDF tabs had no file
+ * at all before Save could write one back, so they were never parked; this keeps that.)
+ */
+export function isParkable(tab: Tab, isPdf: (path: string) => boolean = () => false): boolean {
+  return tab.session !== null && !tab.dirty && tab.path !== null && !isPdf(tab.path);
 }
 
 /** Tabs holding a document in memory right now. */
@@ -114,6 +120,7 @@ export function tabsToPark(
   tabs: readonly Tab[],
   pinned: readonly (string | null)[],
   maxLive = MAX_LIVE_TABS,
+  isPdf: (path: string) => boolean = () => false,
 ): readonly string[] {
   const onScreen = new Set(pinned.filter((id): id is string => id !== null));
   const live = liveTabs(tabs);
@@ -123,7 +130,7 @@ export function tabsToPark(
   if (excess <= 0) return [];
 
   const candidates = live
-    .filter((tab) => !onScreen.has(tab.id) && isParkable(tab))
+    .filter((tab) => !onScreen.has(tab.id) && isParkable(tab, isPdf))
     .sort((a, b) => a.usedAt - b.usedAt);
 
   const park: string[] = [];

@@ -300,6 +300,63 @@ export async function saveDraft(doc: Document): Promise<void> {
   }
 }
 
+// Drafts of the tabs that are not on screen (see `commands.rs`, and `document/tabDrafts.ts` for when they are
+// written). In a browser they are in `localStorage`, best effort, as the draft above is.
+
+const TAB_DRAFT_KEY = `${DRAFT_KEY}.tab.`;
+
+export async function saveTabDraft(id: string, doc: Document): Promise<void> {
+  if (isTauri()) {
+    await tauriInvoke<FileInfo>('save_tab_draft', encodeNotexBytes(doc), { headers: { 'x-draft-id': id } });
+    return;
+  }
+  try {
+    localStorage.setItem(TAB_DRAFT_KEY + id, encodeNotex(doc));
+  } catch {
+    /* quota exceeded or storage disabled */
+  }
+}
+
+/** Every tab draft there is, oldest first. One that will not read is left out. */
+export async function loadTabDrafts(): Promise<{ id: string; draft: ParsedNotex }[]> {
+  let raw: { id: string; contents: string }[] = [];
+  if (isTauri()) {
+    raw = await tauriInvoke<{ id: string; contents: string }[]>('load_tab_drafts');
+  } else {
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(TAB_DRAFT_KEY)) raw.push({ id: key.slice(TAB_DRAFT_KEY.length), contents: localStorage.getItem(key) ?? '' });
+      }
+    } catch {
+      return [];
+    }
+  }
+  const out: { id: string; draft: ParsedNotex }[] = [];
+  for (const { id, contents } of raw) {
+    try {
+      out.push({ id, draft: parseNotex(contents) });
+    } catch {
+      /* not a note any more: nothing to bring back */
+    }
+  }
+  return out;
+}
+
+/** Let go of one tab's draft, or (no id) of all of them. */
+export async function clearTabDrafts(id?: string): Promise<void> {
+  if (isTauri()) {
+    await tauriInvoke<void>('clear_tab_drafts', { id: id ?? null });
+    return;
+  }
+  try {
+    const keys = id !== undefined ? [TAB_DRAFT_KEY + id] : Object.keys(localStorage).filter((k) => k.startsWith(TAB_DRAFT_KEY));
+    for (const key of keys) localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function loadDraft(): Promise<ParsedNotex | null> {
   if (isTauri()) {
     const payload = await tauriInvoke<OpenedDocumentPayload | null>('load_draft');

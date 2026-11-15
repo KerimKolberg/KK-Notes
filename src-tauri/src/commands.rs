@@ -327,6 +327,90 @@ pub fn clear_draft(app: AppHandle) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// Drafts of the tabs that are not on screen
+// ---------------------------------------------------------------------------
+//
+// `autosave.notex` above is the note being written in. A note with unsaved writing that is put behind
+// another tab has nowhere of its own to be saved to (no file yet, or a PDF that is slow to write), and
+// used to live in memory alone: a crash took it. Each such tab gets a draft of its own here, named for
+// the tab, written when the tab goes out of sight and removed when it is saved, closed or shown again.
+
+const TAB_DRAFT_PREFIX: &str = "tab-";
+/// More than any session has tabs (`MAX_TABS` in the page is 12): a limit on what a start reads back.
+const MAX_TAB_DRAFTS: usize = 32;
+
+/// A tab's id as a file name, or nothing if it is not one this app makes (letters, digits, `_`, `-`).
+/// It comes from the page, and goes into a path.
+fn tab_draft_name(id: &str) -> Option<String> {
+    let plain = !id.is_empty() && id.len() <= 80 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    plain.then(|| format!("{TAB_DRAFT_PREFIX}{id}.{NOTEX_EXTENSION}"))
+}
+
+fn tab_draft_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
+    let name = tab_draft_name(id).ok_or_else(|| "Not a tab's id".to_string())?;
+    app_data_path(app, &[DRAFT_DIR, &name])
+}
+
+/// Keep a tab's unsaved note. The note is the IPC body; the tab's id the `x-draft-id` header.
+#[tauri::command]
+pub fn save_tab_draft(app: AppHandle, request: Request<'_>) -> Result<FileInfo, String> {
+    let id = request.headers().get("x-draft-id").and_then(|v| v.to_str().ok()).ok_or_else(|| "Missing x-draft-id header".to_string())?;
+    atomic_write(&tab_draft_path(&app, id)?, raw_body(&request)?)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabDraft {
+    pub id: String,
+    pub contents: String,
+}
+
+/// Every tab draft there is, oldest first, for a start after the app ended with unsaved tabs open.
+#[tauri::command]
+pub fn load_tab_drafts(app: AppHandle) -> Result<Vec<TabDraft>, String> {
+    let dir = app_data_path(&app, &[DRAFT_DIR])?;
+    let Ok(read) = fs::read_dir(&dir) else { return Ok(Vec::new()) };
+    let suffix = format!(".{NOTEX_EXTENSION}");
+    let mut found: Vec<(u64, String, PathBuf)> = read
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let id = name.strip_prefix(TAB_DRAFT_PREFIX)?.strip_suffix(&suffix)?.to_string();
+            tab_draft_name(&id)?;
+            let modified = describe(&entry.path()).ok()?.modified_ms.unwrap_or(0);
+            Some((modified, id, entry.path()))
+        })
+        .collect();
+    found.sort();
+    found.truncate(MAX_TAB_DRAFTS);
+    // One that will not read is left out, not a reason to restore none of them.
+    Ok(found
+        .into_iter()
+        .filter_map(|(_, id, path)| read_document_file(&path).ok().map(|doc| TabDraft { id, contents: doc.contents }))
+        .collect())
+}
+
+/// Let go of one tab's draft (`id`), or of all of them.
+#[tauri::command]
+pub fn clear_tab_drafts(app: AppHandle, id: Option<String>) -> Result<(), String> {
+    if let Some(id) = id {
+        return match fs::remove_file(tab_draft_path(&app, &id)?) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("Cannot remove the draft: {e}")),
+        };
+    }
+    let dir = app_data_path(&app, &[DRAFT_DIR])?;
+    let Ok(read) = fs::read_dir(&dir) else { return Ok(()) };
+    for entry in read.flatten() {
+        if entry.file_name().to_string_lossy().starts_with(TAB_DRAFT_PREFIX) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Recent files
 // ---------------------------------------------------------------------------
 
@@ -457,6 +541,14 @@ mod tests {
         assert!(changed_since(Some(999), 1_000));
         // Deleted meanwhile: nothing to write over.
         assert!(!changed_since(None, 1_000));
+    }
+
+    #[test]
+    fn a_tab_draft_is_named_only_for_an_id_this_app_makes() {
+        assert_eq!(tab_draft_name("tab_3f2a-91").as_deref(), Some("tab-tab_3f2a-91.notex"));
+        for id in ["", "../../evil", "a/b", "a\\b", "a.b", "tab 1", &"x".repeat(81)] {
+            assert!(tab_draft_name(id).is_none(), "{id}");
+        }
     }
 
     #[test]

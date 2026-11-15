@@ -371,6 +371,18 @@ no help to an app the system ends the moment it is put in the background, as And
 (`visibilitychange`), a note with a file of its own is saved to it at once, as going Home saves it; a PDF, which takes
 seconds to write back, and a note with no file go to the draft at once instead (`autosave.ts`, `hiddenSaveStep`).
 
+**Every unsaved tab has somewhere to be.** Only the note on screen had a crash draft. One with unsaved writing put
+behind another tab lived in memory alone, and a crash, a dead battery or Android ending the app took it. Now a tab
+that goes out of sight with unsaved writing is put somewhere that outlives the app (`tabStore.ts`, `protectTab`): its
+own file if it has one, as going Home saves it, else a draft of its own (`save_tab_draft`, `drafts/tab-<id>.notex`).
+The tab that comes to the front takes over the draft of the note on screen, which until then held the other, and
+gives up the draft it had while it was behind. A start that finds tab drafts brings them back as tabs behind the note
+that was on screen, and says how many; a tab saved, closed or shown again lets its draft go. A tab's id goes into a
+file name, so the shell takes only ids this app makes (letters, digits, `_`, `-`). None of this is on the drawing
+path: it runs when a tab is switched, opened or closed. A note whose file is a PDF is never parked out of memory
+(`isParkable`): coming back would mean importing the PDF again, and the reader that brings a parked tab back reads
+notes only, which is what a PDF tab met once Save began giving PDFs a file.
+
 **Folders** are real directories and filing a note is a real move — drag a
 card onto a folder. Nothing overwrites: a name already taken gets a numbered
 suffix, because dragging a file onto a folder is not a request to destroy
@@ -1580,6 +1592,18 @@ lands under `apk/arm64/` rather than `apk/universal/`.
 
 A release APK is **unsigned**: `zipalign` and `apksigner` it with your own
 keystore before installing it anywhere.
+
+**Release and debug.** The *Android APK* workflow builds either, chosen when it is run; release is the default. A
+debug build is unoptimised Rust with its symbols (about 170 MB) and can be inspected from a desktop Chrome; a release
+build is optimised, shrunk by R8 and stripped, a fraction of that size, and is the one for everyday use. Both are
+signed with the *same* key, the keystore in `ANDROID_DEBUG_KEYSTORE_B64`: Android installs an update only over an app
+signed with the same key, and Google pins the Android OAuth client to that key's SHA-1. So either kind installs over
+the other and keeps the notes on the device, and Drive sign-in works in both. Gradle leaves a release APK unsigned;
+the workflow aligns it (`zipalign`, which has to come first) and signs it with `apksigner`. R8 removes what nothing
+calls, and nothing in the Kotlin calls the bridges the page reaches by name (`__notexInsets`, `__notexOpenWith`,
+`__notexOauth`), so `android-customize.mjs` writes a keep rule for them into `proguard-rules.pro`: without it a
+release build would start, then open no file handed to it and finish no sign-in. Releases are tagged `android-<n>`,
+debug builds `android-debug-<n>` as before.
 
 ### What is committed, and what is generated
 

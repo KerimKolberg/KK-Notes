@@ -497,6 +497,21 @@ class MainActivity : TauriActivity() {
 
 write(`app/src/main/java/${IDENTIFIER.split('.').join('/')}/MainActivity.kt`, MAIN_ACTIVITY);
 
+// The page calls into `MainActivity`'s bridges by name; nothing in the Kotlin does, so to the shrinker a release
+// build runs they look unused. Without this rule such a build would start, and then open no file handed to it and
+// finish no sign-in.
+const KEEP_BRIDGES = `
+# The page calls into MainActivity's bridges by name (addJavascriptInterface). Nothing in the Kotlin calls
+# them, so the shrinker would take them for unused: a release build would start, then open no file handed
+# to it and finish no sign-in.
+-keepclassmembers class ${IDENTIFIER}.MainActivity$* {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keep class ${IDENTIFIER}.MainActivity$* { *; }
+-keepattributes *Annotation*
+`;
+edit('app/proguard-rules.pro', (rules) => (rules.includes(`-keep class ${IDENTIFIER}.MainActivity$*`) ? rules : `${rules.trimEnd()}\n${KEEP_BRIDGES}`));
+
 // A night variant of the generated theme, so the system bars follow the app.
 write(
   'app/src/main/res/values-night/themes.xml',

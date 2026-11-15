@@ -19,3 +19,12 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# The page calls into MainActivity's bridges by name (addJavascriptInterface). Nothing in the Kotlin calls
+# them, so the shrinker would take them for unused: a release build would start, then open no file handed
+# to it and finish no sign-in.
+-keepclassmembers class com.notex.app.MainActivity$* {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keep class com.notex.app.MainActivity$* { *; }
+-keepattributes *Annotation*

@@ -3,8 +3,26 @@ name: Android APK
 # Manual trigger (works from the GitHub mobile app / mobile web too:
 # Actions tab → Android APK → Run workflow) so an APK can be built and
 # tested without a desktop at all.
+#
+# Two kinds of build, chosen when it is run:
+#
+#   release (the default)  optimised Rust, shrunk Kotlin, no debug symbols: a fraction of the size of the
+#                          debug build and the one to use day to day.
+#   debug                  unoptimised, with symbols, inspectable from a desktop Chrome: for chasing a
+#                          bug on the device.
+#
+# Both are signed with the same key (the "debug" keystore kept in ANDROID_DEBUG_KEYSTORE_B64), because
+# Android only installs an update over an app signed with the same key, and Google pins the Android
+# OAuth client to that key's SHA-1. So either kind installs over the other and keeps the notes on the
+# device, and Drive sign-in works in both.
 on:
   workflow_dispatch:
+    inputs:
+      variant:
+        description: "release: small and optimised, for everyday use. debug: for chasing a bug."
+        type: choice
+        options: [release, debug]
+        default: release
 
 permissions:
   contents: write # to attach the APK to a release
@@ -17,7 +35,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - uses: actions/setup-java@v4
@@ -72,12 +90,14 @@ jobs:
           if [ -n "$KEYSTORE_B64" ]; then
             printf '%s' "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
             echo "Restored the debug keystore from ANDROID_DEBUG_KEYSTORE_B64."
+            echo "KEY_IS_STABLE=1" >> "$GITHUB_ENV"
           else
             echo "::warning::No ANDROID_DEBUG_KEYSTORE_B64 secret is set, so Gradle will mint a throwaway debug key and this APK's signing SHA-1 will differ from the last one. Google Drive sign-in on Android pins that SHA-1, so it will stop working until the new one is registered. Run the 'Android debug keystore' workflow once and save its output as that secret — see docs/google-drive-setup.md."
           fi
 
-      - name: Build debug APK
+      - name: Build the APK (${{ inputs.variant || 'release' }})
         env:
+          VARIANT: ${{ inputs.variant || 'release' }}
           # The Google OAuth client id for Drive sync. Not a secret — an
           # installed app is a *public* OAuth client, which is exactly why the
           # flow uses PKCE instead of a client secret — so it lives in a repo
@@ -85,7 +105,33 @@ jobs:
           # APK whose Cloud Sync panel says it has no client id.
           # The repository variable wins if set; otherwise the project's Android client id.
           NOTEX_GOOGLE_CLIENT_ID: ${{ vars.NOTEX_GOOGLE_CLIENT_ID || '712516787688-8cg6v8ijgs2nnlv7l2p3s28bs00keubd.apps.googleusercontent.com' }}
-        run: ./build-android.sh --debug --abi aarch64
+        run: ./build-android.sh "--$VARIANT" --abi aarch64
+
+      # A release build comes out of Gradle unsigned, and Android installs nothing unsigned. It is signed
+      # here with the same key the debug build is signed with (see the top of this file for why it has to
+      # be the same one), after `zipalign`, which has to come first: aligning afterwards breaks the
+      # signature.
+      - name: Sign the release APK
+        if: ${{ (inputs.variant || 'release') == 'release' }}
+        run: |
+          UNSIGNED="$(find src-tauri/gen/android/app/build/outputs/apk -name '*release*.apk' | head -1)"
+          [ -n "$UNSIGNED" ] || { echo "::error::No release APK produced"; exit 1; }
+          if [ ! -f ~/.android/debug.keystore ]; then
+            # No saved key: mint one so the APK installs at all. It will not install over an earlier
+            # build, and Drive sign-in will not accept it (the warning above says what to do).
+            keytool -genkeypair -keystore ~/.android/debug.keystore -alias androiddebugkey \
+              -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10950 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          TOOLS="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)"
+          [ -x "$TOOLS/apksigner" ] || { echo "::error::No apksigner in the Android build tools"; exit 1; }
+          OUT="$(dirname "$UNSIGNED")/KK-Notes-arm64.apk"
+          "$TOOLS/zipalign" -p -f 4 "$UNSIGNED" aligned.apk
+          "$TOOLS/apksigner" sign --ks ~/.android/debug.keystore --ks-key-alias androiddebugkey \
+            --ks-pass pass:android --key-pass pass:android --out "$OUT" aligned.apk
+          "$TOOLS/apksigner" verify --print-certs "$OUT" | head -3
+          rm -f "$UNSIGNED" aligned.apk
+          echo "Signed: $OUT ($(du -h "$OUT" | cut -f1))"
 
       # Printed every build, because it is the value Google needs and because a
       # *change* in it is the one thing that silently breaks Android sign-in.
@@ -110,7 +156,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: kk-notes-debug-apk
+          name: kk-notes-${{ inputs.variant || 'release' }}-apk
           path: ${{ steps.apk.outputs.path }}
 
       # Attached to a release rather than left as a build artifact, because an
@@ -122,10 +168,24 @@ jobs:
       - name: Publish as a release asset (plain .apk, no zip to extract)
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: android-debug-${{ github.run_number }}
+          VARIANT: ${{ inputs.variant || 'release' }}
           APK: ${{ steps.apk.outputs.path }}
         run: |
-          cat > notes.md <<'EOF'
+          # `android-<n>` for a release build, `android-debug-<n>` for a debug one, as before.
+          if [ "$VARIANT" = "release" ]; then TAG="android-${{ github.run_number }}"; else TAG="android-debug-${{ github.run_number }}"; fi
+          if [ "$VARIANT" = "release" ]; then
+            cat > notes.md <<'EOF'
+          Release build: optimised and a fraction of the size of the debug
+          build. arm64 only. Signed with the same key as the debug builds, so
+          it installs over one (and the other way round) and keeps the notes
+          on the device.
+
+          Download the `.apk` below on your phone and open it to install.
+          You may need to allow "install unknown apps" for whichever app you
+          use to open it (Chrome, Files, etc.) the first time.
+          EOF
+          else
+            cat > notes.md <<'EOF'
           Debug build, auto-signed with Gradle's debug key — it installs
           directly, with no signing step needed. arm64 only.
 
@@ -133,9 +193,11 @@ jobs:
           You may need to allow "install unknown apps" for whichever app you
           use to open it (Chrome, Files, etc.) the first time.
           EOF
+          fi
+          [ -n "$KEY_IS_STABLE" ] || echo "**Signed with a throwaway key** (no ANDROID_DEBUG_KEYSTORE_B64 secret is set): it will not install over an earlier build, and Drive sign-in will not accept it." >> notes.md
           echo "Built from ${{ github.sha }}." >> notes.md
           gh release view "$TAG" >/dev/null 2>&1 ||
-            gh release create "$TAG" --prerelease --title "Android debug APK (run ${{ github.run_number }})" --notes-file notes.md
+            gh release create "$TAG" --prerelease --title "Android $VARIANT APK (run ${{ github.run_number }})" --notes-file notes.md
           for attempt in 1 2 3; do
             if gh release upload "$TAG" "$APK" --clobber; then
               echo "Attached $(basename "$APK") ($(du -h "$APK" | cut -f1)) on attempt $attempt"

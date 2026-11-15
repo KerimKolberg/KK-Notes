@@ -13,7 +13,7 @@ import { fileBaseName, parseNotex, titleFromFileName } from './notex';
 import { classifyOpenWith, takeAndroidOpenWith, type OpenWithRequest } from './openWith';
 import { useDesktopStore } from './desktopStore';
 import { actionOpenPath } from './fileActions';
-import { clearDraft, getStartupFile, loadDraft, rememberPdfPath } from './fileService';
+import { clearDraft, clearTabDrafts, getStartupFile, loadDraft, loadTabDrafts, rememberPdfPath, saveDraft } from './fileService';
 import { errorMessage } from '../lib/errors';
 import { mayHoldNote } from '../pdf/noteStamp';
 
@@ -218,18 +218,33 @@ export async function resolveBootTarget(): Promise<BootTarget> {
       if (opened) return opened;
     }
 
-    const draft = await loadDraft();
-    if (!draft) return START_AT_LIBRARY;
+    // The note that was on screen, and the notes that were in tabs behind it with unsaved writing.
+    const tabDrafts = await loadTabDrafts().catch(() => []);
+    let draft = await loadDraft();
+    if (!draft) {
+      // No note was on screen (or it was saved), but tabs behind it were not: the oldest of them comes to the front,
+      // under the draft of the note on screen from here on.
+      const first = tabDrafts.shift();
+      if (!first) return START_AT_LIBRARY;
+      draft = first.draft;
+      await saveDraft(draft.document).catch(() => {});
+      await clearTabDrafts(first.id).catch(() => {});
+    }
     const store = useDocumentStore.getState();
     if (selectIsDirty(store)) return START_AT_LIBRARY; // the user already started working
     store.loadDocument(draft.document, null);
     // A restored draft is unsaved work: mark it dirty so Save and autosave
     // stay armed rather than believing it is already on disk somewhere.
     useDocumentStore.setState({ savedPages: null, savedTitle: null });
+    if (tabDrafts.length > 0) {
+      const { restoreDraftTabs } = await import('../document/tabStore');
+      restoreDraftTabs(tabDrafts.map((t) => ({ id: t.id, document: t.draft.document })));
+    }
+    const others = tabDrafts.length === 0 ? '' : ` (and ${tabDrafts.length} more unsaved ${tabDrafts.length === 1 ? 'note' : 'notes'}, in tabs)`;
     useDesktopStore.getState().setNotice({
       text: draft.savedAt
-        ? `Restored autosaved draft from ${new Date(draft.savedAt).toLocaleString()}`
-        : 'Restored autosaved draft',
+        ? `Restored autosaved draft from ${new Date(draft.savedAt).toLocaleString()}${others}`
+        : `Restored autosaved draft${others}`,
       action: {
         label: 'Discard',
         run: () => {
