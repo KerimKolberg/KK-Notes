@@ -98,6 +98,8 @@ jobs:
       - name: Build the APK (${{ inputs.variant || 'release' }})
         env:
           VARIANT: ${{ inputs.variant || 'release' }}
+          # What the app says it is (Settings, at the foot): the release this build is published under.
+          KK_BUILD_LABEL: ${{ (inputs.variant || 'release') == 'release' && format('android-{0}', github.run_number) || format('android-debug-{0}', github.run_number) }}
           # The Google OAuth client id for Drive sync. Not a secret — an
           # installed app is a *public* OAuth client, which is exactly why the
           # flow uses PKCE instead of a client secret — so it lives in a repo

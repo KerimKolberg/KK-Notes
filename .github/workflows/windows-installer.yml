@@ -37,6 +37,12 @@ jobs:
 
       - run: npm ci
 
+      # The one piece of the app that only a Windows machine can run: sealing the Drive token with the
+      # Data Protection API and getting it back. Checked here, on Windows, before an installer is made
+      # from it; the crate has no webview in it, so this is quick.
+      - name: Test what only Windows can run
+        run: cargo test --manifest-path src-tauri/Cargo.toml -p notes-sync secret
+
       - name: Build the installer
         env:
           # The *Desktop* OAuth client id, which is a different client from the
@@ -51,6 +57,8 @@ jobs:
           # refuses the code exchange without it. Kept as a repository *secret* so it
           # never sits in the repo; empty (unset) means none is sent.
           NOTEX_GOOGLE_CLIENT_SECRET: ${{ secrets.NOTEX_GOOGLE_DESKTOP_CLIENT_SECRET }}
+          # What the app says it is (Settings, at the foot): the release this build is published under.
+          KK_BUILD_LABEL: windows-${{ github.run_number }}
         # NSIS only. `tauri.conf.json` also lists MSI, whose WiX toolchain is
         # downloaded at build time and is the likeliest thing here to fail for
         # reasons unrelated to this code. One installer is all testing needs; the

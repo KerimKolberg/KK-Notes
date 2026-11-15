@@ -14,5 +14,10 @@ serde_json = "1"
 sha2 = "0.10"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 
+# Windows' Data Protection API, which seals the Drive refresh token for the signed-in user (`secret.rs`).
+# The version is the one the shell (and Tauri) already build, so nothing is compiled twice.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
 [dev-dependencies]
 tempfile = "3"

@@ -27,6 +27,7 @@ npm run build          # typecheck + production bundle + bundle guard
 npm run check:bundle   # assert pdf.js / pdf-lib are lazy chunks
 npm run check:ui       # Playwright: stacking order and hit-testing at real viewport sizes
 npm run icons          # redraw the app icons and the favicon from one geometry
+npm run licenses       # rewrite THIRD_PARTY_NOTICES.md from the dependencies
 npm run check:rust     # cargo check of the Tauri shell (Windows MSVC target, no TLS)
 npm run test:rust      # the sync engine and the HTTP transport (no webview needed)
 npm run check:android  # assert the Android project carries this repo's customizations
@@ -1098,6 +1099,24 @@ The page is the only thing that talks to the shell, and the shell does not take 
   scope is the app's data folder plus the single files handed to the app by *Open with*.
 - **Sign-in** uses the system browser with PKCE and a `state` checked on the way back, on a listener bound to
   `127.0.0.1` only (`notes-sync/src/loopback.rs`).
+- **The Drive token is sealed on Windows** (`notes-sync/src/secret.rs`). The refresh token is what lets the app into
+  the user's Drive without asking again, and it sat in `google-drive.json` as plain text: anything that could copy
+  that file had it (a backup tool, a folder synced elsewhere, a disk pulled out of the machine). It is now sealed with
+  Windows' Data Protection API before it is written, under a key Windows derives from the user's own sign-in, so the
+  file is of use only to that user on that PC; a token an older build wrote in the clear is sealed at the next start.
+  This does not hide it from a program running *as* the user, which no storage on the same account can. On Android
+  the app's files are already private to the app, and the token is stored as it was. The installer workflow runs the
+  seal-and-unseal test on Windows before it builds, since no other machine can.
+
+**Which build is this?** The version number does not move from build to build, so the installer and APK workflows
+name each build after the release it is published under (`KK_BUILD_LABEL`: `windows-44`, `android-51`) and Vite
+builds that and the commit into the app (`src/lib/buildInfo.ts`). It is shown at the foot of the palette's Settings
+panel: "KK-Notes 0.1.0 · windows-44 · 1a2b3c4"; a build made by hand says "local build".
+
+**Whose code is in it.** `THIRD_PARTY_NOTICES.md` lists every library the app ships (the npm packages it depends on
+and the Rust crates of the shell) with its licence. Nearly all are MIT, Apache-2.0 or BSD, which allow shipping on
+the condition that the app says whose code it is; none is GPL-only. `npm run licenses` rewrites it and should be run
+when a dependency changes.
 
 ## Interface (`src/ui/`, `src/inking/palette/`)
 

@@ -20,6 +20,7 @@ pub mod manager;
 pub mod oauth;
 pub mod provider;
 pub mod relocate;
+pub mod secret;
 pub mod text;
 pub mod thumb;
 pub mod trash;

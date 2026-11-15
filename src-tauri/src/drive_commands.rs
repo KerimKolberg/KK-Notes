@@ -37,6 +37,9 @@ use crate::library_commands::{Library, SYNC_STATUS_EVENT};
 /// Where the refresh token is kept between runs, through `tauri-plugin-store`.
 const STORE_FILE: &str = "google-drive.json";
 const TOKENS_KEY: &str = "tokens";
+/// Inside the stored value, the token set sealed for this user (`notes_sync::secret`), as hex. Its presence is what
+/// tells a sealed value from the plain one older builds wrote.
+const SEALED_FIELD: &str = "sealed";
 
 /// Emitted when the account connects or disconnects, so the Cloud Sync panel
 /// follows a sign-in that finished in a browser window rather than in the app.
@@ -179,7 +182,27 @@ fn load_tokens(app: &AppHandle) -> Option<TokenSet> {
     use tauri_plugin_store::StoreExt;
     let store = app.store(store_path(app)?).ok()?;
     let value = store.get(TOKENS_KEY)?;
-    serde_json::from_value::<TokenSet>(value).ok()
+    if let Some(sealed) = value.get(SEALED_FIELD).and_then(|v| v.as_str()) {
+        // Sealed by another user or on another PC (a data folder copied across) does not open: no account.
+        let plain = notes_sync::secret::unseal(&notes_sync::secret::from_hex(sealed)?)?;
+        return serde_json::from_slice::<TokenSet>(&plain).ok();
+    }
+    // As older builds wrote it, in the clear. Written back at once, so it is sealed from this start on
+    // where sealing is to be had.
+    let tokens = serde_json::from_value::<TokenSet>(value).ok()?;
+    if cfg!(windows) {
+        save_tokens(app, Some(&tokens));
+    }
+    Some(tokens)
+}
+
+/// The token set as it goes into the store: sealed for this user where the platform can, else as it is.
+fn stored_form(tokens: &TokenSet) -> Option<serde_json::Value> {
+    let plain = serde_json::to_vec(tokens).ok()?;
+    match notes_sync::secret::seal(&plain) {
+        Some(sealed) => Some(serde_json::json!({ SEALED_FIELD: notes_sync::secret::to_hex(&sealed) })),
+        None => serde_json::to_value(tokens).ok(),
+    }
 }
 
 fn save_tokens(app: &AppHandle, tokens: Option<&TokenSet>) {
@@ -188,7 +211,7 @@ fn save_tokens(app: &AppHandle, tokens: Option<&TokenSet>) {
     let Ok(store) = app.store(path) else { return };
     match tokens {
         Some(tokens) => {
-            if let Ok(value) = serde_json::to_value(tokens) {
+            if let Some(value) = stored_form(tokens) {
                 store.set(TOKENS_KEY, value);
             }
         }

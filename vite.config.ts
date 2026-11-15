@@ -24,7 +24,19 @@ function pdfjsAssets(): Plugin {
   };
 }
 
+/**
+ * Which build this is, for the app to say (`src/lib/buildInfo.ts`). The version number in `package.json` does not
+ * move from build to build, so the installer and APK workflows name each build (`KK_BUILD_LABEL`, the release tag it
+ * is published under: `windows-42`, `android-50`) and the commit it was built from.
+ */
+const BUILD_LABEL = process.env.KK_BUILD_LABEL ?? '';
+const BUILD_COMMIT = (process.env.GITHUB_SHA ?? '').slice(0, 7);
+
 export default defineConfig({
+  define: {
+    __KK_BUILD_LABEL__: JSON.stringify(BUILD_LABEL),
+    __KK_BUILD_COMMIT__: JSON.stringify(BUILD_COMMIT),
+  },
   plugins: [react(), tailwindcss(), pdfjsAssets()],
   test: {
     environment: 'node',

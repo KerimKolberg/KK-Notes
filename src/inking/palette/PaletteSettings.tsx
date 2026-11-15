@@ -11,6 +11,7 @@ import { DEFAULT_PALETTE_ORDER, type PaletteDock } from '../../preferences/types
 import { DEFAULT_PREFERENCES, usePreferencesStore } from '../../preferences/store';
 import { BARREL_CLICK_MS } from '../engine/barrelButton';
 import type { EraserEndAction, ToolType } from '../types';
+import { describeBuild } from '../../lib/buildInfo';
 import { BARREL_TOOLS, SELECT, type PanelProps } from './parts';
 
 /** The palette's own settings panel: where it docks, the pen buttons, colours, and the app-wide switches. */
@@ -421,6 +422,10 @@ export function PaletteSettings({
         </button>
         <p className="px-1 pt-0.5 text-center text-[11px] text-zinc-400 dark:text-zinc-500">
           {customised ? 'Clears the toolbar position, pen buttons, colours, tool order and page defaults.' : 'Nothing has been customised yet.'}
+        </p>
+        {/* Which build this is: the version alone does not change from one build to the next. */}
+        <p className="select-text px-1 pt-1 text-center text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500" data-build-info>
+          {describeBuild()}
         </p>
       </div>
     </div>
