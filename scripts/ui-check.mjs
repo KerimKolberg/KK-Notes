@@ -1125,6 +1125,103 @@ async function openPenDocument(browser, stylus, contextOptions = {}) {
 }
 
 /**
+ * Writing on a page without losing it, and the shape tools' figures out of the pen's way:
+ * - a pen stroke the browser cancels half way (it started a drag, Windows took the pen) is kept, not dropped;
+ * - nothing on the page starts the browser's drag-and-drop, which is what cancelled them;
+ * - an arrow drawn in one stroke and held still snaps to a clean arrow, its barbs gone into one arrowhead;
+ * - a line drawn with the line tool says its angle and length beside the toolbar, not on the page.
+ */
+async function checkPenWriting(browser) {
+  console.log('writing that stays, arrows, and figures beside the toolbar, 1280x800:');
+  const { ctx, page, errors, cx, cy } = await openPenDocument(browser);
+  const inkAt = (x, y, r = 3) =>
+    page.$eval('[data-layer="committed"]', (c, [px, py, pr]) => {
+      const box = c.getBoundingClientRect();
+      const k = c.width / box.width;
+      const d = c.getContext('2d').getImageData(Math.round((px - box.left - pr) * k), Math.round((py - box.top - pr) * k), Math.max(1, Math.round(2 * pr * k)), Math.max(1, Math.round(2 * pr * k))).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 40) n++;
+      return n;
+    }, [x, y, r]);
+
+  // A stroke cut off half way by the browser.
+  const before = await page.evaluate(() => window.__pen.ink());
+  await page.evaluate(([x, y]) => {
+    const live = document.querySelector('[data-layer="live"]');
+    const fire = (type, px, py, buttons) => live.dispatchEvent(new PointerEvent(type, { pointerType: 'pen', pointerId: 7, isPrimary: true, bubbles: true, cancelable: true, clientX: px, clientY: py, buttons, button: type === 'pointermove' || type === 'pointercancel' ? -1 : 0, pressure: buttons & 1 ? 0.5 : 0 }));
+    fire('pointerdown', x, y, 1);
+    for (let i = 1; i < 30; i++) fire('pointermove', x + i * 4, y + Math.sin(i / 3) * 10, 1);
+    fire('pointercancel', x + 116, y, 0);
+  }, [cx - 200, cy - 120]);
+  await page.waitForTimeout(150);
+  check('a pen stroke the browser cancels half way is kept, as far as it got', (await page.evaluate(() => window.__pen.ink())) > before);
+
+  const dragStopped = await page.evaluate(() => {
+    const target = document.querySelector('[data-page-index="0"]');
+    const event = new DragEvent('dragstart', { bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  check('nothing on a page starts the browser\'s drag-and-drop', dragStopped);
+
+  // An arrow in one stroke: a shaft, then a barb out and back and the other barb, held still at the end.
+  const tip = [cx + 100, cy];
+  const barbA = [tip[0] - 26, tip[1] - 18];
+  const barbB = [tip[0] - 26, tip[1] + 18];
+  const leg = (a, b, n) => Array.from({ length: n }, (_, i) => [a[0] + ((b[0] - a[0]) * (i + 1)) / n, a[1] + ((b[1] - a[1]) * (i + 1)) / n]);
+  const start = [cx - 150, cy];
+  const arrow = [start, ...leg(start, tip, 60), ...leg(tip, barbA, 14), ...leg(barbA, tip, 14), ...leg(tip, barbB, 14)];
+  await page.evaluate(async ([pts]) => {
+    const live = document.querySelector('[data-layer="live"]');
+    const fire = (type, px, py, buttons) => live.dispatchEvent(new PointerEvent(type, { pointerType: 'pen', pointerId: 7, isPrimary: true, bubbles: true, cancelable: true, clientX: px, clientY: py, buttons, button: type === 'pointermove' ? -1 : 0, pressure: buttons & 1 ? 0.5 : 0 }));
+    fire('pointerdown', pts[0][0], pts[0][1], 1);
+    for (const [x, y] of pts.slice(1)) {
+      fire('pointermove', x, y, 1);
+      await new Promise((r) => setTimeout(r, 4));
+    }
+    // Held still past the hold-to-snap wait, then lifted.
+    await new Promise((r) => setTimeout(r, 1250));
+    const last = pts[pts.length - 1];
+    fire('pointerup', last[0], last[1], 0);
+  }, [arrow]);
+  await page.waitForTimeout(200);
+  check('an arrow drawn in one stroke and held snaps to an arrow: the shaft is there', (await inkAt(cx - 50, cy)) > 0);
+  check('with a head at the tip', (await inkAt(tip[0] - 4, tip[1], 4)) > 0);
+  check('and the barbs as drawn are gone into it', (await inkAt(barbA[0], barbA[1], 2)) === 0 && (await inkAt(barbB[0], barbB[1], 2)) === 0, `${await inkAt(barbA[0], barbA[1], 2)}, ${await inkAt(barbB[0], barbB[1], 2)}`);
+
+  // The line tool: its figures beside the toolbar, while the line is drawn, and gone after.
+  await page.click('[data-palette-tool="line"]');
+  await page.keyboard.press('Escape');
+  const from = [cx - 120, cy + 160];
+  const to = [cx + 80, cy + 60];
+  const shown = await page.evaluate(async ([a, b]) => {
+    const live = document.querySelector('[data-layer="live"]');
+    const fire = (type, px, py, buttons) => live.dispatchEvent(new PointerEvent(type, { pointerType: 'pen', pointerId: 7, isPrimary: true, bubbles: true, cancelable: true, clientX: px, clientY: py, buttons, button: type === 'pointermove' ? -1 : 0, pressure: buttons & 1 ? 0.5 : 0 }));
+    fire('pointerdown', a[0], a[1], 1);
+    for (let i = 1; i <= 20; i++) {
+      fire('pointermove', a[0] + ((b[0] - a[0]) * i) / 20, a[1] + ((b[1] - a[1]) * i) / 20, 1);
+      await new Promise((r) => requestAnimationFrame(() => r()));
+    }
+    const el = document.querySelector('[data-measure-readout]');
+    const box = el && !el.hidden ? el.getBoundingClientRect().toJSON() : null;
+    const palette = document.querySelector('[data-tool-palette]').getBoundingClientRect().toJSON();
+    const text = el?.textContent ?? '';
+    fire('pointerup', b[0], b[1], 0);
+    return { box, palette, text };
+  }, [from, to]);
+  check('a line being drawn says its angle and length', /°/.test(shown.text) && /cm/.test(shown.text), shown.text);
+  const r = shown.box;
+  const p = shown.palette;
+  const lineBox = { left: Math.min(from[0], to[0]), right: Math.max(from[0], to[0]), top: Math.min(from[1], to[1]), bottom: Math.max(from[1], to[1]) };
+  check('beside the toolbar', r !== null && Math.min(Math.abs(r.bottom - p.top), Math.abs(r.top - p.bottom), Math.abs(r.right - p.left), Math.abs(r.left - p.right)) < 30, JSON.stringify({ r, p }));
+  check('and not on the line being drawn', r !== null && (r.right < lineBox.left || r.left > lineBox.right || r.bottom < lineBox.top || r.top > lineBox.bottom), JSON.stringify(r));
+  await page.waitForTimeout(100);
+  check('and stops saying it when the pen lifts', (await page.$('[data-measure-readout]:not([hidden])')) === null);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Where everything stands on each dock. Sliding (the default), the toolbar is one line along its edge — the
  * keyboard first, then the tools, the colours and last the settings — one button thick, whichever edge it is on.
  *
@@ -3961,15 +4058,15 @@ async function checkRotate(browser) {
   let readout = '';
   for (let i = 0; i < 10 && !/\d/.test(readout); i++) {
     await page.waitForTimeout(30);
-    readout = (await page.$eval('[data-selection-angle]', (el) => el.textContent).catch(() => '')) ?? '';
+    readout = (await page.$eval('[data-measure-readout]:not([hidden])', (el) => el.textContent).catch(() => '')) ?? '';
   }
   await turning;
-  check('an angle is shown while it turns', /\d+°/.test(readout), readout);
+  check('an angle is shown while it turns, beside the toolbar and not on the page', /\d+°/.test(readout) && (await page.$('[data-selection-angle]')) === null, readout);
   await page.waitForSelector('[data-selection-box]');
   const stood = await box();
   check('a quarter turn clockwise stands the line up', stood.h > stood.w * 3, `${Math.round(stood.w)}x${Math.round(stood.h)}`);
   check('about its middle, so it has not wandered off', Math.abs(stood.x + stood.w / 2 - centre.x) < 6 && Math.abs(stood.y + stood.h / 2 - centre.y) < 6, `${Math.round(stood.x + stood.w / 2 - centre.x)}, ${Math.round(stood.y + stood.h / 2 - centre.y)}`);
-  check('the angle readout goes away afterwards', (await page.$('[data-selection-angle]')) === null);
+  check('the angle readout goes away afterwards', (await page.$('[data-measure-readout]:not([hidden])')) === null);
 
   // One step undone, and it lies down again.
   await page.keyboard.press('Control+z');
@@ -5086,6 +5183,7 @@ try {
     checkRotate,
     checkArrange,
     checkGridSnap,
+    checkPenWriting,
     checkAids,
     checkZoomWindow,
     checkSearch,

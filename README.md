@@ -323,6 +323,16 @@ screen (an `IntersectionObserver` gates the work). A page that references a
 PDF is drawn without it: fetching the source to fill a 200 px card would undo
 the whole point.
 
+**A pen stroke is never lost to the browser.** On a PDF page a stroke could vanish half way through a word, with
+Windows' no-drop cursor flashing where it had been (reported on the Flow Z13, and in a screen recording: the stroke
+on screen one frame, gone the next, the cursor an arrow). Two things together: the page did nothing to stop the web
+view starting a drag-and-drop when the pen came down on selected PDF text or a page's picture, and a drag-and-drop
+starts by cancelling the pointer it takes over; and a cancelled stroke was thrown away. Now the note view refuses
+`dragstart` for anything but text in a text box (`DocumentApp`), pictures and canvases on a page are
+`-webkit-user-drag: none`, text selected on the page (outside a text box) is let go when a stroke starts, and a
+cancelled *pen* stroke is kept as far as it got (`usePointerInk`, `onPointerCancel`). A cancelled finger stroke is
+still let go: that is a palm, or the start of a pan.
+
 **Going home keeps what was written** (`library/leaveDocument.ts`, the House button in the top bar). It used to drop
 the open note, leaving only the crash draft. Now a note with a file (every note made in the library) is saved to it on
 the way out (a PDF opened from a file included, see below); one never saved anywhere — a blank note, a PDF dropped
@@ -2568,13 +2578,38 @@ committed. `engine/shapeRecognition.ts`:
 5. Open paths: RDP with 5 % of the diagonal; 3–6 vertices with no segment
    shorter than 10 % of the length become a **polyline** (L, V, Z shapes).
 
+Before any of that, and after it (`recognizeStroke`):
+
+- **Arrows** (`recognizeArrow`). An arrow drawn in one stroke is a shaft and then a head, where the pen turns back on
+  itself: one barb (a hook), out and back and the other barb, or round a little triangle. The tip is the first turn
+  sharper than 100° past 45 % of the path, measured across a short stretch either side; what follows has to stay
+  within 60 % of the shaft's chord of the tip, be shorter than the shaft, and have a barb pointing back along it to
+  within 80°. A tick, a V, an N or a hook with no shaft fails one of those. The shaft becomes a line, or a smooth
+  curve if it was curved, with an arrowhead at its end (the pen's style with `arrowheads: 'end'`). Before this, a
+  held arrow came out as a polyline, or as a triangle when its head closed back on the tip.
+- **Curves**. An open path that bends but never turns a corner (no turn sharper than 55° across a short stretch) is
+  a smooth curve (`smoothCurve`: resampled evenly, eased four times with the ends held, 48 points), drawn as a
+  polyline of enough points that no corner shows. Before, it came out as a chain of up to six segments, or nothing
+  at all for an S. A path with real corners (L, Z, a staircase) still snaps to straight segments.
+
+An arrow drawn in two strokes (the shaft, then the head on its own) is two strokes: holding at the end of the head
+snaps the head alone.
+
 ### Angle HUD
 
 While a line is being dragged (or previewed by hold-to-snap) the live layer
-shows `θ = 45.0°` from the horizontal in math convention (y up), an
-interior-angle arc `∠ = …` wherever an end sits on an existing line or
-polyline endpoint (within 14 px), and the acute angle at each crossing with
-one. Nothing from the HUD is committed.
+draws the arcs of `θ` from the horizontal in math convention (y up), an
+interior angle `∠` wherever an end sits on an existing line or polyline
+endpoint (within 14 px), and the acute angle at each crossing with one.
+Nothing from the HUD is committed.
+
+The figures are not on the page (`inking/measureReadout.ts`, `components/MeasureReadout.tsx`). Drawn beside the line,
+they sat on top of the writing round it, which on a PDF page is most of it (reported on the Flow Z13). The page keeps
+only the thin arcs, which say which angle is meant; the figures (`θ 45.0°`, `∠ 90.0°`, the line's length in cm, a
+rectangle's width × height) go to one read-out beside the toolbar, on the side towards the page, wherever it is
+docked. So do a ruler line's length and how far a selection is being turned. The ink loop writes the figures once a
+frame straight into the read-out's element through a small subscription, not a store, so a line being drawn
+re-renders nothing.
 
 ### Coordinate plane
 

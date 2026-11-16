@@ -61,6 +61,14 @@ body {
   touch-action: none;
 }
 
+/* Nothing on a page is the browser's to drag (see `DocumentApp`'s `onDragStart`): a pen pressed on a picture of the
+   page would otherwise start one, and the stroke under way would be cancelled. */
+[data-document-view] img,
+[data-document-view] canvas,
+[data-document-view] svg {
+  -webkit-user-drag: none;
+}
+
 /* Snipping: a crosshair over every page while it is on, the page a snip is being carried over, and the tab it rests on. */
 html[data-snipping] [data-page-index],
 html[data-snipping] [data-page-index] *,

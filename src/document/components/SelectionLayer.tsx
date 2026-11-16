@@ -1,3 +1,4 @@
+import { setMeasureReading } from '../../inking/measureReadout';
 import {
   memo,
   useCallback,
@@ -300,6 +301,13 @@ export const SelectionLayer = memo(function SelectionLayer({
    */
   const moveDelta = draft?.kind === 'transform' && draft.transform.kind === 'translate' ? draft.transform : null;
   const turning = draft?.kind === 'transform' && draft.transform.kind === 'rotate' ? draft.transform : null;
+  // How far it has turned, said beside the toolbar rather than on the page under the selection (`measureReadout.ts`).
+  const turnedDegrees = turning ? Math.round((turning.angle * 180) / Math.PI) : null;
+  useEffect(() => {
+    if (turnedDegrees === null) return;
+    setMeasureReading([`Turn ${turnedDegrees}°`]);
+    return () => setMeasureReading(null);
+  }, [turnedDegrees]);
   const previewStrokes = useMemo(
     () => (draft === null ? null : moveDelta ? selected : applyDraft(selected, idSet, draft)),
     [draft, moveDelta, selected, idSet],
@@ -755,22 +763,6 @@ export const SelectionLayer = memo(function SelectionLayer({
             <RotateCw size={11 / zoom} strokeWidth={2.5} aria-hidden="true" />
           </div>
         </div>
-        {turning && (
-          <div
-            data-selection-angle
-            aria-live="polite"
-            style={{
-              position: 'absolute',
-              left: turning.origin.x,
-              top: turning.origin.y,
-              transform: `translate(-50%, -50%) scale(${1 / zoom})`,
-              pointerEvents: 'none',
-            }}
-            className="rounded-md bg-zinc-900/90 px-2 py-0.5 text-xs font-medium tabular-nums text-white shadow"
-          >
-            {Math.round((turning.angle * 180) / Math.PI)}°
-          </div>
-        )}
         <div
           ref={toolbarRef}
           role="toolbar"

@@ -57,6 +57,21 @@ export const RECOGNITION = {
   MAX_POLYLINE_VERTICES: 6,
   /** Open polylines: each segment at least this fraction of the total length. */
   POLYLINE_MIN_SEGMENT_RATIO: 0.1,
+  /**
+   * A turn sharper than this (degrees), measured across a short stretch either side, is a corner. Below it the path
+   * bends rather than turns, and an open path with no corner at all is a curve, not a chain of segments.
+   */
+  CORNER_TURN_DEG: 55,
+  /** Where an arrow's head starts: the path turns back on itself by at least this much (degrees). */
+  ARROW_TIP_TURN_DEG: 100,
+  /** The tip comes at least this far along the path: what goes before it is the shaft. */
+  ARROW_MIN_SHAFT_FRACTION: 0.45,
+  /** The head stays within this fraction of the shaft's chord of the tip. */
+  ARROW_MAX_HEAD_RATIO: 0.6,
+  /** A barb points back along the shaft to within this (degrees). */
+  ARROW_BARB_TOLERANCE_DEG: 80,
+  /** How many points a smoothed curve is drawn with. */
+  CURVE_POINTS: 48,
 } as const;
 
 function dist(a: Point, b: Point): number {
@@ -419,4 +434,140 @@ export function recognizeShape(raw: readonly Point[], options: RecognitionOption
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Curves and arrows
+// ---------------------------------------------------------------------------
+
+/** What hold-to-snap makes of a stroke: a shape, and whether it ends in an arrowhead. */
+export interface Recognition {
+  readonly shape: Shape;
+  readonly arrow: boolean;
+}
+
+/** Direction change, in degrees, at each resampled point across `window` points either side. */
+function turnProfile(points: readonly Point[], window: number): number[] {
+  const out: number[] = new Array<number>(points.length).fill(0);
+  for (let i = window; i < points.length - window; i++) {
+    const a = points[i - window]!;
+    const b = points[i]!;
+    const c = points[i + window]!;
+    if (dist(a, b) === 0 || dist(b, c) === 0) continue;
+    out[i] = Math.abs((normalizeRadians(angleOf(b, c) - angleOf(a, b)) * 180) / Math.PI);
+  }
+  return out;
+}
+
+/**
+ * The path as a smooth curve: resampled evenly, then eased a few times with the ends held, which takes out the hand's
+ * wobble and keeps its bend. Drawn as a polyline of enough points that no corner shows.
+ */
+export function smoothCurve(raw: readonly Point[]): Point[] {
+  const length = polylineLength(raw);
+  if (length === 0 || raw.length < 2) return raw.map((p) => ({ x: p.x, y: p.y }));
+  let pts = resamplePolyline(raw, length / (RECOGNITION.CURVE_POINTS - 1)).map((p) => ({ x: p.x, y: p.y }));
+  for (let pass = 0; pass < 4; pass++) {
+    pts = pts.map((p, i) => {
+      if (i === 0 || i === pts.length - 1) return p;
+      const a = pts[i - 1]!;
+      const c = pts[i + 1]!;
+      return { x: (a.x + 2 * p.x + c.x) / 4, y: (a.y + 2 * p.y + c.y) / 4 };
+    });
+  }
+  // The pen's own end, not where resampling happened to stop.
+  const last = raw[raw.length - 1]!;
+  pts[pts.length - 1] = { x: last.x, y: last.y };
+  return pts;
+}
+
+/** An open path that bends but never turns a corner: a curve. */
+function isSmoothOpenPath(points: readonly Point[]): boolean {
+  const window = Math.max(2, Math.round(points.length * 0.04));
+  return turnProfile(points, window).every((turn) => turn < RECOGNITION.CORNER_TURN_DEG);
+}
+
+/** A straight line through the path if it is one, else the smoothed curve. */
+function lineOrCurve(raw: readonly Point[], angleSnapDeg?: number): Shape {
+  const length = polylineLength(raw);
+  return tryLine(raw, length, angleSnapDeg) ?? { type: 'polyline', points: smoothCurve(raw) };
+}
+
+/**
+ * An arrow drawn in one stroke: a shaft, straight or curved, and at its end a head, where the pen turns back on
+ * itself into one barb or two (or round a little triangle). `null` for anything else.
+ *
+ * The tip is the first sharp turn back past the middle of the path; what comes after it has to stay close to it and
+ * point back along the shaft, so a "V", a tick or a hook with no shaft to speak of is not taken for one.
+ */
+export function recognizeArrow(raw: readonly Point[], options: RecognitionOptions = {}): Recognition | null {
+  if (raw.length < 4) return null;
+  const length = polylineLength(raw);
+  if (length < RECOGNITION.MIN_DIAGONAL_PX * 3) return null;
+  const points = resamplePolyline(raw, Math.max(1, length / 160));
+  if (points.length < 12) return null;
+  const window = Math.max(2, Math.round(points.length * 0.025));
+  const turns = turnProfile(points, window);
+  const start = Math.floor(points.length * RECOGNITION.ARROW_MIN_SHAFT_FRACTION);
+  let tipIndex = -1;
+  for (let i = start; i < points.length - window; i++) {
+    if (turns[i]! < RECOGNITION.ARROW_TIP_TURN_DEG) continue;
+    // The sharpest point of this turn is the tip.
+    tipIndex = i;
+    while (tipIndex + 1 < points.length && turns[tipIndex + 1]! > turns[tipIndex]!) tipIndex++;
+    break;
+  }
+  if (tipIndex < 0) return null;
+  const tip = points[tipIndex]!;
+  const shaft = points.slice(0, tipIndex + 1);
+  const head = points.slice(tipIndex);
+  const shaftChord = dist(shaft[0]!, tip);
+  const shaftLength = polylineLength(shaft);
+  if (shaftChord < RECOGNITION.MIN_DIAGONAL_PX * 2 || shaftChord < 0.5 * shaftLength) return null;
+  const reach = Math.max(...head.map((p) => dist(p, tip)));
+  if (reach < 0.06 * shaftChord || reach > RECOGNITION.ARROW_MAX_HEAD_RATIO * shaftChord) return null;
+  if (polylineLength(head) > 0.8 * shaftLength) return null;
+  // Back along the shaft from the tip: where a barb must point.
+  const back = angleOf(tip, shaft[Math.max(0, shaft.length - 1 - window * 3)]!);
+  const tolerance = (RECOGNITION.ARROW_BARB_TOLERANCE_DEG * Math.PI) / 180;
+  const barbs = head.filter((p) => dist(p, tip) >= 0.5 * reach);
+  if (barbs.length === 0 || !barbs.some((p) => Math.abs(normalizeRadians(angleOf(tip, p) - back)) <= tolerance)) return null;
+  // The shaft as it was drawn, up to the tip.
+  const rawTip = nearestIndex(raw, tip);
+  return { shape: lineOrCurve(raw.slice(0, rawTip + 1), options.angleSnapDeg), arrow: true };
+}
+
+function nearestIndex(points: readonly Point[], target: Point): number {
+  let best = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  points.forEach((p, i) => {
+    const d = dist(p, target);
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = i;
+    }
+  });
+  return best;
+}
+
+/**
+ * Hold-to-snap: an arrow if the stroke is one, a smooth curve if it is an open path that bends without corners,
+ * else whatever `recognizeShape` makes of it.
+ */
+export function recognizeStroke(raw: readonly Point[], options: RecognitionOptions = {}): Recognition | null {
+  const arrow = recognizeArrow(raw, options);
+  if (arrow) return arrow;
+  const shape = recognizeShape(raw, options);
+  if (shape && shape.type !== 'polyline') return { shape, arrow: false };
+  // An open path: a chain of segments if it turns corners, a curve if it only bends.
+  if (raw.length >= 3) {
+    const box = bboxFromPoints(raw);
+    const diagonal = Math.hypot(box.maxX - box.minX, box.maxY - box.minY);
+    const length = polylineLength(raw);
+    if (diagonal >= RECOGNITION.MIN_DIAGONAL_PX && !isClosedPath(raw, diagonal)) {
+      const points = resamplePolyline(raw, Math.max(1, length / 128));
+      if (points.length >= 8 && isSmoothOpenPath(points)) return { shape: { type: 'polyline', points: smoothCurve(raw) }, arrow: false };
+    }
+  }
+  return shape ? { shape, arrow: false } : null;
 }

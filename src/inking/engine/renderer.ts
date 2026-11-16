@@ -664,7 +664,11 @@ export function drawMeasureLabel(ctx: InkContext, at: Point, text: string, scale
   ctx.restore();
 }
 
-export function drawAngleHud(ctx: InkContext, arcs: readonly AngleArc[]): void {
+/**
+ * The arcs of a line's angles, and (with `labels`) their figures beside them. The live HUD draws arcs only and says
+ * the figures beside the toolbar (`measureReadout.ts`): figures on the page sat on top of the writing round the line.
+ */
+export function drawAngleHud(ctx: InkContext, arcs: readonly AngleArc[], labels = true): void {
   if (arcs.length === 0) return;
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
@@ -690,6 +694,7 @@ export function drawAngleHud(ctx: InkContext, arcs: readonly AngleArc[]): void {
       labelX = arc.vertex.x + Math.cos(mid) * offset;
       labelY = arc.vertex.y + Math.sin(mid) * offset;
     }
+    if (!labels) continue;
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
     ctx.strokeText(arc.label, labelX, labelY);

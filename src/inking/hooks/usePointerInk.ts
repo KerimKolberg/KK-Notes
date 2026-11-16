@@ -34,7 +34,6 @@ import {
 import {
   clearSurface,
   drawAngleHud,
-  drawMeasureLabel,
   drawEraserCursor,
   drawLaserTrail,
   drawLassoPreview,
@@ -42,10 +41,10 @@ import {
   drawShape,
   get2dContext,
 } from '../engine/renderer';
-import { recognizeShape } from '../engine/shapeRecognition';
+import { RECOGNITION, recognizeStroke } from '../engine/shapeRecognition';
 import { coordinatePlaneFromDrag, createGeometricStroke, curveFromDrag, lineFromDrag } from '../engine/shapes';
 import { DEFAULT_SNAP_GRID, snapToGrid } from '../engine/grid';
-import { edgeForStart, lengthCm, projectToEdge, type Edge, type Ruler } from '../engine/ruler';
+import { edgeForStart, lengthCm, projectToEdge, PX_PER_CM, type Edge, type Ruler } from '../engine/ruler';
 import { polylineLength } from '../engine/simplify';
 import { LiveBaker, canBakeLive } from '../engine/liveBake';
 import { StrokeBuilder } from '../engine/strokeBuilder';
@@ -66,6 +65,7 @@ import type {
 } from '../types';
 import { noteFramePainted, noteInput, profilingEnabled } from '../../debug/profiler';
 import { useLatestRef } from './useLatestRef';
+import { setMeasureReading } from '../measureReadout';
 
 export interface UsePointerInkOptions {
   liveCanvasRef: RefObject<HTMLCanvasElement | null>;
@@ -138,9 +138,43 @@ export interface PointerInkHandlers {
   onLostPointerCapture: CanvasPointerHandler;
 }
 
+
+/**
+ * The figures of a shape being drawn, for the read-out beside the toolbar: its angles as the HUD's arcs name them,
+ * and how long a line is (or how wide and tall a rectangle).
+ */
+export function shapeReading(shape: Shape, hud: readonly AngleArc[]): string[] {
+  const items = hud.map((arc) => arc.label.replace(' = ', ' '));
+  if (shape.type === 'line') {
+    const cm = lengthCm(shape.from, shape.to);
+    if (cm >= 0.05) items.push(`${cm.toFixed(1)} cm`);
+  } else if (shape.type === 'rectangle') {
+    items.push(`${(shape.width / PX_PER_CM).toFixed(1)} × ${(shape.height / PX_PER_CM).toFixed(1)} cm`);
+  }
+  return items;
+}
+
+/** Let go of text selected on the page, unless it is in a text box being typed in. */
+function clearPageSelection(): void {
+  const selection = typeof window === 'undefined' ? null : window.getSelection();
+  if (!selection || selection.isCollapsed) return;
+  const node = selection.anchorNode;
+  const element = node instanceof Element ? node : (node?.parentElement ?? null);
+  if (element?.closest('[contenteditable="true"], input, textarea')) return;
+  selection.removeAllRanges();
+}
+
 /** Hold-to-snap bookkeeping: the dwell state machine plus its timer. */
 interface SnapState extends DwellState {
   timer: ReturnType<typeof setTimeout> | null;
+  /** The recognised shape is an arrow: it is drawn and kept with an arrowhead at its end. */
+  arrow: boolean;
+}
+
+/** The pen's style, with an arrowhead at the end if hold-to-snap took the stroke for an arrow. */
+function snappedStyle(style: StrokeStyle, snap: SnapState | null): StrokeStyle {
+  if (!snap?.arrow) return style;
+  return { ...style, arrowheads: style.arrowheads === 'none' ? 'end' : style.arrowheads };
 }
 
 interface InkSession {
@@ -384,6 +418,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         }
       }
 
+      // What is being measured is said beside the toolbar, not on the page (`measureReadout.ts`): the branches below
+      // that measure say so each frame, and a session's end clears it.
       if (!session) return;
       if (session.kind === 'laser') return;
 
@@ -394,7 +430,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
 
       if (session.kind === 'shape') {
         drawShape(live, session.shape, session.style);
-        drawAngleHud(live, session.hud);
+        drawAngleHud(live, session.hud, false);
+        setMeasureReading(shapeReading(session.shape, session.hud));
         return;
       }
 
@@ -421,14 +458,15 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         // and how long that is, since a ruler is for measuring as much as for straightness.
         drawShape(live, { type: 'line', from: session.edgeFrom, to: session.edgeTo }, builder.style);
         const cm = lengthCm(session.edgeFrom, session.edgeTo);
-        if (cm >= 0.05) drawMeasureLabel(live, session.edgeTo, `${cm.toFixed(1)} cm`, session.scale);
+        setMeasureReading(cm >= 0.05 ? [`${cm.toFixed(1)} cm`] : null);
         return;
       }
 
       if (snap?.shape) {
         // Hold-to-snap: the idealised primitive replaces the raw preview.
-        drawShape(live, snap.shape, builder.style);
-        drawAngleHud(live, snap.hud);
+        drawShape(live, snap.shape, snappedStyle(builder.style, snap));
+        drawAngleHud(live, snap.hud, false);
+        setMeasureReading(shapeReading(snap.shape, snap.hud));
         return;
       }
 
@@ -485,9 +523,12 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         if (polylineLength(points) < MIN_SNAP_PATH_LENGTH_PX) return;
         const settings = optionsRef.current.settingsRef.current;
         const snapDeg = angleSnapFor(settings, false);
-        const shape = recognizeShape(points, snapDeg === undefined ? {} : { angleSnapDeg: snapDeg });
-        if (!shape) return;
-        lockDwell(snap, shape, hudFor(shape));
+        const recognised = recognizeStroke(points, snapDeg === undefined ? {} : { angleSnapDeg: snapDeg });
+        if (!recognised) return;
+        snap.arrow = recognised.arrow;
+        // A curve is no line to measure angles on.
+        const curve = recognised.shape.type === 'polyline' && recognised.shape.points.length > RECOGNITION.MAX_POLYLINE_VERTICES;
+        lockDwell(snap, recognised.shape, curve ? [] : hudFor(recognised.shape));
         scheduleFrame();
       }, HOLD_TO_SNAP_MS);
     };
@@ -535,6 +576,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       const session = sessionRef.current;
       if (!session) return;
       sessionRef.current = null;
+      setMeasureReading(null);
       cancelFrame();
       releaseCapture(session.pointerId);
 
@@ -562,7 +604,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
             createGeometricStroke({
               tool: builder.tool,
               shape: snapped,
-              style: builder.style,
+              style: snappedStyle(builder.style, session.snap),
               pointerType: builder.pointerType,
               createdAt: builder.createdAt,
             }),
@@ -599,6 +641,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       const session = sessionRef.current;
       if (!session) return;
       sessionRef.current = null;
+      setMeasureReading(null);
       cancelFrame();
       releaseCapture(session.pointerId);
 
@@ -683,6 +726,9 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
 
       const tool = resolveEffectiveTool(settings.tool, pointerType, e.button, e.buttons, settings.stylus);
       if (tool === null) return;
+      // Text selected on the page (a PDF's words, chosen earlier) is something the browser will start dragging if
+      // the pen comes down on it, cancelling the stroke. Writing is not selecting: let it go.
+      clearPageSelection();
       if (
         pointerType === 'pen' &&
         (e.buttons & POINTER_BUTTONS.SECONDARY) !== 0 &&
@@ -793,7 +839,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
           builder,
           rect,
           scale,
-          snap: canSnap ? { ...beginDwell(point, now), timer: null } : null,
+          snap: canSnap ? { ...beginDwell(point, now), timer: null, arrow: false } : null,
           edge,
           edgeFrom: edgeStart,
           edgeTo: edgeStart,
@@ -870,9 +916,17 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       noteBarrel(normalizePointerType(e.pointerType), e.buttons);
     };
 
+    // A cancelled *pen* stroke is kept, as far as it got. The browser cancels a pointer when it decides the
+    // gesture is its own (a drag-and-drop it started, Windows taking the pen for something), never because the
+    // writer changed their mind, and dropping it lost writing mid-word on a PDF page (reported on the Flow Z13:
+    // the stroke vanished and Windows' no-drop cursor flashed). A finger's stroke is still let go: a cancelled
+    // touch is a palm, or the start of a pan.
     const onPointerCancel: CanvasPointerHandler = (e) => {
       const session = sessionRef.current;
-      if (session && session.pointerId === e.pointerId) cancelSession();
+      if (session && session.pointerId === e.pointerId) {
+        if (session.pointerType === 'touch') cancelSession();
+        else finishSession();
+      }
       noteBarrel(normalizePointerType(e.pointerType), e.buttons);
     };
 

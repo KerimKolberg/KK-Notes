@@ -40,6 +40,7 @@ import { useBookmarksStore } from '../bookmarksStore';
 import { useContentsStore } from '../contentsStore';
 import { performRedo, performUndo } from '../undo';
 import { NoticeToast } from './NoticeToast';
+import { MeasureReadout } from './MeasureReadout';
 import { ErrorBoundary } from '../../ui/ErrorBoundary';
 import { SnipTray } from '../../snip/SnipTray';
 import { useSnipStore } from '../../snip/snipStore';
@@ -381,7 +382,16 @@ export function DocumentApp() {
   }, []);
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100" data-document-view>
+    <div
+      className="flex h-full w-full flex-col overflow-hidden bg-zinc-100 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100"
+      data-document-view
+      // Nothing in a note is dragged the browser's way. A pen pressed on selected PDF text or on a page's picture let
+      // the browser start a drag-and-drop, which cancels the stroke under way (it vanished, and Windows' no-drop
+      // cursor flashed). Words in a text box being typed still drag, as text does.
+      onDragStart={(e) => {
+        if (!isEditableTarget(e.target) && !(e.target instanceof Node && e.target.parentElement?.isContentEditable)) e.preventDefault();
+      }}
+    >
       <TopBar />
       {tabCount >= 2 && (
         <Suspense fallback={null}>
@@ -409,6 +419,7 @@ export function DocumentApp() {
             <RecordingBar />
           </ErrorBoundary>
           <NoticeToast />
+          <MeasureReadout />
           <ErrorBoundary what="the text selection" fallback={null} onError={(e) => panelFailed('Selecting text', e, () => useTextSelectStore.getState().setMode(false))}>
             <TextSelectionToolbar />
           </ErrorBoundary>
