@@ -137,6 +137,11 @@ export interface TableLayer extends MediaBox {
   /** Grid line weight in page px, and how solid it is. */
   readonly lineWidth?: number;
   readonly lineOpacity?: number;
+  /** The grid's colour, `#rrggbb`. Absent: grey. */
+  readonly lineColor?: string;
+  /** The background, `#rrggbb`, and how solid it is (0: none, the page shows through). Absent: solid white. */
+  readonly fillColor?: string;
+  readonly fillOpacity?: number;
 }
 
 /**

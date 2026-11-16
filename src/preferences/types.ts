@@ -20,6 +20,7 @@ import type { StylusSettings } from '../inking/types';
  */
 export type PaletteSlot =
   | 'select'
+  | 'hand'
   | 'lasso'
   | 'laser'
   | 'insert'
@@ -34,6 +35,7 @@ export type PaletteSlot =
 /** The order the palette ships with: pointers, then pens, then geometry, then the eraser. */
 export const DEFAULT_PALETTE_ORDER: readonly PaletteSlot[] = [
   'select',
+  'hand',
   'lasso',
   'laser',
   'insert',
@@ -51,6 +53,7 @@ export const PALETTE_GROUP_STARTS: readonly PaletteSlot[] = ['pen', 'line', 'era
 
 export const PALETTE_SLOT_LABELS: Readonly<Record<PaletteSlot, string>> = {
   select: 'Select',
+  hand: 'Move around (hand)',
   lasso: 'Lasso',
   laser: 'Laser pointer',
   insert: 'Add to the page',

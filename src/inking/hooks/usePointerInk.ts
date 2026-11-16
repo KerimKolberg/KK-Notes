@@ -760,6 +760,8 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         if (settings.tool !== 'select' && byButton) opts.onBarrelSelect?.();
         return;
       }
+      // The hand draws nothing: the view moves the pages (`useTouchGestures`).
+      if (tool === 'pan') return;
       // A lasso a button asked for while another tool is selected: the selection it
       // makes only lives with the lasso tool, so the host switches to it and keeps
       // it until the selection is done with.

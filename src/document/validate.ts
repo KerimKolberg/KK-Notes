@@ -160,7 +160,8 @@ export function sanitizeMedia(raw: unknown, legacyImage = false): MediaObject | 
         return isStr(cell) ? cell : '';
       });
       // Track sizes that are not one positive number per track are let go: the tracks are then equal.
-      const { columnFractions: _c, rowFractions: _r, ...table } = box as typeof box & { columnFractions?: unknown; rowFractions?: unknown };
+      const { columnFractions: _c, rowFractions: _r, lineColor: _lc, fillColor: _fc, lineOpacity: _lo, fillOpacity: _fo, lineWidth: _lw, ...table } =
+        box as typeof box & { columnFractions?: unknown; rowFractions?: unknown; lineColor?: unknown; fillColor?: unknown; lineOpacity?: unknown; fillOpacity?: unknown; lineWidth?: unknown };
       const fractions = (v: unknown, n: number): boolean => Array.isArray(v) && v.length === n && v.every((f) => isNum(f) && f > 0);
       return {
         ...table,
@@ -169,6 +170,8 @@ export function sanitizeMedia(raw: unknown, legacyImage = false): MediaObject | 
         cells,
         ...(fractions(raw.columnFractions, columns) ? { columnFractions: raw.columnFractions } : {}),
         ...(fractions(raw.rowFractions, rows) ? { rowFractions: raw.rowFractions } : {}),
+        // Its look: colours as `#rrggbb` only (they become CSS), opacities as numbers from 0 to 1.
+        ...style(raw),
       } as unknown as MediaObject;
     }
     case 'text': {
@@ -180,6 +183,20 @@ export function sanitizeMedia(raw: unknown, legacyImage = false): MediaObject | 
     default:
       return null;
   }
+}
+
+/** A table's colours and opacities that are what they say, and nothing else of them. */
+function style(raw: Raw): Record<string, string | number> {
+  const hex = (v: unknown): string | undefined => (isStr(v) && /^#[0-9a-f]{6}$/i.test(v) ? v : undefined);
+  const unit = (v: unknown): number | undefined => (isNum(v) ? clamp(v, 0, 1) : undefined);
+  const all = {
+    lineColor: hex(raw.lineColor),
+    fillColor: hex(raw.fillColor),
+    lineOpacity: unit(raw.lineOpacity),
+    fillOpacity: unit(raw.fillOpacity),
+    lineWidth: isNum(raw.lineWidth) && raw.lineWidth > 0 ? Math.min(raw.lineWidth, 20) : undefined,
+  };
+  return Object.fromEntries(Object.entries(all).filter(([, v]) => v !== undefined)) as Record<string, string | number>;
 }
 
 function sanitizeFormField(raw: unknown): FormField | null {

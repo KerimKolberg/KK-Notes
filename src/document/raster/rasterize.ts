@@ -6,8 +6,6 @@
  */
 import { drawStroke, type InkContext } from '../../inking/engine/renderer';
 import {
-  DEFAULT_TABLE_LINE_OPACITY,
-  DEFAULT_TABLE_LINE_WIDTH,
   NOTE_BUBBLE_RADIUS,
   NOTE_FONT_SIZE,
   NOTE_LINE_HEIGHT,
@@ -25,7 +23,9 @@ import {
   noteTextLocalBox,
   rowFractions,
   sortedByZ,
+  hexWithOpacity,
   tableCell,
+  tableStyle,
   trackEdges,
   wrapText,
 } from '../media';
@@ -155,18 +155,20 @@ function drawTextBox(ctx: InkContext, item: TextBox): void {
 
 /** A table's frame, cell grid and cell text, with its own tracks and ruling. */
 function drawTable(ctx: InkContext, table: TableLayer): void {
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, table.width, table.height);
-  ctx.fillStyle = '#e4e4e7';
-  ctx.fillRect(0, 0, table.width, TABLE_GRIP_HEIGHT);
+  // Its background as it shows on the page, the lip it is dragged by included (the lip is only tinted while chosen).
+  const style = tableStyle(table);
+  if (style.fillOpacity > 0) {
+    ctx.fillStyle = hexWithOpacity(style.fillColor, style.fillOpacity);
+    ctx.fillRect(0, 0, table.width, table.height);
+  }
 
   const gridHeight = Math.max(1, table.height - TABLE_GRIP_HEIGHT);
   // Dragged dividers are shares of the table, so a snapshot lands on the same
   // grid as the live page whatever size the bitmap is rendered at.
   const columnEdges = trackEdges(columnFractions(table)).map((f) => f * table.width);
   const rowEdges = trackEdges(rowFractions(table)).map((f) => TABLE_GRIP_HEIGHT + f * gridHeight);
-  const lineWidth = table.lineWidth ?? DEFAULT_TABLE_LINE_WIDTH;
-  const rule = `rgba(161, 161, 170, ${table.lineOpacity ?? DEFAULT_TABLE_LINE_OPACITY})`;
+  const lineWidth = style.lineWidth;
+  const rule = hexWithOpacity(style.lineColor, style.lineOpacity);
 
   ctx.strokeStyle = rule;
   ctx.lineWidth = lineWidth;

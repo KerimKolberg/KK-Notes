@@ -126,11 +126,12 @@ export function isHexColor(value: unknown): value is string {
 
 /**
  * A palette order that is definitely usable: known slots only, no duplicates,
- * and anything the stored list is missing appended in its default position.
+ * and anything the stored list is missing put back where it ships: after the
+ * slot it follows by default (or first).
  *
  * That last part is what makes adding a tool in a future version safe — a
- * saved order from before it existed simply gains it at the end rather than
- * hiding it.
+ * saved order from before it existed gains it beside the tool it belongs with
+ * (the hand next to Select) rather than hiding it or losing it at the end.
  */
 export function normalizeOrder(stored: unknown): readonly PaletteSlot[] {
   const known = new Set<string>(DEFAULT_PALETTE_ORDER);
@@ -145,7 +146,13 @@ export function normalizeOrder(stored: unknown): readonly PaletteSlot[] {
       order.push(slot);
     }
   }
-  for (const slot of DEFAULT_PALETTE_ORDER) if (!seen.has(slot)) order.push(slot);
+  // A slot the saved order does not know goes where it ships: after the one it follows by default, or first.
+  DEFAULT_PALETTE_ORDER.forEach((slot, i) => {
+    if (seen.has(slot)) return;
+    const after = i === 0 ? -1 : order.indexOf(DEFAULT_PALETTE_ORDER[i - 1]!);
+    order.splice(after + 1, 0, slot);
+    seen.add(slot);
+  });
   return order;
 }
 

@@ -145,7 +145,8 @@ export const FormOverlay = memo(function FormOverlay({ page, zoom, tool, readOnl
   const forwardPen = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       // Locked: nothing draws, so the pen operates the widget like a mouse.
-      if (readOnly || tool === 'select' || e.pointerType !== 'pen') return;
+      // The hand: the press goes on to the view, which moves the pages.
+      if (readOnly || tool === 'select' || tool === 'pan' || e.pointerType !== 'pen') return;
       const live = e.currentTarget.parentElement?.parentElement?.querySelector<HTMLCanvasElement>('canvas[data-layer="live"]');
       if (!live) return;
       e.preventDefault();

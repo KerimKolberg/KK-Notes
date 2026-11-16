@@ -61,6 +61,16 @@ body {
   touch-action: none;
 }
 
+/* The hand tool: everything on the pages is somewhere to take hold of. */
+[data-viewer][data-hand-tool='true'],
+[data-viewer][data-hand-tool='true'] [data-page-id] * {
+  cursor: grab;
+}
+[data-viewer][data-hand-tool='true']:active,
+[data-viewer][data-hand-tool='true']:active [data-page-id] * {
+  cursor: grabbing;
+}
+
 /* Nothing in the view is the web view's to select: a pen dragged over a PDF page selected its words (the PDF's own
    selection is the app's, `textselect/`), and offered "Copy". Text being typed still selects. */
 [data-viewer] {

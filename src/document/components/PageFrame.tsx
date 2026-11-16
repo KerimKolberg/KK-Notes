@@ -177,7 +177,7 @@ export const PageFrame = memo(function PageFrame({
               hiddenStrokeIds={hiddenStrokeIds}
               currentTool={currentTool}
               allowTouch={!readOnly}
-              interactive={currentTool !== 'select' && (!readOnly || laserOnly)}
+              interactive={currentTool !== 'select' && currentTool !== 'pan' && (!readOnly || laserOnly)}
               ariaLabel={`Page ${page.pageNumber} drawing surface`}
             />
           </div>

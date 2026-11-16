@@ -1555,6 +1555,13 @@ pinch and cancels a one-finger pan (it was a palm), and pen input is never
 blocked by a gesture. A finger left over after a pinch is ignored until it
 lifts, so lifting fingers one at a time does not nudge the view.
 
+**The hand** (`'pan'`, next to Select on the toolbar) is for moving about and nothing else: the pen, the mouse and
+one finger drag the pages from wherever they are pressed (a table's cell or a form field included), and nothing is
+drawn, selected or focused; buttons and toolbars still work. The ink surface takes no press with it (`PageFrame`), a
+form field does not hand the pen on to the ink (`FormOverlay`), one finger pans even with Touch Draw on, and the view
+shows a grab cursor. A palette order saved before the hand existed gains it next to Select, wherever Select was moved
+to (`normalizeOrder`: a newcomer goes after the slot it ships after).
+
 **The pen scrolls the view where it cannot write** (`penScrollTarget`, `thumbScroll`). The view takes no touch actions
 of its own (`touch-action: none`), and a pen on its scrollbar was left to the web view, which jumped the view between
 pages, left it blank for frames, and selected the PDF's words on the way, with Chromium's Copy chip (reported on the
@@ -2205,6 +2212,22 @@ existed — or one whose stored list no longer fits the grid — falls back to a
 even division. The same fractions drive the live grid, the page snapshot
 raster and the PDF export, so all three land on identical lines.
 
+**A table stays in reach** (`reshapeTableOnPage`, `fitOnPage`). Each +Col or +Row adds a column or row the size of the
+others, so a table grown a column at a time ran off the page, and the page cuts off what is past its edge, its resize
+handles with it: it could be filled in and nothing else (reported on the Flow Z13). Now a table that grows past an edge
+is moved back in, and once it is as wide (or tall) as the page it is narrowed to it, every column a little smaller. A
+turned table is left as it is, since its corners are not its box. And any object's handles are drawn at the page's
+edge when they would fall past it (`TransformBox`), so even something let go half off its page can be taken hold of
+and made smaller; a drag moves its side by how far the pen goes, so it works the same from there.
+
+**How a table looks** (`tableStyle`, the toolbar's **Style**). Its lines take a colour, an opacity and a width; its
+background a colour and an opacity. Either opacity goes down to 0 %: lines alone over the page, or text alone over a
+PDF's own ruled table. The colours are kept as `#rrggbb` only, and a file's are checked on the way in
+(`validate.ts`), since they become CSS. The strip a table is dragged by is its own background, tinted only while it is
+chosen with the Select tool, so a table without a background is not a grey band on the page. The PDF export draws the
+lines and background with their real opacity (pdf-lib's `opacity` / `borderOpacity`), and the page snapshot the
+same.
+
 **Export** (`export.ts`, `pdfOps.ts`). `exportDocumentToPdf(doc)` builds a
 pdf-lib document: PDF-backed pages are `copyPages` copies of the source so
 original vectors, fonts and searchable text survive; the source's AcroForm is
@@ -2494,6 +2517,7 @@ as before. Typed text on the page keeps it.
 
 | Tool | Gesture | Output |
 | --- | --- | --- |
+| Hand (next to Select) | drag with the pen, a finger or the mouse | moves the pages; nothing is drawn, selected or typed into |
 | Lasso | freehand loop, or a line through something | selects by layer and mode (see above) |
 | Pen | freehand | pressure-thinned perfect-freehand polygon |
 | Highlighter | freehand | constant width, `multiply`, opacity and gradient from its own popover |

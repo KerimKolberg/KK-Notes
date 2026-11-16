@@ -49,6 +49,11 @@ export interface UseTouchGesturesOptions {
    * always scrolls under one finger.
    */
   oneFingerInksRef: RefObject<boolean>;
+  /**
+   * The hand tool is chosen: the pen, the mouse and one finger move the pages wherever they are pressed, and nothing
+   * on a page is operated (a press on a button still is).
+   */
+  handRef?: RefObject<boolean>;
   onCommit: (commit: TouchGestureCommit) => void;
 }
 
@@ -118,6 +123,13 @@ const NO_PAN_SELECTOR = [
 
 function isNoPanTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(NO_PAN_SELECTOR) !== null;
+}
+
+/** What the hand still operates: buttons and links, and a toolbar's controls. */
+const HAND_EXEMPT_SELECTOR = ['button', 'a[href]', '[role="toolbar"]', '[data-selection-toolbar]'].join(',');
+
+function isHandExempt(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(HAND_EXEMPT_SELECTOR) !== null;
 }
 
 /** Anything on a page, or on the cover: the pen writes there, and does not scroll. */
@@ -238,6 +250,16 @@ export function useTouchGestures(options: UseTouchGesturesOptions): TouchGesture
     };
 
     const onPointerDown: DivPointerHandler = (e) => {
+      const hand = optionsRef.current.handRef?.current === true;
+      if (hand && e.pointerType === 'mouse') {
+        // The hand: the mouse drags the pages, as the pen does.
+        const el = optionsRef.current.scrollRef.current;
+        if (!el || state !== null || e.button !== 0 || isHandExempt(e.target)) return;
+        e.preventDefault();
+        state = { kind: 'pen-scroll', pointerId: e.pointerId, mode: 'content', axis: 'y', start: { x: e.clientX, y: e.clientY }, scroll: { x: el.scrollLeft, y: el.scrollTop } };
+        capture(el, e.pointerId);
+        return;
+      }
       if (e.pointerType === 'pen') {
         // A pen landing means any finger down was a palm: stop navigating.
         if (state?.kind === 'pinch') finishPinch();
@@ -247,7 +269,8 @@ export function useTouchGestures(options: UseTouchGesturesOptions): TouchGesture
         // Flow Z13, in a screen recording), since the view takes no touch actions of its own (`touch-action: none`).
         const el = optionsRef.current.scrollRef.current;
         if (!el || state !== null || e.button !== 0) return;
-        const onPage = e.target instanceof Element && e.target.closest(ON_A_PAGE_SELECTOR) !== null;
+        // With the hand, the pages are somewhere to take hold of, not to write on.
+        const onPage = hand ? isHandExempt(e.target) : e.target instanceof Element && e.target.closest(ON_A_PAGE_SELECTOR) !== null;
         const rect = el.getBoundingClientRect();
         const target = penScrollTarget(
           { left: rect.left, top: rect.top, clientWidth: el.clientWidth, clientHeight: el.clientHeight, offsetWidth: el.offsetWidth, offsetHeight: el.offsetHeight },
@@ -286,7 +309,9 @@ export function useTouchGestures(options: UseTouchGesturesOptions): TouchGesture
       }
       if (touches.size !== 1 || state !== null) return;
       const el = optionsRef.current.scrollRef.current;
-      if (!el || optionsRef.current.oneFingerInksRef.current || isNoPanTarget(e.target)) return;
+      if (!el || optionsRef.current.oneFingerInksRef.current || (hand ? isHandExempt(e.target) : isNoPanTarget(e.target))) return;
+      // The hand pans from anywhere, a table's cell or a form field included: nothing on the page takes the press.
+      if (hand) e.preventDefault();
       state = {
         kind: 'pan',
         pointerId: e.pointerId,
@@ -297,7 +322,7 @@ export function useTouchGestures(options: UseTouchGesturesOptions): TouchGesture
     };
 
     const onPointerMove: DivPointerHandler = (e) => {
-      if (e.pointerType === 'pen') {
+      if (e.pointerType === 'pen' || (e.pointerType === 'mouse' && state?.kind === 'pen-scroll')) {
         if (state?.kind === 'pen-scroll' && state.pointerId === e.pointerId) {
           const el = optionsRef.current.scrollRef.current;
           if (!el) return;

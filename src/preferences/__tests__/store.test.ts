@@ -53,20 +53,29 @@ describe('reading a stored palette order back', () => {
     expect(normalizeOrder(custom)).toEqual(custom);
   });
 
-  it('appends a tool the stored order never knew about', () => {
+  it('gains a tool the stored order never knew about, beside the one it ships after', () => {
     // An order saved before a tool existed must gain it, not hide it — this is
     // what keeps a future version from shipping an invisible feature.
     const old = DEFAULT_PALETTE_ORDER.filter((s) => s !== 'washi' && s !== 'plane');
     const fixed = normalizeOrder(old);
     expect(fixed).toHaveLength(DEFAULT_PALETTE_ORDER.length);
-    expect(fixed).toContain('washi');
-    expect(fixed).toContain('plane');
-    // …and the order that was saved is preserved ahead of the newcomers.
-    expect(fixed.slice(0, old.length)).toEqual(old);
+    expect(fixed[fixed.indexOf('highlighter') + 1]).toBe('washi');
+    expect(fixed[fixed.indexOf('line') + 1]).toBe('plane');
+    // …and the order that was saved is otherwise as it was.
+    expect(fixed.filter((s) => s !== 'washi' && s !== 'plane')).toEqual(old);
+  });
+
+  it('puts the hand next to Select in an order saved before it, wherever Select was moved', () => {
+    const old = ['pen', 'highlighter', 'select', 'lasso', 'laser', 'insert', 'washi', 'line', 'plane', 'stroke', 'eraser'];
+    const fixed = normalizeOrder(old);
+    expect(fixed[fixed.indexOf('select') + 1]).toBe('hand');
+    expect(fixed.filter((s) => s !== 'hand')).toEqual(old);
   });
 
   it('drops slots that no longer exist, and duplicates', () => {
-    expect(normalizeOrder(['pen', 'pen', 'typewriter', 'eraser'])[0]).toBe('pen');
+    const fixed = normalizeOrder(['pen', 'pen', 'typewriter', 'eraser']);
+    expect(fixed).not.toContain('typewriter');
+    expect(fixed.indexOf('pen')).toBeLessThan(fixed.indexOf('eraser'));
     expect(normalizeOrder(['pen', 'pen'])).toHaveLength(DEFAULT_PALETTE_ORDER.length);
     expect(normalizeOrder(['pen', 'pen']).filter((s) => s === 'pen')).toHaveLength(1);
   });

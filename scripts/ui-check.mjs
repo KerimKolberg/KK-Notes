@@ -1366,6 +1366,101 @@ async function checkPenNavigation(browser) {
 }
 
 /**
+ * The hand, and a table that can be got hold of and made to look as wanted:
+ * - the hand (next to Select) moves the pages with the pen or the mouse, wherever pressed, and draws nothing;
+ * - a table grown a column at a time stays on its page, every handle in reach (it ran off the page, out of reach);
+ * - its lines and its background take a colour and an opacity, down to none.
+ */
+async function checkHandAndTables(browser) {
+  console.log('the hand, and tables kept in reach and styled, 1280x800:');
+  const { ctx, page, errors } = await openPenDocument(browser);
+  const order = await page.$$eval('[data-palette-tool]', (els) => els.map((el) => el.getAttribute('data-palette-tool')));
+  check('the hand is on the toolbar, next to Select', order[order.indexOf('select') + 1] === 'pan', order.join());
+
+  await page.click('[data-palette-tool="pan"]');
+  check('choosing it shows a hand over the pages', (await page.$eval('[data-viewer]', (el) => el.getAttribute('data-hand-tool'))) === 'true');
+  const live = await page.$eval('[data-page-index="0"] [data-layer="live"]', (el) => el.getBoundingClientRect().toJSON());
+  const inkBefore = await page.evaluate(() => window.__pen.ink());
+  const scrollTop = () => page.$eval('[data-viewer]', (el) => el.scrollTop);
+  const from = await scrollTop();
+  await page.evaluate(async ([x, y]) => {
+    const fire = (type, py, buttons) => {
+      const el = document.elementFromPoint(x, type === 'pointerdown' ? y : py) ?? document.body;
+      el.dispatchEvent(new PointerEvent(type, { pointerType: 'pen', pointerId: 21, isPrimary: true, bubbles: true, cancelable: true, clientX: x, clientY: py, buttons, button: type === 'pointermove' ? -1 : 0, pressure: buttons & 1 ? 0.5 : 0 }));
+    };
+    fire('pointerdown', y, 1);
+    for (let i = 1; i <= 12; i++) {
+      fire('pointermove', y - i * 25, 1);
+      await new Promise((r) => requestAnimationFrame(() => r()));
+    }
+    fire('pointerup', y - 300, 0);
+  }, [live.left + 300, live.top + 500]);
+  const byPen = await scrollTop();
+  check('the pen pressed on a page moves the pages with the hand', byPen > from + 200, `${from} -> ${byPen}`);
+  check('and draws nothing', (await page.evaluate(() => window.__pen.ink())) === inkBefore);
+  await page.mouse.move(640, 300);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) await page.mouse.move(640, 300 + i * 20);
+  await page.mouse.up();
+  const byMouse = await scrollTop();
+  check('so does the mouse', byMouse < byPen - 120, `${byPen} -> ${byMouse}`);
+  await page.$eval('[data-viewer]', (el) => { el.scrollTop = 0; });
+
+  // A table, grown past where the page ends.
+  await page.click('[data-palette-tool="select"]');
+  await page.click('[data-insert-trigger]');
+  await page.click('[data-insert-table]');
+  await page.waitForSelector('[data-cell="0-0"]');
+  for (let i = 0; i < 5; i++) await page.click('[data-add-column]');
+  await page.waitForTimeout(100);
+  const sheet = await page.$eval('[data-page-index="0"]', (el) => el.getBoundingClientRect().toJSON());
+  const table = await page.$eval('[data-media-kind="table"]', (el) => el.getBoundingClientRect().toJSON());
+  check('a table with columns added stays on its page', table.left >= sheet.left - 1 && table.right <= sheet.right + 1, JSON.stringify({ table: [table.left, table.right], page: [sheet.left, sheet.right] }));
+  check('with all eight columns', (await page.$eval('[data-media-kind="table"]', (el) => el.getAttribute('data-table-size'))) === '3x8');
+  const handles = await page.$$eval('[data-resize-handle], [data-rotate-handle]', (els) => els.map((el) => el.getBoundingClientRect().toJSON()));
+  check('every handle is on the page, where it can be taken hold of', handles.length === 9 && handles.every((h) => h.left >= sheet.left - 1 && h.right <= sheet.right + 1 && h.top >= sheet.top - 1), String(handles.length));
+
+  // Made smaller by its corner, and moved by its grip.
+  const se = await page.$eval('[data-resize-handle="se"]', (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.move(se.x, se.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) await page.mouse.move(se.x - i * 20, se.y);
+  await page.mouse.up();
+  const smaller = await page.$eval('[data-media-kind="table"]', (el) => el.getBoundingClientRect().toJSON());
+  check('a corner makes it smaller', smaller.width < table.width - 150, `${Math.round(table.width)} -> ${Math.round(smaller.width)}`);
+  const grip = await page.$eval('[data-media-grip]', (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.move(grip.x, grip.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) await page.mouse.move(grip.x + i * 8, grip.y + i * 10);
+  await page.mouse.up();
+  const moved = await page.$eval('[data-media-kind="table"]', (el) => el.getBoundingClientRect().toJSON());
+  check('its grip moves it', Math.abs(moved.left - smaller.left - 80) < 4 && Math.abs(moved.top - smaller.top - 100) < 4, `${Math.round(moved.left - smaller.left)}, ${Math.round(moved.top - smaller.top)}`);
+
+  // Its look.
+  await page.click('[data-table-style-toggle]');
+  await page.waitForSelector('[data-table-style]');
+  const setRange = (selector, value) =>
+    page.$eval(selector, (el, v) => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      set.call(el, String(v));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, value);
+  await setRange('[data-table-style-opacity="fill"]', 0);
+  await page.click('[data-table-style-swatch="line-#2563eb"]');
+  await setRange('[data-table-style-opacity="line"]', 0.5);
+  await page.waitForTimeout(100);
+  const look = await page.$eval('[data-media-kind="table"]', (el) => ({ background: getComputedStyle(el).backgroundColor, border: getComputedStyle(el).borderTopColor, lip: getComputedStyle(el.querySelector('[data-table-lip]')).backgroundColor }));
+  check('its background can go to none', look.background === 'rgba(255, 255, 255, 0)', look.background);
+  check('and its lines take a colour, half solid', look.border === 'rgba(37, 99, 235, 0.5)', look.border);
+  await page.click('[data-palette-tool="pen"]');
+  await page.waitForTimeout(100);
+  const idle = await page.$eval('[data-media-kind="table"] [data-table-lip]', (el) => getComputedStyle(el).backgroundColor);
+  check('with no grey band left on the page once it is let go', idle === 'rgba(0, 0, 0, 0)', idle);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Where everything stands on each dock. Sliding (the default), the toolbar is one line along its edge — the
  * keyboard first, then the tools, the colours and last the settings — one button thick, whichever edge it is on.
  *
@@ -5329,6 +5424,7 @@ try {
     checkGridSnap,
     checkPenWriting,
     checkPenNavigation,
+    checkHandAndTables,
     checkAids,
     checkZoomWindow,
     checkSearch,

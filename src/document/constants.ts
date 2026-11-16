@@ -154,8 +154,15 @@ export const DEFAULT_TABLE_LINE_WIDTH = 1;
 export const MIN_TABLE_LINE_WIDTH = 0.5;
 export const MAX_TABLE_LINE_WIDTH = 4;
 export const DEFAULT_TABLE_LINE_OPACITY = 1;
-export const MIN_TABLE_LINE_OPACITY = 0.1;
+/** Down to none: a table can be its text alone, over a PDF's own ruled table. */
+export const MIN_TABLE_LINE_OPACITY = 0;
 export const MAX_TABLE_LINE_OPACITY = 1;
+/** The grid's colour, and the table's background and how solid it is (0 shows the page through it). */
+export const DEFAULT_TABLE_LINE_COLOR = '#a1a1aa';
+export const DEFAULT_TABLE_FILL_COLOR = '#ffffff';
+export const DEFAULT_TABLE_FILL_OPACITY = 1;
+/** The colours the table's toolbar offers for its lines and its background; any other is a colour picker away. */
+export const TABLE_COLORS: readonly string[] = ['#a1a1aa', '#18181b', '#2563eb', '#dc2626', '#16a34a', '#ffffff', '#fef08a'];
 
 /** A track may not be dragged below this share of the table. */
 export const MIN_TRACK_FRACTION = 0.04;

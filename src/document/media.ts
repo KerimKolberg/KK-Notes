@@ -13,6 +13,11 @@ import type { Point } from '../inking/types';
 import {
   DEFAULT_NOTE_COLOR,
   DEFAULT_TABLE_COLUMNS,
+  DEFAULT_TABLE_FILL_COLOR,
+  DEFAULT_TABLE_FILL_OPACITY,
+  DEFAULT_TABLE_LINE_COLOR,
+  DEFAULT_TABLE_LINE_OPACITY,
+  DEFAULT_TABLE_LINE_WIDTH,
   DEFAULT_TABLE_ROWS,
   IMAGE_MAX_FRACTION,
   MAX_TABLE_COLUMNS,
@@ -556,6 +561,68 @@ function reshapeFractions(fractions: readonly number[], count: number): number[]
   const next = Array.from({ length: count }, (_, i) => fractions[i] ?? average);
   const total = next.reduce((sum, f) => sum + f, 0);
   return total > 0 ? next.map((f) => f / total) : evenFractions(count);
+}
+
+/** How a table looks: its lines and its background, with the defaults a table without them has. */
+export interface TableStyle {
+  readonly lineWidth: number;
+  readonly lineOpacity: number;
+  readonly lineColor: string;
+  readonly fillColor: string;
+  readonly fillOpacity: number;
+}
+
+export function tableStyle(table: TableLayer): TableStyle {
+  return {
+    lineWidth: table.lineWidth ?? DEFAULT_TABLE_LINE_WIDTH,
+    lineOpacity: unit(table.lineOpacity, DEFAULT_TABLE_LINE_OPACITY),
+    lineColor: isHex6(table.lineColor) ? table.lineColor : DEFAULT_TABLE_LINE_COLOR,
+    fillColor: isHex6(table.fillColor) ? table.fillColor : DEFAULT_TABLE_FILL_COLOR,
+    fillOpacity: unit(table.fillOpacity, DEFAULT_TABLE_FILL_OPACITY),
+  };
+}
+
+function unit(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : fallback;
+}
+
+/** A colour as `#rrggbb`, the only form a table's colours are kept in. */
+export function isHex6(value: unknown): value is string {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+}
+
+/** `#rrggbb` at an opacity, as CSS. */
+export function hexWithOpacity(hex: string, opacity: number): string {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${unit(opacity, 1)})`;
+}
+
+/**
+ * A box brought inside its page: narrower or shorter than the page if it was not (shrunk about its top-left corner),
+ * then moved back in past any edge. A table grown by a column at a time ran off the page, which hides what is past
+ * the edge, its resize handles included (reported on the Flow Z13).
+ */
+export function fitOnPage(
+  box: { x: number; y: number; width: number; height: number },
+  page: { width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
+  const width = Math.min(box.width, page.width);
+  const height = Math.min(box.height, page.height);
+  return {
+    x: Math.min(Math.max(box.x, 0), page.width - width),
+    y: Math.min(Math.max(box.y, 0), page.height - height),
+    width,
+    height,
+  };
+}
+
+/**
+ * A table with a row or a column more or less, kept on its page: grown past the page's edge, it is moved in, and
+ * narrowed or shortened to the page if it no longer fits (each column or row then a little smaller).
+ */
+export function reshapeTableOnPage(table: TableLayer, next: TableLayer, page: { width: number; height: number }): TableLayer {
+  if (next === table) return table;
+  return table.rotation === 0 ? { ...next, ...fitOnPage(next, page) } : next;
 }
 
 export function addTableRow(table: TableLayer): TableLayer {

@@ -45,6 +45,7 @@ import {
   rowFractions,
   sortedByZ,
   tableCell,
+  tableStyle,
   trackEdges,
   wrapText,
   TEXT_FONTS,
@@ -53,8 +54,6 @@ import {
 import { layoutRich, paintRich, type RichPainter, type RunStyle } from '../document/richLayout';
 import { isRichEmpty, richBaseOf, richOf } from '../document/richText';
 import {
-  DEFAULT_TABLE_LINE_OPACITY,
-  DEFAULT_TABLE_LINE_WIDTH,
   NOTE_FONT_SIZE,
   NOTE_LINE_HEIGHT,
   TABLE_CELL_PADDING,
@@ -78,11 +77,6 @@ export interface ExportOptions {
 
 const toColor = (c: RgbColor) => rgb(c.r, c.g, c.b);
 
-/** A colour laid over white at `alpha`, for the transparency PDF ops lack. */
-function blendOnWhite(c: RgbColor, alpha: number): RgbColor {
-  const a = Math.min(1, Math.max(0, Number.isFinite(alpha) ? alpha : 1));
-  return { r: 1 - a * (1 - c.r), g: 1 - a * (1 - c.g), b: 1 - a * (1 - c.b) };
-}
 const toBlend = (b: 'normal' | 'multiply') => (b === 'multiply' ? BlendMode.Multiply : BlendMode.Normal);
 
 // ---------------------------------------------------------------------------
@@ -452,32 +446,36 @@ function drawTable(target: PDFPage, table: TableLayer, projection: PdfProjection
     return { x: box.x + localX * cos - fromBottom * sin, y: box.y + localX * sin + fromBottom * cos };
   };
 
-  // Grid weight and tint travel with the table. PDF has no alpha in this
-  // vocabulary, so a faint grid is exported as its colour blended towards the
-  // white the table is drawn on — the same thing the eye sees on screen.
-  const thickness = (table.lineWidth ?? DEFAULT_TABLE_LINE_WIDTH) * projection.scale;
-  const rule = toColor(blendOnWhite(cssColorToPdf('#a1a1aa'), table.lineOpacity ?? DEFAULT_TABLE_LINE_OPACITY));
+  // Its lines and its background as they are on the page: their colours, and how solid each is (an opacity of 0
+  // draws nothing, so a table can be lines alone over the page, or its text alone).
+  const style = tableStyle(table);
+  const thickness = style.lineWidth * projection.scale;
+  const rule = toColor(cssColorToPdf(style.lineColor));
+  const lines = style.lineOpacity > 0 && thickness > 0;
 
-  target.drawRectangle({
-    x: box.x,
-    y: box.y,
-    width: box.width,
-    height: box.height,
-    rotate: degrees(box.rotateDeg),
-    color: toColor(cssColorToPdf('#ffffff')),
-    borderColor: rule,
-    borderWidth: thickness,
-  });
+  if (style.fillOpacity > 0 || lines) {
+    target.drawRectangle({
+      x: box.x,
+      y: box.y,
+      width: box.width,
+      height: box.height,
+      rotate: degrees(box.rotateDeg),
+      ...(style.fillOpacity > 0 ? { color: toColor(cssColorToPdf(style.fillColor)), opacity: style.fillOpacity } : {}),
+      ...(lines ? { borderColor: rule, borderWidth: thickness, borderOpacity: style.lineOpacity } : {}),
+    });
+  }
 
   const grip = TABLE_GRIP_HEIGHT * projection.scale;
   const gridHeight = Math.max(0, box.height - grip);
   const columnEdges = trackEdges(columnFractions(table)).map((f) => f * box.width);
   const rowEdges = trackEdges(rowFractions(table)).map((f) => grip + f * gridHeight);
-  for (const x of columnEdges.slice(1, -1)) {
-    target.drawLine({ start: at(x, grip), end: at(x, box.height), thickness, color: rule });
-  }
-  for (const y of rowEdges) {
-    target.drawLine({ start: at(0, y), end: at(box.width, y), thickness, color: rule });
+  if (lines) {
+    for (const x of columnEdges.slice(1, -1)) {
+      target.drawLine({ start: at(x, grip), end: at(x, box.height), thickness, color: rule, opacity: style.lineOpacity });
+    }
+    for (const y of rowEdges) {
+      target.drawLine({ start: at(0, y), end: at(box.width, y), thickness, color: rule, opacity: style.lineOpacity });
+    }
   }
 
   const size = TABLE_FONT_SIZE * projection.scale;

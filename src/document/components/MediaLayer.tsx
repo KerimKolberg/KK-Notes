@@ -2,13 +2,14 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type C
 import { useShallow } from 'zustand/react/shallow';
 import { GripHorizontal, Lock, LockOpen } from 'lucide-react';
 import {
-  DEFAULT_TABLE_LINE_OPACITY,
-  DEFAULT_TABLE_LINE_WIDTH,
+  MAX_TABLE_LINE_WIDTH,
+  MIN_TABLE_LINE_WIDTH,
   NOTE_BUBBLE_RADIUS,
   NOTE_COLORS,
   NOTE_FONT_SIZE,
   NOTE_LINE_HEIGHT,
   NOTE_SHAPES,
+  TABLE_COLORS,
 } from '../constants';
 import {
   RESIZE_HANDLES,
@@ -16,6 +17,7 @@ import {
   addTableRow,
   columnFractions,
   handlePositions,
+  hexWithOpacity,
   noteBodyBox,
   noteLipHeight,
   noteShapeOf,
@@ -28,6 +30,7 @@ import {
   moveImage,
   removeTableColumn,
   removeTableRow,
+  reshapeTableOnPage,
   resizeImage,
   resizeTrack,
   rotationFromPointer,
@@ -38,6 +41,7 @@ import {
   sortedByZ,
   TOUCH_TARGET,
   tableCell,
+  tableStyle,
   toLocalDelta,
   trackEdges,
   type ResizeHandle,
@@ -353,6 +357,7 @@ export const MediaLayer = memo(function MediaLayer({ page, zoom, active, layer =
           <TransformBox
             item={shown(selected)}
             zoom={zoom}
+            pageWidth={page.dimensions.width}
             pageHeight={page.dimensions.height}
             onBegin={(e, kind, handle) => begin(e, kind, selected, handle)}
             onMove={onMove}
@@ -601,11 +606,10 @@ interface TableCardProps {
   onPatch: (patch: Partial<TableLayer>) => void;
 }
 
-/** The grid's line weight and tint, with the defaults older files lack. */
-function gridLine(table: TableLayer): { width: number; color: string } {
-  const width = table.lineWidth ?? DEFAULT_TABLE_LINE_WIDTH;
-  const opacity = table.lineOpacity ?? DEFAULT_TABLE_LINE_OPACITY;
-  return { width, color: `rgba(161, 161, 170, ${opacity})` };
+/** The grid's line weight and colour, and the background, with the defaults older files lack. */
+function gridLine(table: TableLayer): { width: number; color: string; fill: string } {
+  const style = tableStyle(table);
+  return { width: style.lineWidth, color: hexWithOpacity(style.lineColor, style.lineOpacity), fill: hexWithOpacity(style.fillColor, style.fillOpacity) };
 }
 
 /**
@@ -625,7 +629,7 @@ function TableCard({ table, box, editable, selected, zoom, onDragBody, onCell, o
       data-table-size={`${table.rows}x${table.columns}`}
       style={{
         ...box,
-        background: '#ffffff',
+        background: line.fill,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -635,7 +639,10 @@ function TableCard({ table, box, editable, selected, zoom, onDragBody, onCell, o
       <div
         aria-hidden="true"
         title="Drag to move"
-        style={{ height: TABLE_LIP, flexShrink: 0, cursor: editable ? 'move' : 'default', background: '#e4e4e7' }}
+        // The table's own background, so a table with none is not a grey band on the page; tinted while it is chosen,
+        // when it is something to take hold of.
+        style={{ height: TABLE_LIP, flexShrink: 0, cursor: editable ? 'move' : 'default', background: selected && editable ? 'rgba(113, 113, 122, 0.18)' : 'transparent' }}
+        data-table-lip
         {...onDragBody}
       />
       <div
@@ -798,7 +805,8 @@ export function NoteShapeGlyph({ shape, size = 13 }: { shape: NoteShape; size?: 
 interface TransformBoxProps {
   item: MediaObject;
   zoom: number;
-  /** Height of the page it is on, page px: there is only so much room below the box. */
+  /** The page it is on, page px: there is only so much room below the box, and nothing past the edge shows. */
+  pageWidth: number;
   pageHeight: number;
   onBegin: (e: ReactPointerEvent<HTMLElement>, kind: DragKind, handle?: ResizeHandle) => void;
   onMove: (e: ReactPointerEvent<HTMLElement>) => void;
@@ -810,11 +818,20 @@ interface TransformBoxProps {
   onPatch: (patch: Partial<MediaObject>) => void;
 }
 
-function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete, onFront, onBack, onToggleLock, onPatch }: TransformBoxProps) {
+function TransformBox({ item, zoom, pageWidth, pageHeight, onBegin, onMove, onEnd, onDelete, onFront, onBack, onToggleLock, onPatch }: TransformBoxProps) {
   const handles = handlePositions(item);
   const centre = imageCenter(item);
   const locked = isLocked(item);
   const size = 10 / zoom;
+  // A handle past the page's edge would be cut off with everything else there: it is drawn at the edge instead,
+  // where it can be taken hold of. A drag moves its side by how far the pen goes, so it works the same from there.
+  const onPageEdge = (p: { x: number; y: number }) => ({
+    x: Math.min(Math.max(p.x, size / 2), pageWidth - size / 2),
+    y: Math.min(Math.max(p.y, size / 2), pageHeight - size / 2),
+  });
+  const page = { width: pageWidth, height: pageHeight };
+  const [styling, setStyling] = useState(false);
+  useEffect(() => setStyling(false), [item.id]);
   const drag = {
     onPointerMove: onMove,
     onPointerUp: (e: ReactPointerEvent<HTMLElement>) => onEnd(e, true),
@@ -896,7 +913,7 @@ function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete
             key={h}
             role="presentation"
             data-resize-handle={h}
-            style={handleStyle(handles[h], HANDLE_CURSORS[h])}
+            style={handleStyle(onPageEdge(handles[h]), HANDLE_CURSORS[h])}
             onPointerDown={(e) => onBegin(e, 'resize', h)}
             {...drag}
           />
@@ -905,7 +922,7 @@ function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete
         <div
           role="presentation"
           data-rotate-handle
-          style={{ ...handleStyle(rotHandle, 'grab'), borderRadius: '50%' }}
+          style={{ ...handleStyle(onPageEdge(rotHandle), 'grab'), borderRadius: '50%' }}
           onPointerDown={(e) => onBegin(e, 'rotate')}
           {...drag}
         />
@@ -1006,13 +1023,13 @@ function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete
         )}
         {item.kind === 'table' && (
           <div className="flex items-center gap-0.5" role="group" aria-label="Rows and columns">
-            <button type="button" className={toolbarButton} onClick={() => onPatch(addTableRow(item))} aria-label="Add row" data-add-row>
+            <button type="button" className={toolbarButton} onClick={() => onPatch(reshapeTableOnPage(item, addTableRow(item), page))} aria-label="Add row" data-add-row>
               +Row
             </button>
             <button type="button" className={toolbarButton} onClick={() => onPatch(removeTableRow(item))} aria-label="Remove row" data-remove-row>
               −Row
             </button>
-            <button type="button" className={toolbarButton} onClick={() => onPatch(addTableColumn(item))} aria-label="Add column" data-add-column>
+            <button type="button" className={toolbarButton} onClick={() => onPatch(reshapeTableOnPage(item, addTableColumn(item), page))} aria-label="Add column" data-add-column>
               +Col
             </button>
             <button
@@ -1023,6 +1040,16 @@ function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete
               data-remove-column
             >
               −Col
+            </button>
+            <button
+              type="button"
+              className={`${toolbarButton} ${styling ? 'bg-white/20' : ''}`}
+              onClick={() => setStyling((open) => !open)}
+              aria-expanded={styling}
+              title="Lines and background: colour and how solid"
+              data-table-style-toggle
+            >
+              Style
             </button>
           </div>
         )}
@@ -1035,8 +1062,113 @@ function TransformBox({ item, zoom, pageHeight, onBegin, onMove, onEnd, onDelete
         <button type="button" className={`${toolbarButton} text-rose-200`} onClick={onDelete} title="Delete" aria-label="Delete">
           Delete
         </button>
+        {item.kind === 'table' && styling && <TableStylePanel table={item} onPatch={onPatch} />}
       </div>
       )}
     </>
+  );
+}
+
+interface TableStylePanelProps {
+  table: TableLayer;
+  onPatch: (patch: Partial<TableLayer>) => void;
+}
+
+/**
+ * A table's look, on its toolbar: the lines' colour, how solid and how thick, and the background's colour and how
+ * solid. Either down to 0 %: a table can be lines alone over a page, or its text alone over a PDF's own ruled table.
+ */
+function TableStylePanel({ table, onPatch }: TableStylePanelProps) {
+  const style = tableStyle(table);
+  return (
+    <div className="flex w-full flex-col gap-1 border-t border-white/15 px-1 pt-1 text-xs text-white/80" data-table-style>
+      <StyleRow
+        label="Lines"
+        part="line"
+        color={style.lineColor}
+        opacity={style.lineOpacity}
+        onColor={(lineColor) => onPatch({ lineColor })}
+        onOpacity={(lineOpacity) => onPatch({ lineOpacity })}
+      />
+      <label className="flex items-center gap-2">
+        <span className="w-20 shrink-0">Line width</span>
+        <input
+          type="range"
+          className="h-1 w-28 accent-blue-400"
+          min={MIN_TABLE_LINE_WIDTH}
+          max={MAX_TABLE_LINE_WIDTH}
+          step={0.25}
+          value={style.lineWidth}
+          aria-label="Line width"
+          data-table-style-line-width
+          onChange={(e) => onPatch({ lineWidth: Number(e.target.value) })}
+        />
+        <span className="w-10 text-right tabular-nums">{style.lineWidth}px</span>
+      </label>
+      <StyleRow
+        label="Background"
+        part="fill"
+        color={style.fillColor}
+        opacity={style.fillOpacity}
+        onColor={(fillColor) => onPatch({ fillColor })}
+        onOpacity={(fillOpacity) => onPatch({ fillOpacity })}
+      />
+    </div>
+  );
+}
+
+interface StyleRowProps {
+  label: string;
+  part: 'line' | 'fill';
+  color: string;
+  opacity: number;
+  onColor: (color: string) => void;
+  onOpacity: (opacity: number) => void;
+}
+
+function StyleRow({ label, part, color, opacity, onColor, onOpacity }: StyleRowProps) {
+  return (
+    <div className="flex flex-col gap-1" role="group" aria-label={label}>
+      <div className="flex items-center gap-1">
+        <span className="w-20 shrink-0">{label}</span>
+        {TABLE_COLORS.map((swatch) => (
+          <button
+            key={swatch}
+            type="button"
+            className={`h-5 w-5 rounded-full ring-1 hover:ring-white focus-visible:outline-2 focus-visible:outline-blue-300 ${
+              swatch === color.toLowerCase() ? 'ring-2 ring-blue-300' : 'ring-white/40'
+            }`}
+            style={{ background: swatch }}
+            onClick={() => onColor(swatch)}
+            aria-label={`${label} colour ${swatch}`}
+            aria-pressed={swatch === color.toLowerCase()}
+            data-table-style-swatch={`${part}-${swatch}`}
+          />
+        ))}
+        <input
+          type="color"
+          className="h-5 w-6 cursor-pointer rounded border-0 bg-transparent p-0"
+          value={color}
+          aria-label={`${label}: any colour`}
+          data-table-style-color={part}
+          onChange={(e) => onColor(e.target.value)}
+        />
+      </div>
+      <label className="flex items-center gap-2">
+        <span className="w-20 shrink-0 pl-2 text-white/60">opacity</span>
+        <input
+          type="range"
+          className="h-1 w-28 accent-blue-400"
+          min={0}
+          max={1}
+          step={0.05}
+          value={opacity}
+          aria-label={`${label} opacity`}
+          data-table-style-opacity={part}
+          onChange={(e) => onOpacity(Number(e.target.value))}
+        />
+        <span className="w-10 text-right tabular-nums">{Math.round(opacity * 100)}%</span>
+      </label>
+    </div>
   );
 }

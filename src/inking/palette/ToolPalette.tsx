@@ -19,6 +19,7 @@ import {
   Settings2,
   Spline,
   Ticket,
+  Hand,
   Undo2,
   Zap,
   type LucideIcon,
@@ -351,6 +352,17 @@ export const ToolPalette = memo(function ToolPalette({
   const slots: Readonly<Record<PaletteSlot, ReactNode>> = {
     select: (
       <IconButton size="sm" icon={MousePointer2} label="Select" active={settings.tool === 'select'} onClick={() => pick('select')} data-palette-tool="select" />
+    ),
+    hand: (
+      <IconButton
+        size="sm"
+        icon={Hand}
+        label="Move around"
+        hint="the pen, a finger or the mouse moves the pages; nothing is drawn or selected"
+        active={settings.tool === 'pan'}
+        onClick={() => pick('pan')}
+        data-palette-tool="pan"
+      />
     ),
     lasso: (
       <div className="relative">

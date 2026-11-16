@@ -250,7 +250,7 @@ export const ZoomWindow = memo(function ZoomWindow({ settingsRef, currentTool }:
           gridSpacing={pageSnapSpacing(page)}
           {...(ruler ? { ruler } : {})}
           currentTool={currentTool}
-          interactive={currentTool !== 'select'}
+          interactive={currentTool !== 'select' && currentTool !== 'pan'}
           ariaLabel="Zoom window drawing surface"
         />
       </div>

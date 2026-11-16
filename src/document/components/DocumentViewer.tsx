@@ -113,8 +113,10 @@ export const DocumentViewer = memo(function DocumentViewer({ settingsRef, curren
   const singlePageRef = useLatestRef(Boolean(singlePage));
   const zoomRef = useLatestRef(zoom);
   const axisRef = useLatestRef(axis);
-  // A locked document never inks, so one finger always pans it.
-  const oneFingerInksRef = useLatestRef(touchDraw && !readOnly);
+  // A locked document never inks, so one finger always pans it; nor does the hand.
+  const hand = currentTool === 'pan';
+  const oneFingerInksRef = useLatestRef(touchDraw && !readOnly && !hand);
+  const handRef = useLatestRef(hand);
 
   const scrollMain = axis === 'y' ? viewport.scrollTop : viewport.scrollLeft;
   const viewportMain = axis === 'y' ? viewport.height : viewport.width;
@@ -223,7 +225,7 @@ export const DocumentViewer = memo(function DocumentViewer({ settingsRef, curren
       v.scrollTop === el.scrollTop && v.scrollLeft === el.scrollLeft ? v : { ...v, scrollTop: el.scrollTop, scrollLeft: el.scrollLeft },
     );
   }, [layout, zoom, axisRef]);
-  const gestureHandlers = useTouchGestures({ scrollRef, previewRef, layoutRef, zoomRef, oneFingerInksRef, onCommit: onGestureCommit });
+  const gestureHandlers = useTouchGestures({ scrollRef, previewRef, layoutRef, zoomRef, oneFingerInksRef, handRef, onCommit: onGestureCommit });
   // A touchpad pinch (and Ctrl + the mouse wheel), which arrives as Ctrl + wheel rather than as touches.
   useWheelZoom({ scrollRef, previewRef, layoutRef, zoomRef, axisRef, onCommit: onGestureCommit, setZoom });
 
@@ -265,6 +267,7 @@ export const DocumentViewer = memo(function DocumentViewer({ settingsRef, curren
         data-view-mode={viewMode}
         data-axis={axis}
         data-read-only={readOnly ? 'true' : undefined}
+        data-hand-tool={hand ? 'true' : undefined}
       >
         <div className="relative" style={{ height: layout.totalHeight, width: layout.totalWidth, minWidth: '100%' }}>
           {/* Pinch previews transform this wrapper; the sized parent keeps the scroll range stable meanwhile. */}

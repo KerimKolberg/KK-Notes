@@ -19,6 +19,8 @@ export type EraserMode = 'stroke' | 'area';
 /** Every tool the user can select in the UI. */
 export type ToolType =
   | 'select'
+  /** The hand: the pen, a finger or the mouse moves the pages about, and nothing else happens. */
+  | 'pan'
   | 'lasso'
   | 'pen'
   | 'highlighter'
@@ -33,7 +35,7 @@ export type ToolType =
  * Tools that put marks on the surface. The stroke eraser removes existing
  * strokes instead of creating one, and select never draws.
  */
-export type InkTool = Exclude<ToolType, 'eraser-stroke' | 'select' | 'lasso'>;
+export type InkTool = Exclude<ToolType, 'eraser-stroke' | 'select' | 'pan' | 'lasso'>;
 
 /**
  * Tools whose output is shown live and never written to the document: no
