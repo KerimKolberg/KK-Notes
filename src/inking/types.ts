@@ -377,7 +377,8 @@ export interface ToolSettings {
   /** Snap a recognised shape's edges to 15° increments while hold-to-snap is on. */
   angleSnap: boolean;
   /** Line tool: a straight segment, or which procedural curve to lay down. */
-  lineCurve: 'straight' | CurveKind;
+  /** What a drag of the line tool lays down: a line, a curve, or a rectangle or oval in the drag's box. */
+  lineCurve: 'straight' | CurveKind | 'rectangle' | 'ellipse';
   /** Curve depth as a fraction of the drag's length. */
   curveAmplitude: number;
   /** Whole cycles a wave or zigzag fits between the drag's endpoints. */

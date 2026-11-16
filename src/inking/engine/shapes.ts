@@ -79,6 +79,32 @@ export function lineFromDrag(start: Point, end: Point, angleSnapDeg?: number): L
   return { type: 'line', from: start, to };
 }
 
+/** How close to square a dragged box has to be (relative difference of its sides) to come out exactly square. */
+export const SQUARE_SNAP_RATIO = 0.08;
+
+/** The drag's box, made exactly square when it nearly is: a pen cannot hold a shift key. */
+function dragBox(start: Point, end: Point): { cx: number; cy: number; width: number; height: number } {
+  let width = Math.abs(end.x - start.x);
+  let height = Math.abs(end.y - start.y);
+  if (Math.abs(width - height) <= SQUARE_SNAP_RATIO * Math.max(width, height)) width = height = Math.max(width, height);
+  // Grown from the corner the drag began at, towards the pen.
+  const cx = start.x + (Math.sign(end.x - start.x) || 1) * (width / 2);
+  const cy = start.y + (Math.sign(end.y - start.y) || 1) * (height / 2);
+  return { cx, cy, width, height };
+}
+
+/** A rectangle from one corner to the other; a square when it nearly is one. */
+export function rectangleFromDrag(start: Point, end: Point): RectangleShape {
+  const { cx, cy, width, height } = dragBox(start, end);
+  return { type: 'rectangle', center: { x: cx, y: cy }, width, height, rotation: 0 };
+}
+
+/** An oval filling the drag's box; a circle when it nearly is one. */
+export function ellipseFromDrag(start: Point, end: Point): EllipseShape {
+  const { cx, cy, width, height } = dragBox(start, end);
+  return { type: 'ellipse', center: { x: cx, y: cy }, radiusX: width / 2, radiusY: height / 2, rotation: 0 };
+}
+
 /**
  * A curve from the same drag a straight line would use. Its depth is a
  * fraction of the chord, so a long sweep bows proportionally rather than

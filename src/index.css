@@ -61,6 +61,19 @@ body {
   touch-action: none;
 }
 
+/* Nothing in the view is the web view's to select: a pen dragged over a PDF page selected its words (the PDF's own
+   selection is the app's, `textselect/`), and offered "Copy". Text being typed still selects. */
+[data-viewer] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+[data-viewer] [contenteditable='true'],
+[data-viewer] input,
+[data-viewer] textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* Nothing on a page is the browser's to drag (see `DocumentApp`'s `onDragStart`): a pen pressed on a picture of the
    page would otherwise start one, and the stroke under way would be cancelled. */
 [data-document-view] img,

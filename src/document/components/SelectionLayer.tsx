@@ -71,7 +71,7 @@ import { clearSurface, drawStroke, get2dContext } from '../../inking/engine/rend
 import { usePageCanvas } from '../../inking/hooks/usePageCanvas';
 import { useViewportShift } from '../../ui/useViewportShift';
 import type { BBox, CanvasSize, CurveKind, Point, Stroke, StrokePattern } from '../../inking/types';
-import { pageAtViewportPoint, pageHandoffOffset, type PageRect } from '../layout';
+import { mountedPageRects, pageAtViewportPoint, pageHandoffOffset } from '../layout';
 import { useDocumentStore } from '../store';
 import type { Page } from '../types';
 
@@ -151,18 +151,6 @@ const DISTRIBUTE_BUTTONS: readonly { readonly axis: DistributeAxis; readonly lab
   { axis: 'horizontal', label: 'Space evenly across', Icon: AlignHorizontalDistributeCenter },
   { axis: 'vertical', label: 'Space evenly down', Icon: AlignVerticalDistributeCenter },
 ];
-
-/** On-screen rects of every mounted page, for deciding where a drag was dropped. */
-function mountedPageRects(): PageRect[] {
-  const rects: PageRect[] = [];
-  for (const el of document.querySelectorAll<HTMLElement>('[data-page-id]')) {
-    const pageId = el.dataset.pageId;
-    if (!pageId) continue;
-    const rect = el.getBoundingClientRect();
-    rects.push({ pageId, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom });
-  }
-  return rects;
-}
 
 function isIdentity(t: StrokeTransform): boolean {
   if (t.kind === 'translate') return t.dx === 0 && t.dy === 0;

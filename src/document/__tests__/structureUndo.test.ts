@@ -275,3 +275,38 @@ describe('typing', () => {
     expect(doc().pages).toHaveLength(1);
   });
 });
+
+describe('carrying a picture, note, table or text box to another page', () => {
+  beforeEach(() => {
+    s().setReadOnly(false);
+    s().newDocument();
+    s().addPage('after', 0);
+  });
+
+  it('moves it there, on top, selected, and one Undo puts it back', () => {
+    const [first, second] = doc().pages;
+    const box = createTextBox(first!.dimensions, 1);
+    s().addMedia(first!.id, box);
+    s().addMedia(second!.id, { ...createTextBox(second!.dimensions, 4), id: 'text_other' });
+    s().moveMediaToPage(first!.id, second!.id, box.id, { x: 30, y: 40 });
+
+    const [from, to] = doc().pages;
+    expect(from!.media.some((m) => m.id === box.id)).toBe(false);
+    const moved = to!.media.find((m) => m.id === box.id);
+    expect(moved).toMatchObject({ x: 30, y: 40 });
+    expect(moved!.zIndex).toBeGreaterThan(to!.media.find((m) => m.id === 'text_other')!.zIndex);
+    expect(s().selectedMedia).toEqual({ pageId: second!.id, mediaId: box.id });
+
+    expect(s().undoLast()).toBe('moving a text box to another page');
+    expect(doc().pages[0]!.media.some((m) => m.id === box.id)).toBe(true);
+    expect(doc().pages[1]!.media.some((m) => m.id === box.id)).toBe(false);
+  });
+
+  it('does nothing for the same page, or for something not there', () => {
+    const [first, second] = doc().pages;
+    const before = doc();
+    s().moveMediaToPage(first!.id, first!.id, 'anything', { x: 1 });
+    s().moveMediaToPage(first!.id, second!.id, 'missing', { x: 1 });
+    expect(doc()).toBe(before);
+  });
+});

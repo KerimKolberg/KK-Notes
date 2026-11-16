@@ -45,6 +45,7 @@ import { clampZoom } from './layout';
 import {
   addImage as addMediaToList,
   bringToFront as bringMediaToFrontInList,
+  nextZIndex,
   removeImage as removeMediaFromList,
   sendToBack as sendMediaToBackInList,
   updateImage as updateMediaInList,
@@ -209,6 +210,11 @@ export interface DocumentStore {
    */
   setFlowedPages: (pages: readonly Page[]) => void;
   removeMedia: (pageId: string, mediaId: string) => void;
+  /**
+   * Move a picture, note, table or text box to another page, with `patch` (its place there, in that page's units).
+   * One step for Undo; it stays selected, on its new page.
+   */
+  moveMediaToPage: (fromPageId: string, toPageId: string, mediaId: string, patch: Partial<MediaObject>) => void;
   bringMediaToFront: (pageId: string, mediaId: string) => void;
   sendMediaToBack: (pageId: string, mediaId: string) => void;
   selectMedia: (selection: MediaSelection | null) => void;
@@ -323,6 +329,14 @@ export interface TextEdit {
 export type TextEditKind = 'type' | 'format' | 'paste';
 
 const TEXT_EDIT_LABELS: Readonly<Record<TextEditKind, string>> = { type: 'typing', format: 'formatting', paste: 'pasting' };
+
+/** What Undo says it took back when something was carried to another page. */
+const MOVE_TO_PAGE_LABELS: Readonly<Record<MediaObject['kind'], string>> = {
+  image: 'moving a picture to another page',
+  note: 'moving a note to another page',
+  table: 'moving a table to another page',
+  text: 'moving a text box to another page',
+};
 
 /** A pause in typing longer than this starts a new step of Undo. */
 const TYPING_PAUSE_MS = 1000;
@@ -751,6 +765,24 @@ export const useDocumentStore = create<DocumentStore>()((set, get) => ({
       document: updatePageById(s.document, pageId, (page) => withMedia(page, removeMediaFromList(page.media, mediaId))),
       selectedMedia: s.selectedMedia?.mediaId === mediaId ? null : s.selectedMedia,
     }))),
+
+  moveMediaToPage: (fromPageId, toPageId, mediaId, patch) =>
+    set(edit((s) => {
+      if (fromPageId === toPageId) return s;
+      const source = s.document.pages.find((p) => p.id === fromPageId);
+      const target = s.document.pages.find((p) => p.id === toPageId);
+      const item = source?.media.find((m) => m.id === mediaId);
+      if (!source || !target || !item) return s;
+      // On top of what is on the page it lands on, as something just put there is.
+      const moved = { ...item, ...patch, zIndex: nextZIndex(target.media) } as MediaObject;
+      const without = updatePageById(s.document, fromPageId, (page) => withMedia(page, removeMediaFromList(page.media, mediaId)));
+      // Two pages change: one step of Undo for the note, as a change to the pages is, which puts it back where it was.
+      typing = null;
+      return {
+        ...structured(s, MOVE_TO_PAGE_LABELS[item.kind], updatePageById(without, toPageId, (page) => withMedia(page, [...page.media, moved]))),
+        selectedMedia: { pageId: toPageId, mediaId },
+      };
+    })),
 
   bringMediaToFront: (pageId, mediaId) =>
     set(edit((s) => ({

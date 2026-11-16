@@ -42,7 +42,14 @@ import {
   get2dContext,
 } from '../engine/renderer';
 import { RECOGNITION, recognizeStroke } from '../engine/shapeRecognition';
-import { coordinatePlaneFromDrag, createGeometricStroke, curveFromDrag, lineFromDrag } from '../engine/shapes';
+import {
+  coordinatePlaneFromDrag,
+  createGeometricStroke,
+  curveFromDrag,
+  ellipseFromDrag,
+  lineFromDrag,
+  rectangleFromDrag,
+} from '../engine/shapes';
 import { DEFAULT_SNAP_GRID, snapToGrid } from '../engine/grid';
 import { edgeForStart, lengthCm, projectToEdge, PX_PER_CM, type Edge, type Ruler } from '../engine/ruler';
 import { polylineLength } from '../engine/simplify';
@@ -150,6 +157,10 @@ export function shapeReading(shape: Shape, hud: readonly AngleArc[]): string[] {
     if (cm >= 0.05) items.push(`${cm.toFixed(1)} cm`);
   } else if (shape.type === 'rectangle') {
     items.push(`${(shape.width / PX_PER_CM).toFixed(1)} × ${(shape.height / PX_PER_CM).toFixed(1)} cm`);
+  } else if (shape.type === 'ellipse') {
+    const across = (2 * shape.radiusX) / PX_PER_CM;
+    const down = (2 * shape.radiusY) / PX_PER_CM;
+    items.push(Math.abs(across - down) < 0.05 ? `⌀ ${across.toFixed(1)} cm` : `${across.toFixed(1)} × ${down.toFixed(1)} cm`);
   }
   return items;
 }
@@ -289,6 +300,8 @@ function buildDragShape(
   // The line tool lays down whichever path its flyout is set to; all of them
   // are defined by the drag's two endpoints, so the gesture is the same one.
   if (settings.lineCurve === 'straight') return lineFromDrag(start, current, angleSnapDeg);
+  if (settings.lineCurve === 'rectangle') return rectangleFromDrag(start, current);
+  if (settings.lineCurve === 'ellipse') return ellipseFromDrag(start, current);
   return curveFromDrag(
     start,
     current,
@@ -305,6 +318,8 @@ function isDegenerateShape(shape: Shape): boolean {
     return Math.hypot(shape.to.x - shape.from.x, shape.to.y - shape.from.y) < 2;
   }
   if (shape.type === 'coordinate-plane') return shape.extentX < 8 || shape.extentY < 8;
+  if (shape.type === 'rectangle') return shape.width < 3 || shape.height < 3;
+  if (shape.type === 'ellipse') return shape.radiusX < 1.5 || shape.radiusY < 1.5;
   return false;
 }
 

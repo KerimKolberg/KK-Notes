@@ -47,6 +47,7 @@ import { usePageFlow } from '../../typing/flow/usePageFlow';
 import { RichTextCard } from '../../typing/RichTextCard';
 import { typeAt } from '../../typing/typingMode';
 import { useTypingStore } from '../../typing/typingStore';
+import { isOnPage, keepOnPage, mountedPageRects, pageAtViewportPoint, pageHandoffOffset } from '../layout';
 import { useDocumentStore } from '../store';
 import type { MediaObject, NoteShape, Page, StickyNote, TableLayer } from '../types';
 
@@ -104,12 +105,13 @@ const DIVIDER_GRAB = 7;
  * need the platform's own text editing, selection and IME.
  */
 export const MediaLayer = memo(function MediaLayer({ page, zoom, active, layer = 'below' }: MediaLayerProps) {
-  const { selectedMedia, selectMedia, updateMedia, removeMedia, bringMediaToFront, sendMediaToBack } = useDocumentStore(
+  const { selectedMedia, selectMedia, updateMedia, moveMediaToPage, removeMedia, bringMediaToFront, sendMediaToBack } = useDocumentStore(
     useShallow((s) => ({
       selectedMedia: s.selectedMedia,
       selectMedia: s.selectMedia,
       updateMedia: s.updateMedia,
       removeMedia: s.removeMedia,
+      moveMediaToPage: s.moveMediaToPage,
       bringMediaToFront: s.bringMediaToFront,
       sendMediaToBack: s.sendMediaToBack,
     })),
@@ -181,15 +183,33 @@ export const MediaLayer = memo(function MediaLayer({ page, zoom, active, layer =
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== e.pointerId) return;
       dragRef.current = null;
+      // Let go over another page: it goes there, under the pen, as a lasso selection does (a text box made from a
+      // PDF's words, carried to the squared page after it to work on). Page text belongs to its page and stays.
+      const flowing = drag.origin.kind === 'text' && drag.origin.flow === true;
+      let target: { pageId: string; offset: { x: number; y: number } } | null = null;
+      if (commit && drag.kind === 'move' && !flowing) {
+        const rects = mountedPageRects();
+        const source = rects.find((r) => r.pageId === page.id);
+        const over = pageAtViewportPoint(rects, e.clientX, e.clientY);
+        if (source && over && over.pageId !== page.id && isOnPage(over, e.clientX, e.clientY)) {
+          target = { pageId: over.pageId, offset: pageHandoffOffset(source, over, zoom) };
+        }
+      }
       setDraft((current) => {
         if (commit && current && current.id === drag.origin.id) {
           const { x, y, width, height, rotation } = current;
-          updateMedia(page.id, current.id, { x, y, width, height, rotation });
+          if (target) {
+            moveMediaToPage(page.id, target.pageId, current.id, { x: x + target.offset.x, y: y + target.offset.y, width, height, rotation });
+          } else {
+            // Not past the edge of its own page into nothing, where it could not be seen or got back.
+            const kept = drag.kind === 'move' ? keepOnPage({ x, y, width, height }, page.dimensions) : { x, y };
+            updateMedia(page.id, current.id, { ...kept, width, height, rotation });
+          }
         }
         return null;
       });
     },
-    [page.id, updateMedia],
+    [page.id, page.dimensions, zoom, updateMedia, moveMediaToPage],
   );
 
   const bodyHandlers = (raw: MediaObject) => ({

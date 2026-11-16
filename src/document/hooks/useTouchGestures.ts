@@ -79,12 +79,26 @@ interface PinchGesture {
   last: PinchState;
 }
 
+/**
+ * The pen scrolling the view: dragging the scrollbar (`thumb`, which moves the view the way a scrollbar does, by the
+ * whole document for the length of the track) or pressed beside the pages (`content`, which moves it as a finger
+ * does, with the pen).
+ */
+interface PenScrollState {
+  readonly kind: 'pen-scroll';
+  readonly pointerId: number;
+  readonly mode: 'thumb' | 'content';
+  readonly axis: 'x' | 'y';
+  readonly start: Point;
+  readonly scroll: Point;
+}
+
 /** A finger left over from a finished pinch is ignored until it lifts. */
 interface BlockedState {
   readonly kind: 'blocked';
 }
 
-type GestureState = PanState | PinchGesture | BlockedState | null;
+type GestureState = PanState | PinchGesture | BlockedState | PenScrollState | null;
 
 /** Elements a single finger should operate instead of panning. */
 const NO_PAN_SELECTOR = [
@@ -104,6 +118,35 @@ const NO_PAN_SELECTOR = [
 
 function isNoPanTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(NO_PAN_SELECTOR) !== null;
+}
+
+/** Anything on a page, or on the cover: the pen writes there, and does not scroll. */
+const ON_A_PAGE_SELECTOR = ['[data-page-id]', '[data-cover]', NO_PAN_SELECTOR].join(',');
+
+/**
+ * Where a pen pressed on the view's own surface lands: on its scrollbar (and which), or beside the pages. `null` for
+ * anything on a page. The scrollbar is no element: it is the strip of the scroller past its client box.
+ */
+export function penScrollTarget(
+  box: { left: number; top: number; clientWidth: number; clientHeight: number; offsetWidth: number; offsetHeight: number },
+  x: number,
+  y: number,
+  onPage: boolean,
+): { mode: 'thumb' | 'content'; axis: 'x' | 'y' } | null {
+  const verticalBar = box.offsetWidth > box.clientWidth && x >= box.left + box.clientWidth;
+  const horizontalBar = box.offsetHeight > box.clientHeight && y >= box.top + box.clientHeight;
+  if (verticalBar) return { mode: 'thumb', axis: 'y' };
+  if (horizontalBar) return { mode: 'thumb', axis: 'x' };
+  return onPage ? null : { mode: 'content', axis: 'y' };
+}
+
+/**
+ * The scroll a pen dragging the scrollbar's thumb by `delta` (window px along the bar) asks for: the thumb covers the
+ * track as the view covers the document, so a px of thumb is `scrollSize / viewSize` px of document.
+ */
+export function thumbScroll(startScroll: number, delta: number, scrollSize: number, viewSize: number): number {
+  if (viewSize <= 0) return startScroll;
+  return Math.min(Math.max(0, startScroll + (delta * scrollSize) / viewSize), Math.max(0, scrollSize - viewSize));
 }
 
 function capture(el: HTMLElement, pointerId: number): void {
@@ -199,6 +242,37 @@ export function useTouchGestures(options: UseTouchGesturesOptions): TouchGesture
         // A pen landing means any finger down was a palm: stop navigating.
         if (state?.kind === 'pinch') finishPinch();
         else cancelPan();
+        // The pen on the view's own surface (its scrollbar, or beside the pages) scrolls it. Left to the web view, a
+        // pen on the scrollbar jumped the view about, left it blank, and selected text on the way (reported on the
+        // Flow Z13, in a screen recording), since the view takes no touch actions of its own (`touch-action: none`).
+        const el = optionsRef.current.scrollRef.current;
+        if (!el || state !== null || e.button !== 0) return;
+        const onPage = e.target instanceof Element && e.target.closest(ON_A_PAGE_SELECTOR) !== null;
+        const rect = el.getBoundingClientRect();
+        const target = penScrollTarget(
+          { left: rect.left, top: rect.top, clientWidth: el.clientWidth, clientHeight: el.clientHeight, offsetWidth: el.offsetWidth, offsetHeight: el.offsetHeight },
+          e.clientX,
+          e.clientY,
+          onPage,
+        );
+        if (!target) return;
+        e.preventDefault();
+        if (target.mode === 'thumb') {
+          // Pressed on the track rather than on the thumb: the thumb comes to the pen first, as a scrollbar's does.
+          const along = target.axis === 'y' ? e.clientY - rect.top : e.clientX - rect.left;
+          const view = target.axis === 'y' ? el.clientHeight : el.clientWidth;
+          const size = target.axis === 'y' ? el.scrollHeight : el.scrollWidth;
+          const scroll = target.axis === 'y' ? el.scrollTop : el.scrollLeft;
+          const thumbStart = (scroll / size) * view;
+          const thumbLength = (view / size) * view;
+          if (along < thumbStart || along > thumbStart + thumbLength) {
+            const centred = thumbScroll(0, along - thumbLength / 2, size, view);
+            if (target.axis === 'y') el.scrollTop = centred;
+            else el.scrollLeft = centred;
+          }
+        }
+        state = { kind: 'pen-scroll', pointerId: e.pointerId, mode: target.mode, axis: target.axis, start: { x: e.clientX, y: e.clientY }, scroll: { x: el.scrollLeft, y: el.scrollTop } };
+        capture(el, e.pointerId);
         return;
       }
       if (e.pointerType !== 'touch') return;
@@ -224,6 +298,21 @@ export function useTouchGestures(options: UseTouchGesturesOptions): TouchGesture
 
     const onPointerMove: DivPointerHandler = (e) => {
       if (e.pointerType === 'pen') {
+        if (state?.kind === 'pen-scroll' && state.pointerId === e.pointerId) {
+          const el = optionsRef.current.scrollRef.current;
+          if (!el) return;
+          const dx = e.clientX - state.start.x;
+          const dy = e.clientY - state.start.y;
+          if (state.mode === 'thumb') {
+            if (state.axis === 'y') el.scrollTop = thumbScroll(state.scroll.y, dy, el.scrollHeight, el.clientHeight);
+            else el.scrollLeft = thumbScroll(state.scroll.x, dx, el.scrollWidth, el.clientWidth);
+          } else {
+            const scroll = panScroll(state.scroll, { x: dx, y: dy });
+            el.scrollLeft = scroll.x;
+            el.scrollTop = scroll.y;
+          }
+          return;
+        }
         // Pen hovering over a one-finger pan: that finger is a resting palm.
         cancelPan();
         return;
@@ -246,6 +335,10 @@ export function useTouchGestures(options: UseTouchGesturesOptions): TouchGesture
     };
 
     const onPointerEnd: DivPointerHandler = (e) => {
+      if (state?.kind === 'pen-scroll') {
+        if (state.pointerId === e.pointerId) state = null;
+        return;
+      }
       if (e.pointerType !== 'touch') return;
       if (!touches.delete(e.pointerId)) return;
       if (state?.kind === 'pinch') {

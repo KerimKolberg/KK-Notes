@@ -1222,6 +1222,150 @@ async function checkPenWriting(browser) {
 }
 
 /**
+ * Moving around with the pen, carrying a text box to the next page, and the line tool's rectangle and oval:
+ * - the pen on the view's scrollbar drags it, and beside the pages pans, without selecting the PDF's words;
+ * - a text box dragged by its grip onto the next page goes there (it used to stay behind, out of sight);
+ * - the line tool lays down a rectangle and an oval from the drag's box.
+ */
+async function checkPenNavigation(browser) {
+  console.log('pen scrolling, a text box to the next page, rectangles and ovals, 1280x800:');
+  const { ctx, page, errors } = await openPenDocument(browser);
+  await page.click('[data-arranger-toggle]');
+  await page.waitForSelector('[role="group"][aria-label="Page operations"] button');
+  const addAfter = page.locator('[role="group"][aria-label="Page operations"] button', { hasText: /after/i }).first();
+  await addAfter.click();
+  await addAfter.click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-thumbnail]').length === 3);
+  await page.click('[data-arranger-close]');
+  await page.waitForTimeout(250);
+
+  const pen = (selector, points) =>
+    page.evaluate(async ([sel, pts]) => {
+      const target = typeof sel === 'string' ? document.querySelector(sel) : null;
+      const fire = (type, x, y, buttons) => {
+        const el = target ?? document.elementFromPoint(x, y);
+        el.dispatchEvent(new PointerEvent(type, { pointerType: 'pen', pointerId: 11, isPrimary: true, bubbles: true, cancelable: true, clientX: x, clientY: y, buttons, button: type === 'pointermove' ? -1 : 0, pressure: buttons & 1 ? 0.5 : 0 }));
+      };
+      fire('pointerdown', pts[0][0], pts[0][1], 1);
+      for (const [x, y] of pts.slice(1)) {
+        fire('pointermove', x, y, 1);
+        await new Promise((r) => requestAnimationFrame(() => r()));
+      }
+      const last = pts[pts.length - 1];
+      fire('pointerup', last[0], last[1], 0);
+    }, [selector, points]);
+  const scrollTop = () => page.$eval('[data-viewer]', (el) => el.scrollTop);
+  const geometry = await page.$eval('[data-viewer]', (el) => {
+    const r = el.getBoundingClientRect();
+    const first = document.querySelector('[data-page-index="0"]').getBoundingClientRect();
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, clientWidth: el.clientWidth, offsetWidth: el.offsetWidth, pageRight: first.right };
+  });
+
+  // Beside the pages: the pen pans the view, as a finger does.
+  const marginX = Math.round((geometry.pageRight + geometry.left + geometry.clientWidth) / 2);
+  const before = await scrollTop();
+  await pen(null, Array.from({ length: 12 }, (_, i) => [marginX, 600 - i * 30]));
+  const panned = await scrollTop();
+  check('the pen pressed beside the pages pans the view', panned > before + 200, `${before} -> ${panned}`);
+
+  // On the scrollbar, where there is one: the pen drags it, a step of thumb a whole stretch of document.
+  if (geometry.offsetWidth > geometry.clientWidth) {
+    const barX = geometry.left + geometry.clientWidth + (geometry.offsetWidth - geometry.clientWidth) / 2;
+    const thumbY = await page.$eval('[data-viewer]', (el) => el.getBoundingClientRect().top + ((el.scrollTop + el.clientHeight / 2) / el.scrollHeight) * el.clientHeight);
+    const from = await scrollTop();
+    await pen('[data-viewer]', Array.from({ length: 10 }, (_, i) => [barX, thumbY + i * 8]));
+    const to = await scrollTop();
+    const expected = (72 * (await page.$eval('[data-viewer]', (el) => el.scrollHeight / el.clientHeight)));
+    check('the pen dragging the scrollbar moves the view as a scrollbar does', Math.abs(to - from - expected) < expected * 0.25, `${from} -> ${to}, expected +${Math.round(expected)}`);
+  } else {
+    check('the pen dragging the scrollbar (overlay scrollbars here: nothing to drag)', true);
+  }
+  check('and selects nothing on the way', await page.evaluate(() => (window.getSelection()?.toString() ?? '') === ''));
+  check('the view lets no text be selected but what is typed', await page.$eval('[data-viewer]', (el) => getComputedStyle(el).userSelect === 'none'));
+
+  // A text box on the first page, carried by its grip onto the second.
+  await page.$eval('[data-viewer]', (el) => { el.scrollTop = 0; });
+  await page.waitForTimeout(150);
+  await page.click('[data-insert-trigger]');
+  await page.click('[data-insert-text]');
+  await page.waitForSelector('[data-text-content]');
+  await page.type('[data-text-content]', 'Carry me over');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  const pageIds = await page.$$eval('[data-page-id]', (els) => els.map((el) => el.getAttribute('data-page-id')));
+  const grip = await page.$eval('[data-media-grip]', (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  const dragGrip = async (from, toY) => {
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    for (let i = 1; i <= 20; i++) await page.mouse.move(from.x, from.y + ((toY - from.y) * i) / 20);
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+  };
+  const gripAt = () => page.$eval('[data-media-grip]', (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  // Page 2 comes into view below the box: the view scrolled till the box is near its top.
+  await page.$eval('[data-viewer]', (el, by) => { el.scrollTop += by; }, Math.round(grip.y - 110));
+  await page.waitForTimeout(200);
+  const second = await page.$eval(`[data-page-id="${pageIds[1]}"]`, (el) => el.getBoundingClientRect().toJSON());
+  const first = await page.$eval(`[data-page-id="${pageIds[0]}"]`, (el) => el.getBoundingClientRect().toJSON());
+
+  // Let go in the gap between the pages, on neither: it stays on its own page, in sight.
+  await dragGrip(await gripAt(), first.bottom + 3);
+  const kept = await page.$eval(`[data-page-id="${pageIds[0]}"] [data-text-content]`, (el) => el.getBoundingClientRect().toJSON()).catch(() => null);
+  check('a text box let go past the bottom of its page stays on it, in sight', kept !== null && kept.top <= first.bottom - 20, JSON.stringify({ kept, bottom: first.bottom }));
+
+  const dropY = Math.min(second.top + 30, second.bottom - 40);
+  await dragGrip(await gripAt(), dropY);
+  const where = await page.$$eval('[data-page-id]', (els) => els.filter((el) => (el.textContent ?? '').includes('Carry me over')).map((el) => el.getAttribute('data-page-id')));
+  check('a text box dragged onto the next page goes there', where.length === 1 && where[0] === pageIds[1], JSON.stringify({ where, pageIds: pageIds.slice(0, 2) }));
+  const box = await page.$eval(`[data-page-id="${pageIds[1]}"] [data-text-content]`, (el) => el.getBoundingClientRect().toJSON()).catch(() => null);
+  check('and lands under the pen, on that page', box !== null && box.top >= second.top - 2 && box.top < dropY + 40, JSON.stringify(box));
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(150);
+  const back = await page.$$eval('[data-page-id]', (els) => els.filter((el) => (el.textContent ?? '').includes('Carry me over')).map((el) => el.getAttribute('data-page-id')));
+  check('one Undo puts it back where it was', back.length === 1 && back[0] === pageIds[0], JSON.stringify(back));
+  await page.$eval('[data-viewer]', (el) => { el.scrollTop = 0; });
+  await page.waitForTimeout(200);
+
+  // The line tool's rectangle and oval.
+  await page.click('[data-palette-tool="pen"]');
+  await page.click('[data-palette-tool="line"]');
+  await page.click('[data-palette-tool="line"]');
+  await page.waitForSelector('[data-line-options]', { state: 'visible', timeout: 3_000 });
+  const options = await page.$$eval('[data-line-options] [data-line-curve]', (els) => els.map((el) => el.getAttribute('data-line-curve')));
+  check('the line tool offers a rectangle and an oval', options.includes('rectangle') && options.includes('ellipse'), options.join());
+  await page.click('[data-line-options] [data-line-curve="rectangle"]');
+  await page.keyboard.press('Escape');
+  const live = await page.$eval('[data-page-index="0"] [data-layer="live"]', (el) => el.getBoundingClientRect().toJSON());
+  const inkAt = (x, y) =>
+    page.$eval('[data-page-index="0"] [data-layer="committed"]', (c, [px, py]) => {
+      const b = c.getBoundingClientRect();
+      const k = c.width / b.width;
+      const d = c.getContext('2d').getImageData(Math.round((px - b.left - 3) * k), Math.round((py - b.top - 3) * k), Math.round(6 * k), Math.round(6 * k)).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 40) n++;
+      return n;
+    }, [x, y]);
+  const a = [live.left + 150, live.top + 150];
+  const b = [live.left + 350, live.top + 260];
+  await pen(`[data-page-index="0"] [data-layer="live"]`, Array.from({ length: 16 }, (_, i) => [a[0] + ((b[0] - a[0]) * i) / 15, a[1] + ((b[1] - a[1]) * i) / 15]));
+  await page.waitForTimeout(150);
+  check('a drag lays down a rectangle: ink along its sides', (await inkAt(a[0] + 100, a[1])) > 0 && (await inkAt(b[0], a[1] + 55)) > 0 && (await inkAt(a[0] + 100, b[1])) > 0);
+  check('and none across its middle', (await inkAt((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)) === 0);
+  await page.click('[data-palette-tool="line"]');
+  await page.waitForSelector('[data-line-options]', { state: 'visible', timeout: 3_000 });
+  await page.click('[data-line-options] [data-line-curve="ellipse"]');
+  await page.keyboard.press('Escape');
+  const c = [live.left + 150, live.top + 400];
+  const d = [live.left + 350, live.top + 500];
+  await pen(`[data-page-index="0"] [data-layer="live"]`, Array.from({ length: 16 }, (_, i) => [c[0] + ((d[0] - c[0]) * i) / 15, c[1] + ((d[1] - c[1]) * i) / 15]));
+  await page.waitForTimeout(150);
+  check('an oval fills the drag\'s box: ink at the middle of its sides', (await inkAt((c[0] + d[0]) / 2, c[1])) > 0 && (await inkAt(d[0], (c[1] + d[1]) / 2)) > 0);
+  check('and not in its corners', (await inkAt(c[0] + 2, c[1] + 2)) === 0 && (await inkAt(d[0] - 2, d[1] - 2)) === 0);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Where everything stands on each dock. Sliding (the default), the toolbar is one line along its edge — the
  * keyboard first, then the tools, the colours and last the settings — one button thick, whichever edge it is on.
  *
@@ -5184,6 +5328,7 @@ try {
     checkArrange,
     checkGridSnap,
     checkPenWriting,
+    checkPenNavigation,
     checkAids,
     checkZoomWindow,
     checkSearch,

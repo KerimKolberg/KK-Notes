@@ -42,6 +42,8 @@ const CURVES: readonly { readonly id: ToolSettings['lineCurve']; readonly label:
   { id: 'parabola', label: 'Parabola', hint: 'A quadratic Bézier bowed out from the midpoint' },
   { id: 'wave', label: 'Wave', hint: 'A sine wave laid along the drag' },
   { id: 'zigzag', label: 'Zigzag', hint: 'Sharp alternating peaks along the drag' },
+  { id: 'rectangle', label: 'Rectangle', hint: 'Corner to corner; a square when it is nearly one' },
+  { id: 'ellipse', label: 'Oval', hint: 'An oval in the box of the drag; a circle when it is nearly round' },
 ];
 
 /**
@@ -51,11 +53,12 @@ const CURVES: readonly { readonly id: ToolSettings['lineCurve']; readonly label:
  * choosing a line, not a separate errand.
  */
 export function LineOptions({ settings, onSettingsChange }: PanelProps) {
-  const curved = settings.lineCurve !== 'straight';
+  const curved = settings.lineCurve === 'parabola' || settings.lineCurve === 'wave' || settings.lineCurve === 'zigzag';
+  const open = settings.lineCurve !== 'rectangle' && settings.lineCurve !== 'ellipse';
   const periodic = settings.lineCurve === 'wave' || settings.lineCurve === 'zigzag';
   return (
     <div className="flex w-[min(19rem,calc(100vw-2.5rem))] flex-col gap-1" data-line-options>
-      <Row label="Path">
+      <Row label="Shape">
         {CURVES.map((curve) => (
           <Chip
             key={curve.id}
@@ -83,6 +86,7 @@ export function LineOptions({ settings, onSettingsChange }: PanelProps) {
         </select>
         <Chip
           active={settings.lineArrowheads !== 'none'}
+          disabled={!open}
           label={ARROW_LABEL[settings.lineArrowheads]}
           onClick={() => onSettingsChange({ lineArrowheads: NEXT_ARROW[settings.lineArrowheads] })}
         >

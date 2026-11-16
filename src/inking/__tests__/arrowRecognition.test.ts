@@ -109,3 +109,18 @@ describe('curves', () => {
     expect(smooth[smooth.length - 1]).toEqual({ x: raw[raw.length - 1]!.x, y: raw[raw.length - 1]!.y });
   });
 });
+
+describe('rectangles and ovals from the line tool', () => {
+  it('a drag lays down a rectangle corner to corner, either way round', async () => {
+    const { rectangleFromDrag } = await import('../engine/shapes');
+    expect(rectangleFromDrag({ x: 10, y: 20 }, { x: 110, y: 80 })).toEqual({ type: 'rectangle', center: { x: 60, y: 50 }, width: 100, height: 60, rotation: 0 });
+    expect(rectangleFromDrag({ x: 110, y: 80 }, { x: 10, y: 20 })).toMatchObject({ center: { x: 60, y: 50 }, width: 100, height: 60 });
+  });
+
+  it('a box that is nearly square comes out square, and an oval in it a circle', async () => {
+    const { ellipseFromDrag, rectangleFromDrag } = await import('../engine/shapes');
+    expect(rectangleFromDrag({ x: 0, y: 0 }, { x: 100, y: 95 })).toMatchObject({ width: 100, height: 100, center: { x: 50, y: 50 } });
+    expect(ellipseFromDrag({ x: 0, y: 0 }, { x: 100, y: 96 })).toMatchObject({ radiusX: 50, radiusY: 50 });
+    expect(ellipseFromDrag({ x: 0, y: 0 }, { x: 100, y: 50 })).toMatchObject({ radiusX: 50, radiusY: 25, center: { x: 50, y: 25 } });
+  });
+});

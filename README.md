@@ -1555,6 +1555,16 @@ pinch and cancels a one-finger pan (it was a palm), and pen input is never
 blocked by a gesture. A finger left over after a pinch is ignored until it
 lifts, so lifting fingers one at a time does not nudge the view.
 
+**The pen scrolls the view where it cannot write** (`penScrollTarget`, `thumbScroll`). The view takes no touch actions
+of its own (`touch-action: none`), and a pen on its scrollbar was left to the web view, which jumped the view between
+pages, left it blank for frames, and selected the PDF's words on the way, with Chromium's Copy chip (reported on the
+Flow Z13, in a screen recording). Now a pen pressed on the scrollbar drags it as a scrollbar is dragged (a px of thumb
+is `scrollHeight / clientHeight` px of document; pressed on the track, the thumb comes to the pen first), and a pen
+pressed beside the pages pans the view with the pen, as a finger does. The scrollbar is no element: it is the strip of
+the scroller past its client box, so it is found by geometry. On a page the pen writes, as ever. Nothing in the view
+can be selected by the web view (`user-select: none` on `[data-viewer]`) except text being typed: selecting a PDF's
+words is the app's own tool (`textselect/`).
+
 **A touchpad pinch** (`hooks/useWheelZoom.ts`) never arrives as touches: Chromium, and so
 WebView2, hands it to the page as Ctrl + wheel events, with `deltaY = −100 · ln(scale)`, and
 the touch handling above never sees it. The viewer takes those (a non-passive listener, so the
@@ -2162,6 +2172,13 @@ front and Send to back. `Delete` removes the selection. A locked object still
 selects — that is how it gets unlocked — but shows no grips at all, because
 nothing to grab is the clearest statement that nothing will move.
 
+**A box goes where it is let go.** Dragged by its body or grip and let go over another page, a picture, note, table or
+text box moves to that page, under the pen (`moveMediaToPage`, the same hand-over as a lasso selection's), on top of
+what is there, and stays selected: a text box made from a PDF's words, carried to the squared page after it to work
+on. That is one step of Undo, named. Let go anywhere else, it stays on its page with at least 24 page px of it still on
+the page (`keepOnPage`): before, a box let go past the bottom of its page went on being there, where nothing showed
+it, and looked deleted. Page text (a flowing text box) belongs to its page and stays.
+
 Notes and tables are real HTML rather than canvas, because they are typed
 into and need the platform's own text editing, selection and IME. That makes
 them hard to *pick up*: every cell and textarea swallows the press that was
@@ -2485,7 +2502,7 @@ as before. Typed text on the page keeps it.
 
 The pen's **brush** picker chooses between ballpoint, fountain pen, pencil,
 marker and wet brush (see the brush engine above).
-| Line | drag | straight segment / vector |
+| Line | drag | straight segment / vector, a parabola, wave or zigzag, or a rectangle or oval in the drag's box |
 | Axes | drag from the origin | coordinate plane |
 | Stroke eraser | sweep | removes whole strokes it crosses |
 | Area eraser | freehand | `destination-out` band, at its own size |
@@ -2594,6 +2611,15 @@ Before any of that, and after it (`recognizeStroke`):
 
 An arrow drawn in two strokes (the shaft, then the head on its own) is two strokes: holding at the end of the head
 snaps the head alone.
+
+### Rectangles and ovals on the line tool
+
+The line tool's options (tap it again) have a **Shape** row: a straight line, a parabola, a wave, a zigzag, a
+**rectangle** or an **oval** (`rectangleFromDrag`, `ellipseFromDrag` in `engine/shapes.ts`). A rectangle is drawn corner
+to corner; an oval fills the box of the drag. Either snaps to a square or a circle when its sides come within 8 % of
+each other (`SQUARE_SNAP_RATIO`), so a square is easy to draw by hand. They are the same shape strokes hold-to-snap
+makes, so the lasso, the eraser, export and the PDF writer treat them as any other. Arrowheads are off for them. While
+one is drawn the read-out beside the toolbar shows its size (`w × h cm`, or `⌀` for a circle).
 
 ### Angle HUD
 

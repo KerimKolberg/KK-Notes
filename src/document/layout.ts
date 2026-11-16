@@ -228,6 +228,41 @@ function distanceToRect(rect: PageRect, x: number, y: number): number {
   return Math.hypot(dx, dy);
 }
 
+/** Where every page on screen is, in the window's coordinates (the ones mounted: pages far off screen are not). */
+export function mountedPageRects(): PageRect[] {
+  const rects: PageRect[] = [];
+  if (typeof document === 'undefined') return rects;
+  for (const el of document.querySelectorAll<HTMLElement>('[data-page-id]')) {
+    const pageId = el.dataset.pageId;
+    if (!pageId) continue;
+    const rect = el.getBoundingClientRect();
+    rects.push({ pageId, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom });
+  }
+  return rects;
+}
+
+/** Whether a window point is on that page, not merely nearest to it. */
+export function isOnPage(rect: PageRect, x: number, y: number): boolean {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+/**
+ * A box moved to `x`, `y` on a page `width` × `height`, held so at least `keep` page px of it stay on the page each way.
+ * A box let go past the edge of its page went on being there, where nothing shows it: it looked deleted.
+ */
+export function keepOnPage(
+  box: { x: number; y: number; width: number; height: number },
+  page: { width: number; height: number },
+  keep = 24,
+): { x: number; y: number } {
+  const inX = Math.min(keep, box.width);
+  const inY = Math.min(keep, box.height);
+  return {
+    x: Math.min(Math.max(box.x, inX - box.width), page.width - inX),
+    y: Math.min(Math.max(box.y, inY - box.height), page.height - inY),
+  };
+}
+
 /**
  * The page a drop at a viewport point belongs to: the one under it, or failing
  * that the nearest, so releasing over the gap between two sheets still lands

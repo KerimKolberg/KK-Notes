@@ -103,6 +103,8 @@ const LINE_LABELS: Readonly<Record<ToolSettings['lineCurve'], string>> = {
   parabola: 'Parabola',
   wave: 'Wave',
   zigzag: 'Zigzag',
+  rectangle: 'Rectangle',
+  ellipse: 'Oval',
 };
 
 function lineLabel(curve: ToolSettings['lineCurve']): string {
