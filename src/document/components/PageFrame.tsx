@@ -18,7 +18,6 @@ import { eraserRadius } from '../../inking/engine/toolStyles';
 import { isAboveInk } from '../media';
 import { useDocumentStore } from '../store';
 import { pageSnapSpacing, templateSvgDataUrl } from '../templates';
-import { cancelBarrelButton, consumeBarrelButton, noteBarrelButton } from '../stylusBarrel';
 import { borrowSelectionTool } from '../toolBorrow';
 import { beginTemporaryTool, useToolStore } from '../toolStore';
 import type { Page } from '../types';
@@ -166,12 +165,9 @@ export const PageFrame = memo(function PageFrame({
               onInteractionStart={onInteractionStart}
               onBarrelSelect={onBarrelSelect}
               onBorrowSelectionTool={borrowSelectionTool}
-              onBarrelStroke={consumeBarrelButton}
               eraserDiameterPx={eraserDiameterPx}
               gridSpacing={pageSnapSpacing(page)}
               ruler={ruler}
-              onBarrelButton={noteBarrelButton}
-              onBarrelCancel={cancelBarrelButton}
               onLassoStart={onLassoStart}
               onLassoComplete={onLassoComplete}
               hiddenStrokeIds={hiddenStrokeIds}

@@ -114,3 +114,61 @@ export function resetBarrelButton(): void {
   clearHoldTimer();
   state = IDLE_BARREL;
 }
+
+/**
+ * Follow the pen's first (barrel) button wherever the pen is, for the life of the app.
+ *
+ * It used to be followed only by the drawing surface of a page, which on the Flow Z13 made both of its gestures
+ * unreliable: pressed over a page's margin, the gap between pages or the toolbar, it was never seen (no click, no
+ * hold); a hold was cancelled, and the borrowed tool handed back, as soon as the pen left the page it began on, even
+ * for the next page; and a hold that borrowed Select took the surface out from under the pen, which counted as
+ * leaving, so the hold ended, began again and flickered. On the window it sees every pen event, and it lets go only
+ * when the pen really goes: out of range or out of the window, or the window losing focus.
+ */
+export function installBarrelTracking(): () => void {
+  if (typeof window === 'undefined') return () => {};
+  let pressed = false;
+  const blurred = (): void => {
+    if (!pressed) return;
+    pressed = false;
+    cancelBarrelButton();
+  };
+  const seen = (e: PointerEvent): void => {
+    if (e.pointerType !== 'pen') return;
+    // The browser took the pointer: what the button did meanwhile is not known, so it is no click.
+    if (e.type === 'pointercancel') {
+      blurred();
+      return;
+    }
+    const now = (e.buttons & BARREL_BIT) !== 0;
+    if (now !== pressed) {
+      pressed = now;
+      // A release is acted on once the event has been everywhere it goes: the window hears it first, and a lasso
+      // loop drawn with the button held is closed by the page after, which is what decides whether the lasso stays.
+      if (now) noteBarrelButton(true);
+      else setTimeout(() => noteBarrelButton(false), 0);
+    }
+    // The tip came down with the button held: a stroke with the button, not a click of it.
+    if (e.type === 'pointerdown' && pressed && (e.buttons & TIP_BIT) !== 0) consumeBarrelButton();
+  };
+  const gone = (e: PointerEvent): void => {
+    // No element the pen went to: it left the window, or went out of range.
+    if (e.pointerType !== 'pen' || e.relatedTarget !== null || !pressed) return;
+    pressed = false;
+    cancelBarrelButton();
+  };
+  const types = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'] as const;
+  for (const type of types) window.addEventListener(type, seen, true);
+  window.addEventListener('pointerout', gone, true);
+  window.addEventListener('blur', blurred);
+  return () => {
+    for (const type of types) window.removeEventListener(type, seen, true);
+    window.removeEventListener('pointerout', gone, true);
+    window.removeEventListener('blur', blurred);
+    blurred();
+  };
+}
+
+/** `buttons` bits: the pen's tip touching, and its barrel button. */
+const TIP_BIT = 1;
+const BARREL_BIT = 2;

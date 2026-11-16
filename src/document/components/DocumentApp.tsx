@@ -51,6 +51,7 @@ import { RecordingBar } from '../../audio/RecordingBar';
 import { closePlayer } from '../../audio/player';
 import { useTapToSeek } from '../../audio/useTapToSeek';
 import { subscribePenTrouble } from '../../inking/penTrouble';
+import { installBarrelTracking } from '../stylusBarrel';
 import { TextSelectionToolbar } from '../../textselect/TextSelectionToolbar';
 import { useTextSelectStore } from '../../textselect/textSelectStore';
 import { useToolStore } from '../toolStore';
@@ -187,6 +188,8 @@ export function DocumentApp() {
   useTextSelecting();
   useHandwritingReader();
   useTapToSeek();
+  // The pen's first button, followed on the whole window: a click swaps tools, a hold borrows one (`stylusBarrel.ts`).
+  useEffect(() => installBarrelTracking(), []);
   // Why the pen wrote nothing, when it was its own buttons (`penTrouble.ts`): said, now and then, not on every stroke.
   useEffect(() => {
     let last = -Infinity;

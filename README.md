@@ -234,10 +234,22 @@ A few decisions are deliberate and pinned by tests:
 - `barrelCancel` (the pen leaving the digitiser mid-press) restores a borrowed
   tool but never fires a click: we never saw that press end.
 
-`stylusBarrel.ts` drives it from the surface and owns the one `setTimeout` the
-promotion needs — a button held down emits no further pointer events, so
-nothing else would wake it. That driver is module-level rather than per-page
-because the pen can cross a page boundary mid-hold.
+`stylusBarrel.ts` drives it and owns the one `setTimeout` the promotion needs — a
+button held down emits no further pointer events, so nothing else would wake it.
+It follows the button on the **whole window** (`installBarrelTracking`, capture
+phase, every pen event), not from a page's drawing surface as it first did. On
+the Flow Z13 that made both gestures unreliable (reported: "doesn't really
+function that well with the holding or clicking"): pressed over a margin, the gap
+between pages or the toolbar, the button was not seen at all; a hold ended, and
+the borrowed tool went back, as the pen crossed onto the next page; and a hold
+that borrowed Select took the surface out from under the pen, which counted as
+leaving, so it ended, began again and flickered. Now it lets go only when the pen
+really goes: out of range or out of the window (a pen `pointerout` with no
+element to go to), a `pointercancel`, or the window losing focus. A release is
+acted on once the event has been everywhere (a `setTimeout`), since the window
+hears it before the page closes a lasso loop drawn with the button held, and that
+loop decides whether the lasso stays. The second button needs none of this: it is
+read from each stroke's own `buttons`.
 
 Drawing with the barrel down borrows the same hold tool, rather than a third
 setting that could disagree with it. A barrel press while merely hovering is

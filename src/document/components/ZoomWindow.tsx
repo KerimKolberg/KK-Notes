@@ -16,7 +16,6 @@ import { backgroundWidthBucket } from '../../pdf/pdfCoords';
 import { usePreferencesStore } from '../../preferences/store';
 import { useAidStore } from '../aids';
 import { useDocumentStore } from '../store';
-import { cancelBarrelButton, consumeBarrelButton, noteBarrelButton } from '../stylusBarrel';
 import { pageSnapSpacing, templateSvgDataUrl } from '../templates';
 import { borrowSelectionTool } from '../toolBorrow';
 import { beginTemporaryTool, useToolStore } from '../toolStore';
@@ -241,9 +240,6 @@ export const ZoomWindow = memo(function ZoomWindow({ settingsRef, currentTool }:
           onInteractionStart={onInteractionStart}
           onBarrelSelect={onBarrelSelect}
           onBorrowSelectionTool={borrowSelectionTool}
-          onBarrelStroke={consumeBarrelButton}
-          onBarrelButton={noteBarrelButton}
-          onBarrelCancel={cancelBarrelButton}
           onLassoStart={clearLassoSelection}
           onLassoComplete={onLassoComplete}
           eraserDiameterPx={eraserDiameterPx}

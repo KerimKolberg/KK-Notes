@@ -1775,6 +1775,92 @@ async function checkPenButtons(browser) {
 }
 
 /**
+ * The pen's first (barrel) button wherever the pen is (reported on the Flow Z13: "the first pen button doesn't really
+ * function that well with the holding or clicking"). It was followed only by a page's drawing surface: pressed over
+ * the margin it was not seen, a hold ended as the pen crossed to the next page, and a hold that borrowed Select
+ * flickered. Hover events go to whatever is under the pen, as the browser sends them.
+ */
+async function checkBarrelEverywhere(browser) {
+  console.log('the pen\'s first button, over the margin, across pages and borrowing Select, 1280x800:');
+  const run = async (stylus, body) => {
+    const opened = await openPenDocument(browser, stylus);
+    await opened.page.click('[data-arranger-toggle]');
+    await opened.page.waitForSelector('[role="group"][aria-label="Page operations"] button');
+    await opened.page.locator('[role="group"][aria-label="Page operations"] button', { hasText: /after/i }).first().click();
+    await opened.page.click('[data-arranger-close]');
+    await opened.page.waitForTimeout(250);
+    await body(opened);
+    check('no page errors', opened.errors.length === 0, opened.errors.join(' | '));
+    await opened.ctx.close();
+  };
+  // A pen hovering at (x, y) with `buttons`, sent to whatever is there, as the browser does.
+  const hover = (page, x, y, buttons, extra = {}) =>
+    page.evaluate(([px, py, b, more]) => {
+      const el = document.elementFromPoint(px, py) ?? document.body;
+      el.dispatchEvent(new PointerEvent(more.type ?? 'pointermove', { pointerType: 'pen', pointerId: 41, isPrimary: true, bubbles: true, cancelable: true, clientX: px, clientY: py, buttons: b, button: -1, pressure: 0, relatedTarget: null }));
+    }, [x, y, buttons, extra]);
+
+  await run(undefined, async ({ page, tool }) => {
+    const sheet = await page.$eval('[data-page-index="0"]', (el) => el.getBoundingClientRect().toJSON());
+    const margin = [Math.round((sheet.right + 1280) / 2), 400];
+    await hover(page, ...margin, 0);
+    await hover(page, ...margin, 2);
+    await page.waitForTimeout(80);
+    await hover(page, ...margin, 0);
+    await page.waitForTimeout(80);
+    check('a click of the first button over the margin swaps to the eraser', (await tool()) === 'eraser', await tool());
+    await hover(page, ...margin, 2);
+    await page.waitForTimeout(80);
+    await hover(page, ...margin, 0);
+    await page.waitForTimeout(80);
+    check('and the next click swaps back to the pen', (await tool()) === 'pen', await tool());
+
+    // Held over the first page, carried across the gap to the second.
+    const onFirst = [sheet.left + 300, sheet.bottom - 60];
+    await hover(page, ...onFirst, 2);
+    await page.waitForTimeout(450);
+    check('holding it over a page borrows the eraser', (await tool()) === 'eraser', await tool());
+    for (let i = 1; i <= 10; i++) await hover(page, onFirst[0], onFirst[1] + i * 12, 2);
+    await page.waitForTimeout(100);
+    check('which it keeps across the gap onto the next page', (await tool()) === 'eraser', await tool());
+    await hover(page, onFirst[0], onFirst[1] + 120, 0);
+    await page.waitForTimeout(100);
+    check('and letting go gives the pen back', (await tool()) === 'pen', await tool());
+
+    // Held, then out of range.
+    await hover(page, ...onFirst, 2);
+    await page.waitForTimeout(450);
+    await hover(page, ...onFirst, 2, { type: 'pointerout' });
+    await page.waitForTimeout(100);
+    check('a hold ends when the pen goes out of range', (await tool()) === 'pen', await tool());
+  });
+
+  await run({ clickToggle: ['pen', 'eraser-stroke'], holdTool: 'select', eraserEnd: 'lasso' }, async ({ page, tool }) => {
+    const sheet = await page.$eval('[data-page-index="0"]', (el) => el.getBoundingClientRect().toJSON());
+    const at = [sheet.left + 300, sheet.top + 300];
+    await hover(page, ...at, 0);
+    await page.evaluate(() => {
+      window.__tools = [];
+      new MutationObserver(() => {
+        const t = document.querySelector('[data-palette-tool][aria-pressed="true"]')?.getAttribute('data-palette-tool');
+        if (t && window.__tools.at(-1) !== t) window.__tools.push(t);
+      }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['aria-pressed'] });
+    });
+    await hover(page, ...at, 2);
+    await page.waitForTimeout(450);
+    for (let i = 1; i <= 12; i++) {
+      await hover(page, at[0] + i * 6, at[1], 2);
+      await page.waitForTimeout(40);
+    }
+    check('a hold can borrow Select', (await tool()) === 'select', await tool());
+    check('and keeps it, steady, while held', JSON.stringify(await page.evaluate(() => window.__tools)) === '["select"]', JSON.stringify(await page.evaluate(() => window.__tools)));
+    await hover(page, at[0] + 72, at[1], 0);
+    await page.waitForTimeout(100);
+    check('letting go gives the pen back', (await tool()) === 'pen', await tool());
+  });
+}
+
+/**
  * Stretching a lasso selection.
  *
  * Reported from a tablet: pulling a selected line out across the page was "buggy and
@@ -5575,6 +5661,7 @@ try {
     checkPenNavigation,
     checkHandAndTables,
     checkPenAlwaysWrites,
+    checkBarrelEverywhere,
     checkWritingOnStyledTable,
     checkAids,
     checkZoomWindow,
