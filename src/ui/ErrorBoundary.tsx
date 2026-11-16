@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { recordProblem } from '../lib/problemLog';
 
 interface Props {
   readonly children: ReactNode;
@@ -35,6 +36,7 @@ export class ErrorBoundary extends Component<Props, State> {
   override componentDidCatch(error: Error, info: ErrorInfo): void {
     this.setState({ componentStack: info.componentStack ?? '' });
     console.error('KK-Notes: a screen failed to draw', error, info.componentStack);
+    recordProblem(`Drawing ${this.props.what} failed`, error, (info.componentStack ?? '').split('\n').slice(0, 8).join('\n'));
     this.props.onError?.(error);
   }
 

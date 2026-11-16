@@ -12,6 +12,7 @@ import { DEFAULT_PREFERENCES, usePreferencesStore } from '../../preferences/stor
 import { BARREL_CLICK_MS } from '../engine/barrelButton';
 import type { EraserEndAction, ToolType } from '../types';
 import { describeBuild } from '../../lib/buildInfo';
+import { problemReport } from '../../lib/problemLog';
 import { BARREL_TOOLS, SELECT, type PanelProps } from './parts';
 
 /** The palette's own settings panel: where it docks, the pen buttons, colours, and the app-wide switches. */
@@ -427,6 +428,17 @@ export function PaletteSettings({
         <p className="select-text px-1 pt-1 text-center text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500" data-build-info>
           {describeBuild()}
         </p>
+        {/* What went wrong, last run and this one, to send on when something did (`lib/problemLog.ts`). */}
+        <button
+          type="button"
+          className="mx-auto block rounded px-2 py-0.5 text-[11px] text-zinc-500 underline-offset-2 hover:underline dark:text-zinc-400"
+          data-copy-problem-report
+          onClick={() => {
+            void navigator.clipboard?.writeText(problemReport());
+          }}
+        >
+          Copy problem report
+        </button>
       </div>
     </div>
   );

@@ -1461,6 +1461,155 @@ async function checkHandAndTables(browser) {
 }
 
 /**
+ * The pen always writes on a PDF page once it is chosen, and says why when it does not (real pen input, through the
+ * browser's own input pipeline, so pointer capture and focus behave as on the device):
+ * - after a text box, a table, typing in a cell and the app's Undo, every tool chosen with the pen still writes;
+ * - "Select text" left on is ended by choosing a tool (it took every press on a PDF, and the pen wrote nothing);
+ * - a pen whose side button is held erases instead of writing: after two strokes that erase nothing, the app says so.
+ */
+async function checkPenAlwaysWrites(browser) {
+  console.log('the pen writes on a PDF whatever came before, or says why not, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openDocument(page);
+  const t = await page.evaluateHandle(({ bytes }) => { const tr = new DataTransfer(); tr.items.add(new File([new Uint8Array(bytes)], 'Sheet.pdf', { type: 'application/pdf' })); return tr; }, { bytes: tinyPdf(2, 'Sheet') });
+  await page.dispatchEvent('[data-page-stage]', 'dragover', { dataTransfer: t });
+  await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: t });
+  await page.waitForFunction(() => /Sheet/.test(document.querySelector('[data-title]')?.value ?? ''), null, { timeout: 15_000 });
+  await page.waitForTimeout(500);
+  const cdp = await ctx.newCDPSession(page);
+  const pen = (type, x, y, buttons = 1) =>
+    cdp.send('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' ? (buttons & 1 ? 'left' : 'none') : 'left', buttons, clickCount: 1, pointerType: 'pen', force: 0.5 });
+  const penTap = async (sel) => {
+    const b = await page.$eval(sel, (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; });
+    await pen('mouseMoved', b[0], b[1], 0);
+    await pen('mousePressed', b[0], b[1]);
+    await pen('mouseReleased', b[0], b[1], 0);
+    await page.waitForTimeout(120);
+  };
+  const ink = () => page.$eval('[data-page-index="0"] [data-layer="committed"]', (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 40) n++; return n; });
+  const stroke = async (x, y, buttons = 1) => {
+    await pen('mouseMoved', x - 5, y - 5, 0);
+    await pen('mousePressed', x, y, buttons);
+    for (let i = 1; i <= 15; i++) await pen('mouseMoved', x + i * 8, y + Math.sin(i / 2) * 15, buttons);
+    await pen('mouseReleased', x + 120, y, 0);
+    await page.waitForTimeout(150);
+  };
+  const live = await page.$eval('[data-page-index="0"] [data-layer="live"]', (el) => el.getBoundingClientRect().toJSON());
+  const writes = async (name, y) => {
+    const before = await ink();
+    await stroke(live.left + 100, live.top + y);
+    const after = await ink();
+    check(name, after > before, `${before} -> ${after}`);
+  };
+
+  await writes('the pen writes on a PDF page', 150);
+  await penTap('[data-insert-trigger]');
+  await penTap('[data-insert-text]');
+  await page.keyboard.type('hello');
+  await penTap('[data-insert-trigger]');
+  await penTap('[data-insert-table]');
+  await page.waitForSelector('[data-cell="0-0"]');
+  await penTap('[data-cell="0-0"]');
+  await page.keyboard.type('abc');
+  await penTap('[data-undo]');
+  await penTap('[data-palette-tool="pen"]');
+  await writes('after a text box, a table, typing in it and Undo, the pen chosen with the pen writes', 230);
+  await penTap('[data-palette-tool="highlighter"]');
+  await writes('so does the highlighter', 290);
+
+  await penTap('[data-select-text-toggle]');
+  check('"Select text" is on', await page.$eval('[data-select-text-toggle]', (el) => el.getAttribute('aria-pressed') === 'true' || el.className.includes('bg-blue')));
+  await penTap('[data-palette-tool="pen"]');
+  check('choosing a tool turns "Select text" off', !(await page.evaluate(() => document.documentElement.dataset.textSelecting === 'true')));
+  await writes('and the pen writes on the PDF again', 350);
+  await penTap('[data-palette-tool="pen"]');
+  await page.keyboard.press('Escape');
+
+  // The side button held: the stroke erases (the default "Barrel hold"), over empty paper twice. (The browser's
+  // input simulation has no pen pressed with its button already held, so these are the page's own events.)
+  const before = await ink();
+  const barrelStroke = (y) =>
+    page.evaluate(async ([x, y0]) => {
+      const live = document.querySelector('[data-page-index="0"] [data-layer="live"]');
+      const fire = (type, px, py, buttons) => live.dispatchEvent(new PointerEvent(type, { pointerType: 'pen', pointerId: 31, isPrimary: true, bubbles: true, cancelable: true, clientX: px, clientY: py, buttons, button: type === 'pointermove' ? -1 : 0, pressure: buttons & 1 ? 0.5 : 0 }));
+      fire('pointerdown', x, y0, 3);
+      for (let i = 1; i <= 12; i++) { fire('pointermove', x + i * 8, y0 + Math.sin(i / 2) * 12, 3); await new Promise((r) => requestAnimationFrame(() => r())); }
+      fire('pointerup', x + 96, y0, 0);
+    }, [live.left + 100, live.top + y]);
+  await barrelStroke(450);
+  await page.waitForTimeout(150);
+  await barrelStroke(500);
+  check('a pen with its side button held draws nothing (it erases, as set)', (await ink()) === before);
+  const notice = await page.waitForFunction(() => /side button is held/.test(document.body.textContent ?? ''), null, { timeout: 3_000 }).then(() => true).catch(() => false);
+  check('and the app says why, and how to write again', notice);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
+ * Writing on a table styled as the owner had it when the app closed on the Flow Z13 (no background, 0.5 px lines at
+ * 40 %): across it with the select tool still on and with the pen, then away and back and into the page list. Not
+ * reproduced in the browser; this keeps it that way, with nothing thrown anywhere.
+ */
+async function checkWritingOnStyledTable(browser) {
+  console.log('writing on a table with no background and faint lines, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 300)); });
+  page.on('crash', () => errors.push('the page crashed'));
+  await openDocument(page);
+  const t = await page.evaluateHandle(({ bytes }) => { const tr = new DataTransfer(); tr.items.add(new File([new Uint8Array(bytes)], 'Sheet.pdf', { type: 'application/pdf' })); return tr; }, { bytes: tinyPdf(2, 'Sheet') });
+  await page.dispatchEvent('[data-page-stage]', 'dragover', { dataTransfer: t });
+  await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: t });
+  await page.waitForFunction(() => /Sheet/.test(document.querySelector('[data-title]')?.value ?? ''), null, { timeout: 15_000 });
+  await page.waitForTimeout(500);
+  const cdp = await ctx.newCDPSession(page);
+  const pen = (type, x, y, buttons = 1) => cdp.send('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' ? (buttons & 1 ? 'left' : 'none') : 'left', buttons, clickCount: 1, pointerType: 'pen', force: 0.5 });
+  const penTap = async (sel) => { const b = await page.$eval(sel, (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }); await pen('mouseMoved', b[0], b[1], 0); await pen('mousePressed', b[0], b[1]); await pen('mouseReleased', b[0], b[1], 0); await page.waitForTimeout(120); };
+  const setRange = (selector, value) => page.$eval(selector, (el, v) => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, String(v)); el.dispatchEvent(new Event('input', { bubbles: true })); }, value);
+  const ink = () => page.$eval('[data-page-index="0"] [data-layer="committed"]', (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 40) n++; return n; });
+  const scribble = async (tb) => {
+    for (let k = 0; k < 12; k++) {
+      const x = tb.left + 10 + (k % 6) * 90, y = tb.top + 22 + Math.floor(k / 6) * 45;
+      await pen('mouseMoved', x, y, 0); await pen('mousePressed', x, y);
+      for (let i = 1; i <= 12; i++) await pen('mouseMoved', x + i * 7, y + Math.sin(i) * 12);
+      await pen('mouseReleased', x + 84, y, 0);
+    }
+    await page.waitForTimeout(300);
+  };
+  await penTap('[data-insert-trigger]');
+  await penTap('[data-insert-table]');
+  await page.waitForSelector('[data-cell="0-0"]');
+  for (let i = 0; i < 4; i++) await penTap('[data-add-column]');
+  await penTap('[data-table-style-toggle]');
+  await setRange('[data-table-style-opacity="fill"]', 0);
+  await setRange('[data-table-style-line-width]', 0.5);
+  await setRange('[data-table-style-opacity="line"]', 0.4);
+  const tb = await page.$eval('[data-media-kind="table"]', (el) => el.getBoundingClientRect().toJSON());
+  await scribble(tb);
+  check('writing across it with the select tool still on throws nothing', errors.length === 0, errors.join(' | '));
+  await penTap('[data-palette-tool="pen"]');
+  const before = await ink();
+  await scribble(tb);
+  check('the pen writes across it', (await ink()) > before);
+  await page.$eval('[data-viewer]', (e) => { e.scrollTop = 4000; });
+  await page.waitForTimeout(600);
+  await page.$eval('[data-viewer]', (e) => { e.scrollTop = 0; });
+  await page.waitForTimeout(600);
+  await page.click('[data-arranger-toggle]');
+  await page.waitForTimeout(1000);
+  await page.click('[data-arranger-close]').catch(() => {});
+  check('away and back, and in the page list, it is all still there', (await page.$('[data-error-boundary]')) === null && (await ink()) > before);
+  check('no errors anywhere', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+/**
  * Where everything stands on each dock. Sliding (the default), the toolbar is one line along its edge — the
  * keyboard first, then the tools, the colours and last the settings — one button thick, whichever edge it is on.
  *
@@ -5425,6 +5574,8 @@ try {
     checkPenWriting,
     checkPenNavigation,
     checkHandAndTables,
+    checkPenAlwaysWrites,
+    checkWritingOnStyledTable,
     checkAids,
     checkZoomWindow,
     checkSearch,

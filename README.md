@@ -323,6 +323,26 @@ screen (an `IntersectionObserver` gates the work). A page that references a
 PDF is drawn without it: fetching the source to fill a 200 px card would undo
 the whole point.
 
+**When the pen writes nothing, the app says why** (`document/pageModes.ts`, `inking/penTrouble.ts`). Two things
+make a pen chosen on the toolbar write nothing on a PDF page, with no sign of why (reported on the Flow Z13, in a screen
+recording: the pen chose tools but drew nothing, the mouse drew):
+
+- *Select text* or *snipping* left on: each is a mode the pages are in, which takes every press on a PDF page before
+  the ink does. Pressing any tool on the toolbar (a pen, the highlighter, the eraser, its options) now ends both.
+- The pen's side button reported held, by the grip or stuck: a stroke is then what *Barrel hold* says (the stroke
+  eraser), and over empty paper it erases nothing and shows nothing. After two such strokes in a row that erased
+  nothing while a writing tool is chosen, the app says that the side button is held, and where its setting is; a pen
+  pressed with a button no tool is set for says so at once. Using the button to erase something on purpose says
+  nothing.
+
+**What went wrong is kept for the next start** (`lib/problemLog.ts`). "It crashed" is all a writer can report, and on
+a Windows tablet nothing else is left. So the app keeps the last few errors on the device (an error nobody caught, a
+failure nobody caught, a screen that failed to draw: with where, and which build), and marks itself as running while
+it is on screen (not while hidden, when Android may end it, which is no crash). Found still running at the next start,
+it did not close by itself: it says so once, with *Copy details*, and *Copy problem report* at the foot of the
+toolbar's settings copies the same at any time. A report with no errors in it says the web view or Windows stopped the
+app, not its own code. Nothing leaves the device unless copied.
+
 **A pen stroke is never lost to the browser.** On a PDF page a stroke could vanish half way through a word, with
 Windows' no-drop cursor flashing where it had been (reported on the Flow Z13, and in a screen recording: the stroke
 on screen one frame, gone the next, the cursor an arrow). Two things together: the page did nothing to stop the web

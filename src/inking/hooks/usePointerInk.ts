@@ -73,6 +73,7 @@ import type {
 import { noteFramePainted, noteInput, profilingEnabled } from '../../debug/profiler';
 import { useLatestRef } from './useLatestRef';
 import { setMeasureReading } from '../measureReadout';
+import { notePenIgnored, notePenStroke } from '../penTrouble';
 
 export interface UsePointerInkOptions {
   liveCanvasRef: RefObject<HTMLCanvasElement | null>;
@@ -190,6 +191,8 @@ function snappedStyle(style: StrokeStyle, snap: SnapState | null): StrokeStyle {
 
 interface InkSession {
   readonly kind: 'ink';
+  /** The toolbar's tool, when a pen button made this stroke something else (an area eraser, say). */
+  readonly byButtonFrom?: ToolType;
   readonly pointerId: number;
   readonly pointerType: InkPointerType;
   readonly builder: StrokeBuilder;
@@ -247,6 +250,8 @@ interface LassoSession {
 
 interface EraseSession {
   readonly kind: 'erase';
+  /** The toolbar's tool, when a pen button made this an erase instead: said if it keeps erasing nothing. */
+  readonly byButtonFrom?: ToolType;
   /** Which layers this erase may take, frozen at pointerdown. */
   readonly filter: EraseFilter;
   readonly pointerId: number;
@@ -596,6 +601,11 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       releaseCapture(session.pointerId);
 
       const opts = optionsRef.current;
+      if (session.pointerType === 'pen' && (session.kind === 'ink' || session.kind === 'erase')) {
+        const used = session.kind === 'ink' ? session.builder.tool : 'eraser-stroke';
+        const selected = session.byButtonFrom ?? opts.settingsRef.current.tool;
+        notePenStroke(selected, used, session.byButtonFrom !== undefined, session.kind === 'erase' ? session.hits.size > 0 : null);
+      }
       if (session.kind === 'ink') {
         clearSnapTimer(session.snap);
         const { builder } = session;
@@ -740,7 +750,15 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       }
 
       const tool = resolveEffectiveTool(settings.tool, pointerType, e.button, e.buttons, settings.stylus);
-      if (tool === null) return;
+      if (tool === null) {
+        if (pointerType === 'pen') notePenIgnored(e.buttons);
+        return;
+      }
+      // A pen button turned this press into another tool than the toolbar's (the eraser, most often).
+      const byButtonFrom =
+        pointerType === 'pen' && tool !== settings.tool && (e.buttons & (POINTER_BUTTONS.SECONDARY | POINTER_BUTTONS.ERASER)) !== 0
+          ? settings.tool
+          : undefined;
       // Text selected on the page (a PDF's words, chosen earlier) is something the browser will start dragging if
       // the pen comes down on it, cancelling the stroke. Writing is not selecting: let it go.
       clearPageSelection();
@@ -808,6 +826,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
       if (tool === 'eraser-stroke' || filteredArea) {
         const session: EraseSession = {
           kind: 'erase',
+          ...(byButtonFrom ? { byButtonFrom } : {}),
           filter: settings.eraseFilter,
           pointerId: e.pointerId,
           pointerType,
@@ -851,6 +870,7 @@ export function usePointerInk(options: UsePointerInkOptions): PointerInkHandlers
         const canSnap = settings.holdToSnap && tool !== 'eraser-pixel' && !edge;
         const session: InkSession = {
           kind: 'ink',
+          ...(byButtonFrom ? { byButtonFrom } : {}),
           pointerId: e.pointerId,
           pointerType,
           builder,

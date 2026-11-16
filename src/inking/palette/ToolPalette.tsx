@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { usePointerReorder, type ReorderItemProps } from '../../document/hooks/usePointerReorder';
+import { endPageModes } from '../../document/pageModes';
 import { usePreferencesStore } from '../../preferences/store';
 import { PALETTE_GROUP_STARTS, PALETTE_SLOT_LABELS, type PaletteDock, type PaletteSlot } from '../../preferences/types';
 import { filterIsActive } from '../engine/eraseFilter';
@@ -327,9 +328,18 @@ export const ToolPalette = memo(function ToolPalette({
 
   const close = useCallback(() => setFlyout(null), []);
   const toggle = useCallback((next: Exclude<Flyout, null>) => setFlyout((current) => (current === next ? null : next)), []);
+  /** A tool's options, opened from the tool itself: reaching for the tool, so the pages' modes end (`pageModes.ts`). */
+  const toolOptions = useCallback(
+    (next: Exclude<Flyout, null>) => {
+      endPageModes();
+      toggle(next);
+    },
+    [toggle],
+  );
 
   const pick = useCallback(
     (tool: ToolType) => {
+      endPageModes();
       onSettingsChange({ tool });
       setFlyout(null);
     },
@@ -373,7 +383,7 @@ export const ToolPalette = memo(function ToolPalette({
                 active={lassoActive}
                 hasPopover
                 tooltipDisabled={flyout === 'lasso'}
-                onClick={() => (lassoActive ? toggle('lasso') : pick('lasso'))}
+                onClick={() => (lassoActive ? toolOptions('lasso') : pick('lasso'))}
                 data-palette-tool="lasso"
                 data-lasso-mode={settings.lassoMode}
                 data-lasso-filtered={lassoFilterIsOpen(settings.lassoFilter) ? undefined : 'true'}
@@ -412,7 +422,7 @@ export const ToolPalette = memo(function ToolPalette({
                 active={penActive}
                 hasPopover
                 tooltipDisabled={flyout === 'brush'}
-                onClick={() => (penActive ? toggle('brush') : pick('pen'))}
+                onClick={() => (penActive ? toolOptions('brush') : pick('pen'))}
                 data-palette-tool="pen"
               />
               <Popover open={flyout === 'brush'} onClose={close} label="Pen brushes" side={popSide} align="center">
@@ -429,7 +439,7 @@ export const ToolPalette = memo(function ToolPalette({
                 active={highlighterActive}
                 hasPopover
                 tooltipDisabled={flyout === 'highlighter'}
-                onClick={() => (highlighterActive ? toggle('highlighter') : pick('highlighter'))}
+                onClick={() => (highlighterActive ? toolOptions('highlighter') : pick('highlighter'))}
                 data-palette-tool="highlighter"
                 data-highlighter-gradient={settings.highlighterGradient}
               />
@@ -449,7 +459,7 @@ export const ToolPalette = memo(function ToolPalette({
                 active={washiActive}
                 hasPopover
                 tooltipDisabled={flyout === 'washi'}
-                onClick={() => (washiActive ? toggle('washi') : pick('washi-tape'))}
+                onClick={() => (washiActive ? toolOptions('washi') : pick('washi-tape'))}
                 data-palette-tool="washi-tape"
               />
               <Popover open={flyout === 'washi'} onClose={close} label="Washi tape" side={popSide} align="center">
@@ -466,7 +476,7 @@ export const ToolPalette = memo(function ToolPalette({
                 active={lineActive}
                 hasPopover
                 tooltipDisabled={flyout === 'line'}
-                onClick={() => (lineActive ? toggle('line') : pick('line'))}
+                onClick={() => (lineActive ? toolOptions('line') : pick('line'))}
                 data-palette-tool="line"
                 data-line-curve={settings.lineCurve}
               />
@@ -484,7 +494,7 @@ export const ToolPalette = memo(function ToolPalette({
                 active={planeActive}
                 hasPopover
                 tooltipDisabled={flyout === 'plane'}
-                onClick={() => (planeActive ? toggle('plane') : pick('coordinate-plane'))}
+                onClick={() => (planeActive ? toolOptions('plane') : pick('coordinate-plane'))}
                 data-palette-tool="coordinate-plane"
               />
               <Popover open={flyout === 'plane'} onClose={close} label="Coordinate plane options" side={popSide} align="center">
@@ -518,7 +528,7 @@ export const ToolPalette = memo(function ToolPalette({
                 badge={eraserIsArea ? 'px' : undefined}
                 hasPopover
                 tooltipDisabled={flyout === 'eraser'}
-                onClick={() => (eraserActive ? toggle('eraser') : pick(eraserIsArea ? 'eraser-pixel' : 'eraser-stroke'))}
+                onClick={() => (eraserActive ? toolOptions('eraser') : pick(eraserIsArea ? 'eraser-pixel' : 'eraser-stroke'))}
                 data-palette-tool="eraser"
                 data-eraser-mode={settings.eraserMode}
                 data-erase-filtered={filterIsActive(settings.eraseFilter) ? 'true' : undefined}

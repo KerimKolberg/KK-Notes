@@ -50,6 +50,7 @@ import { useHandwritingReader } from '../../handwriting/useHandwritingReader';
 import { RecordingBar } from '../../audio/RecordingBar';
 import { closePlayer } from '../../audio/player';
 import { useTapToSeek } from '../../audio/useTapToSeek';
+import { subscribePenTrouble } from '../../inking/penTrouble';
 import { TextSelectionToolbar } from '../../textselect/TextSelectionToolbar';
 import { useTextSelectStore } from '../../textselect/textSelectStore';
 import { useToolStore } from '../toolStore';
@@ -76,6 +77,9 @@ function panelFailed(name: string, error: Error, putAway: () => void): void {
     useDesktopStore.getState().setNotice({ text: `${name} ran into a problem and was closed: ${error.message}` });
   });
 }
+
+/** How often the app may say why the pen wrote nothing. */
+const PEN_TROUBLE_EVERY_MS = 20_000;
 
 /** Root of the multi-page notes UI: top bar, virtualised viewer, floating ink toolbar, arranger. */
 export function DocumentApp() {
@@ -183,6 +187,16 @@ export function DocumentApp() {
   useTextSelecting();
   useHandwritingReader();
   useTapToSeek();
+  // Why the pen wrote nothing, when it was its own buttons (`penTrouble.ts`): said, now and then, not on every stroke.
+  useEffect(() => {
+    let last = -Infinity;
+    return subscribePenTrouble((text) => {
+      const now = performance.now();
+      if (now - last < PEN_TROUBLE_EVERY_MS) return;
+      last = now;
+      useDesktopStore.getState().setNotice({ text });
+    });
+  }, []);
   // New pages pick up whatever the user set as their default layout.
   usePageDefaultsSource();
 
