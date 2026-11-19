@@ -1348,6 +1348,19 @@ ordinary writing rounds off a small letter's curves. And a stroke finer than 2 p
 but passes over the samples in its last 3 units as a fixed number, which for a fine pen was a good part of a
 letter's tail. Widths stay in page units: zooming in does not make the pen finer by itself.
 
+**Small letters at any width** (`getStrokeOutline`, `smallLetters.test.ts`). Asked for more precision with small
+letters, measured as a picture (the ink against everything within the pen's radius of where it went, 8 samples a
+px): a 2.5 px ballpoint left 27 % of a small hook without ink, 12 % of an "s" and 8 % of an "e" 10 px high. Three
+things in perfect-freehand did it, none of them measured against the stroke's size: it passes over the last 3 units
+of a stroke, it passes over the first `size` units before it takes the stroke's direction, and it spaces the
+outline's corners `size × smoothing` apart (a ballpoint is drawn as the hard polygon, so a corner every 1.25 px on
+the tight curves). Now every stroke is outlined at least **4× scaled up** (`outlineScale`), so the end is 0.75 page
+px; the stroke's points are worked out by the app, passing over only **0.5 px** at the start (a pen whose width
+comes from its speed keeps the library's start, since its first width is read from those samples); and a writing
+pen (up to 6 px) has a corner at most every **0.6 px**. The same letters now miss 2.7–4 %, at 1 to 4 px, which the
+test holds under 5 %; at ordinary sizes every brush is the same or better. Smoothing the pen's path costs about a
+point of that, and stays: it is what hides the digitiser's jitter.
+
 The pen tool paints with one of five presets, picked from the palette's pen
 flyout. A
 brush decides three things at once: the perfect-freehand parameters baked

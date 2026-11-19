@@ -20,7 +20,7 @@
  * We then render that polygon as a `Path2D` using quadratic curves through the
  * midpoints of consecutive vertices, which hides the faceting of the polygon.
  */
-import { getStroke, type StrokeOptions } from 'perfect-freehand';
+import { getStrokeOutlinePoints, getStrokePoints, type StrokeOptions } from 'perfect-freehand';
 import { easingForStyle, pencilPressure, strokeBrush, strokeTapers } from './brushes';
 import type { InkPoint, StrokeStyle } from '../types';
 
@@ -87,19 +87,48 @@ export function freehandSamples(points: readonly InkPoint[], style: StrokeStyle)
 /** Pens finer than this are outlined scaled up to it (see `getStrokeOutline`). */
 const OUTLINE_BASE_SIZE = 2;
 
-/** How much a stroke `size` wide is scaled up to be outlined: 1 for ordinary widths. */
+/**
+ * Every stroke is outlined at least this much scaled up, so the 3 units at its end that perfect-freehand passes over
+ * are 0.75 page px, under a fine line's width: a small letter keeps its last curl (see `getStrokeOutline`).
+ */
+const OUTLINE_MIN_SCALE = 4;
+
+/**
+ * How far into a stroke (page px) the samples may be passed over before its direction is taken. perfect-freehand
+ * passes over the stroke's whole width, which for a 2.5 px pen is the first quarter of a small letter's hook.
+ */
+const START_SKIP_PX = 0.5;
+
+/**
+ * The outline's corners are at most this far apart (page px) on a writing pen (up to `FINE_OUTLINE_MAX_SIZE`).
+ * perfect-freehand spaces them `size × smoothing` apart, which on a 2.5 px ballpoint (drawn as a hard polygon) was a
+ * corner every 1.25 px: facets on the tight curves of small letters, and a curve cut short across its inside.
+ */
+const OUTLINE_MAX_STEP_PX = 0.6;
+const FINE_OUTLINE_MAX_SIZE = 6;
+
+/** How much a stroke `size` wide is scaled up to be outlined. */
 export function outlineScale(size: number): number {
-  return size > 0 && size < OUTLINE_BASE_SIZE ? OUTLINE_BASE_SIZE / size : 1;
+  const fine = size > 0 && size < OUTLINE_BASE_SIZE ? OUTLINE_BASE_SIZE / size : 1;
+  return Math.max(OUTLINE_MIN_SCALE, fine);
 }
 
 /**
  * Compute the outline polygon for a set of input samples.
  *
  * perfect-freehand works in the units it is given, and nearly everything it does is measured against the stroke's
- * size — except that it passes over the samples in the last 3 units of a stroke, as a fixed number. For an ordinary
- * pen that is less than a line's width; for a fine one writing small, with the page zoomed in, it is a good part
- * of a letter. So a stroke finer than `OUTLINE_BASE_SIZE` is outlined scaled up to that width and the outline
- * scaled back: everything else comes out as it would have, and those 3 units are a line's width and a half.
+ * size, except three things that cost small letters their shape (measured: on a 2.5 px pen, a fifth of the points an
+ * "e" 10 px high was written through had no ink on them):
+ *
+ * - it passes over the samples in the last 3 units of a stroke, a fixed number. The stroke is outlined scaled up
+ *   (`outlineScale`: at least 4×, more for a pen finer than 2 px) and the outline scaled back, so those 3 units are
+ *   0.75 page px;
+ * - it passes over the samples in the first `size` units, before it takes the stroke's direction: the points are
+ *   worked out here, passing over only `START_SKIP_PX` (except for a pen whose width comes from its speed, which
+ *   is read from those first samples);
+ * - it spaces the outline's corners `size × smoothing` apart: on a writing pen at most `OUTLINE_MAX_STEP_PX`.
+ *
+ * Everything else comes out as it would have: widths, pressure, tapers and the smoothing of the pen's path.
  */
 export function getStrokeOutline(
   points: readonly InkPoint[],
@@ -109,14 +138,29 @@ export function getStrokeOutline(
 ): Outline {
   if (points.length === 0) return [];
   const k = outlineScale(style.size);
-  // perfect-freehand accepts `{x, y, pressure}` objects directly; InkPoint is
-  // structurally compatible so no per-frame allocation is needed here.
-  if (k === 1) return getStroke(freehandSamples(points, style) as FreehandPoint[], toFreehandOptions(style, complete, points, caps));
-  // Scaled up: the samples, the width and the tapers (lengths, so they scale too; a brush's speed-driven taper
-  // follows from the scaled samples).
-  const big = points.map((p) => ({ ...p, x: p.x * k, y: p.y * k }));
-  const bigStyle = { ...style, size: style.size * k, taperStart: style.taperStart * k, taperEnd: style.taperEnd * k };
-  const outline = getStroke(freehandSamples(big, bigStyle) as FreehandPoint[], toFreehandOptions(bigStyle, complete, big, caps));
+  // The options for the stroke as it is, then scaled: the width and the tapers (lengths, worked out from the samples
+  // as drawn, so a brush's speed-driven taper is what it would be unscaled).
+  const plain = toFreehandOptions(style, complete, points, caps);
+  const scaleTaper = (taper: number | boolean | undefined): number | boolean => (typeof taper === 'number' ? taper * k : (taper ?? 0));
+  const options: StrokeOptions = {
+    ...plain,
+    size: style.size * k,
+    start: { ...plain.start, taper: scaleTaper(plain.start?.taper) },
+    end: { ...plain.end, taper: scaleTaper(plain.end?.taper) },
+  };
+  const smoothing =
+    style.size <= FINE_OUTLINE_MAX_SIZE && style.size > 0 ? Math.min(plain.smoothing ?? 0.5, OUTLINE_MAX_STEP_PX / style.size) : plain.smoothing;
+  // The samples scaled, as the arrays perfect-freehand turns objects into anyway: one pass, no second copy.
+  const source = freehandSamples(points, style);
+  const samples = new Array<[number, number, number]>(source.length);
+  for (let i = 0; i < source.length; i++) {
+    const p = source[i]!;
+    samples[i] = [p.x * k, p.y * k, p.pressure ?? 0.5];
+  }
+  // A pen whose width comes from its speed reads that from the first samples, as perfect-freehand spaced them.
+  const startSkip = style.simulatePressure ? style.size * k : Math.min(style.size, START_SKIP_PX) * k;
+  const strokePoints = getStrokePoints(samples, { ...options, size: startSkip });
+  const outline = getStrokeOutlinePoints(strokePoints, { ...options, ...(smoothing === undefined ? {} : { smoothing }) });
   return outline.map(([x, y]) => [x / k, y / k] as const);
 }
 

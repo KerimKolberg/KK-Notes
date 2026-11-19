@@ -41,7 +41,7 @@ describe('fine pens, for writing small with the page zoomed in', () => {
     expect(fine.points.length).toBeGreaterThan(coarse.points.length);
   });
 
-  it('keep the shape of the end of a stroke: perfect-freehand skips its last 3 units, a line and a half once scaled', () => {
+  it('keep the shape of the end of a stroke: perfect-freehand skips its last 3 units, under a line once scaled', () => {
     // Along, then a flick up and back down, 2.8 px in all: the tail of a small letter.
     const points: InkPoint[] = [];
     for (let i = 0; i <= 20; i++) points.push({ x: i * 0.2, y: 0, pressure: 0.5 });
@@ -49,7 +49,8 @@ describe('fine pens, for writing small with the page zoomed in', () => {
     for (let i = 6; i >= 0; i--) points.push({ x: 4.05, y: -i * 0.2, pressure: 0.5 });
     const style = brushStyle('ballpoint', { color: '#000', size: 0.25, pattern: 'solid', arrowheads: 'none' }, 'pen');
     expect(outlineScale(style.size)).toBe(8);
-    expect(outlineScale(4)).toBe(1);
+    // Every pen is outlined at least 4× up, so those 3 units are 0.75 page px.
+    expect(outlineScale(4)).toBe(4);
     const outline = getStrokeOutline(points, style, true);
     const top = Math.min(...outline.map(([, y]) => y));
     // The flick goes up to y = -1.4; unscaled, the outline cut straight across it.
