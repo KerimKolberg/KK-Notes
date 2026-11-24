@@ -68,8 +68,11 @@ describe('what went wrong, kept for the next start', () => {
     expect(problemReport()).toContain('out of memory');
   });
 
-  it('leaves the report as it was when the native side wrote nothing', () => {
-    const run = addNativeProblems('   ');
-    expect(run.native ?? '').not.toContain('\n\n');
+  it('leaves the report as it was when the native side wrote nothing, or answered with nothing', () => {
+    startProblemLog();
+    const before = describeProblems(addNativeProblems('   '));
+    expect(describeProblems(addNativeProblems(null))).toBe(before);
+    expect(describeProblems(addNativeProblems(undefined))).toBe(before);
+    expect(describeProblems(addNativeProblems({ odd: true }))).toBe(before);
   });
 });

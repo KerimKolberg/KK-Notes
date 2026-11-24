@@ -91,8 +91,9 @@ export function previousRunReport(): PreviousRun {
 }
 
 /** Add what the native side wrote down (read at start, asynchronously) to how the last run went. */
-export function addNativeProblems(text: string): PreviousRun {
-  const native = text.trim();
+export function addNativeProblems(text: unknown): PreviousRun {
+  // Only text: a native side from before this record (or a stand-in for one) answers with nothing, or `null`.
+  const native = typeof text === 'string' ? text.trim() : '';
   if (native) previous = { ...previous, native: previous.native ? `${previous.native}\n${native}` : native };
   return previous;
 }

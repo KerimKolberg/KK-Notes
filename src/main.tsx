@@ -40,7 +40,7 @@ const previousRun = startProblemLog();
 if (isTauri()) {
   // The native side's record too (`src-tauri/src/crash_log.rs`): the web view losing its page or graphics process,
   // or a native error. What closes the window is written down there, not here.
-  void tauriInvoke<string>('take_native_problems')
+  void tauriInvoke<unknown>('take_native_problems')
     .catch(() => '')
     .then((text) => sayHowTheLastRunWent(addNativeProblems(text)));
 } else {
