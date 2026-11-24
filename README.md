@@ -355,6 +355,25 @@ it did not close by itself: it says so once, with *Copy details*, and *Copy prob
 toolbar's settings copies the same at any time. A report with no errors in it says the web view or Windows stopped the
 app, not its own code. Nothing leaves the device unless copied.
 
+**And what went wrong below the page** (`src-tauri/src/crash_log.rs`, `notes-sync/src/problems.rs`). Reported: the
+app on Windows closing a few seconds or a minute into writing with the pen, every time. Twenty seconds to two minutes
+of writing with real pen input on a PDF in the browser throws nothing, keeps memory steady (about 10 MB) and makes no
+canvas per stroke (`checkWritingForAWhile`), so what closes the window is below the page, where the page's own record
+cannot see. The native side now keeps one of its own, a small file in the app's data folder (`logs/`), handed to the
+page at its next start (`take_native_problems`) and put in the same report:
+
+- **a native error** (a Rust panic): what it said and where. The release build *aborted* on any panic, so one in a
+  command ended the app on the spot, silently; it now **unwinds** (`panic = "unwind"`), so the command fails and the
+  app goes on;
+- **the web view losing a process** (WebView2's `ProcessFailed`): which one (the page's, the graphics process, the
+  browser), why (crashed, out of memory, unresponsive) and its exit code. The page's own process gone, the page is
+  **loaded again** rather than leaving a dead window, and the draft brings the writing back; the whole web view gone
+  after the app had run 30 s, the app starts again.
+
+The graphics process restarting gives every canvas back blank, which would look like the writing on the page, and the
+PDF under it, had gone. Each page's canvases now draw themselves again on `contextrestored` (`usePageCanvas`,
+`useHiDpiCanvas`, `PdfBackground`).
+
 **A pen stroke is never lost to the browser.** On a PDF page a stroke could vanish half way through a word, with
 Windows' no-drop cursor flashing where it had been (reported on the Flow Z13, and in a screen recording: the stroke
 on screen one frame, gone the next, the cursor an arrow). Two things together: the page did nothing to stop the web

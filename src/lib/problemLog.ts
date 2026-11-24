@@ -28,6 +28,11 @@ export interface PreviousRun {
   readonly endedUnexpectedly: boolean;
   /** What went wrong in it, oldest first. */
   readonly problems: readonly Problem[];
+  /**
+   * What the app's native side wrote down (`src-tauri/src/crash_log.rs`): a native error, or the web view losing a
+   * process (the page's, the graphics process), one line each, "seconds since 1970 · what · detail".
+   */
+  readonly native?: string;
 }
 
 function read(key: string): string | null {
@@ -85,9 +90,29 @@ export function previousRunReport(): PreviousRun {
   return previous;
 }
 
+/** Add what the native side wrote down (read at start, asynchronously) to how the last run went. */
+export function addNativeProblems(text: string): PreviousRun {
+  const native = text.trim();
+  if (native) previous = { ...previous, native: previous.native ? `${previous.native}\n${native}` : native };
+  return previous;
+}
+
+/** The native record's lines, readable: the time as a date. */
+function describeNative(text: string): string[] {
+  return text
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => {
+      const [seconds, what, ...detail] = line.split('\t');
+      const when = Number(seconds);
+      const at = Number.isFinite(when) && when > 0 ? new Date(when * 1000).toISOString() : (seconds ?? '');
+      return `--- ${at} · ${what ?? ''} (native)\n${detail.join(' ')}`;
+    });
+}
+
 /** What went wrong in this run so far, as a report (with the last run's, if it had any). */
 export function problemReport(): string {
-  return describeProblems({ endedUnexpectedly: previous.endedUnexpectedly, problems: [...previous.problems, ...stored()] });
+  return describeProblems({ ...previous, problems: [...previous.problems, ...stored()] });
 }
 
 export function startProblemLog(): PreviousRun {
@@ -111,6 +136,9 @@ export function startProblemLog(): PreviousRun {
 /** The record as text to send on. */
 export function describeProblems(run: PreviousRun): string {
   const head = `${describeBuild()}\n${run.endedUnexpectedly ? 'The previous run ended while the app was on screen.' : 'The previous run closed normally.'}`;
-  if (run.problems.length === 0) return `${head}\nNo errors were recorded in it (so it was the web view or Windows that stopped it, not the app's code).`;
-  return [head, ...run.problems.map((p) => `--- ${p.at} · ${p.what} · ${p.build}\n${p.detail}`)].join('\n');
+  const native = run.native ? describeNative(run.native) : [];
+  if (run.problems.length === 0 && native.length === 0) {
+    return `${head}\nNo errors were recorded in it (so it was the web view or Windows that stopped it, not the app's code).`;
+  }
+  return [head, ...run.problems.map((p) => `--- ${p.at} · ${p.what} · ${p.build}\n${p.detail}`), ...native].join('\n');
 }

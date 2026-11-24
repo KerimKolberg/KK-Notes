@@ -109,9 +109,14 @@ export function useHiDpiCanvas({
     // Size synchronously on mount so the first paint is already crisp.
     measure();
 
+    // A canvas the web view's restarted graphics process gave back blank: scale and draw it again.
+    const restored = canvasRefs.map((ref) => ref.current).filter((c): c is HTMLCanvasElement => c !== null);
+    for (const canvas of restored) canvas.addEventListener('contextrestored', measure);
+
     return () => {
       observer.disconnect();
       mediaQuery?.removeEventListener('change', onDprChange);
+      for (const canvas of restored) canvas.removeEventListener('contextrestored', measure);
     };
     // Deliberately mount-only: every input is a stable ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps

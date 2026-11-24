@@ -95,7 +95,15 @@ export function usePageCanvas({
     };
     watchDpr();
 
-    return () => mediaQuery?.removeEventListener('change', onDprChange);
+    // The web view's graphics process restarted (it can crash on its own): every canvas comes back blank and
+    // without its scale. Put the scale back and draw again, or the writing on the page would look lost.
+    const restored = canvasRefs.map((ref) => ref.current).filter((c): c is HTMLCanvasElement => c !== null);
+    for (const canvas of restored) canvas.addEventListener('contextrestored', apply);
+
+    return () => {
+      mediaQuery?.removeEventListener('change', onDprChange);
+      for (const canvas of restored) canvas.removeEventListener('contextrestored', apply);
+    };
     // canvasRefs and sizeRef are stable refs; onResize is read through a ref.
   }, [pageWidth, pageHeight, zoom, originX, originY, canvasRefs, sizeRef, onResizeRef]);
 }

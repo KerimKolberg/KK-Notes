@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { describeProblems, problemReport, recordProblem, startProblemLog } from '../problemLog';
+import { addNativeProblems, describeProblems, problemReport, recordProblem, startProblemLog } from '../problemLog';
 
 // The tests run without a browser: a page's storage, events and visibility, as the log uses them.
 const store = new Map<string, string>();
@@ -55,5 +55,21 @@ describe('what went wrong, kept for the next start', () => {
     startProblemLog();
     recordProblem('Now', new TypeError('bad'));
     expect(problemReport()).toContain('TypeError: bad');
+  });
+
+  it('reads in what the native side wrote down: when, what, and why', () => {
+    startProblemLog();
+    const run = addNativeProblems("1763990000\tThe web view lost a process\tthe page's process exited (out of memory), exit code 0xe0000008\n");
+    const report = describeProblems(run);
+    expect(report).toContain('The web view lost a process (native)');
+    expect(report).toContain('out of memory');
+    expect(report).toContain('2025-11-24T');
+    expect(report).not.toMatch(/No errors were recorded/);
+    expect(problemReport()).toContain('out of memory');
+  });
+
+  it('leaves the report as it was when the native side wrote nothing', () => {
+    const run = addNativeProblems('   ');
+    expect(run.native ?? '').not.toContain('\n\n');
   });
 });

@@ -46,15 +46,21 @@ export const PdfBackground = memo(function PdfBackground({ page, cssWidth }: Pdf
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !bitmap || bitmap.width === 0) return;
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    try {
-      ctx.drawImage(bitmap, 0, 0);
-    } catch {
-      /* evicted; the next render refreshes */
-    }
+    const draw = (): void => {
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      try {
+        ctx.drawImage(bitmap, 0, 0);
+      } catch {
+        /* evicted; the next render refreshes */
+      }
+    };
+    draw();
+    // The web view's graphics process restarted and gave the canvas back blank: the page is drawn again.
+    canvas.addEventListener('contextrestored', draw);
+    return () => canvas.removeEventListener('contextrestored', draw);
   }, [bitmap]);
 
   if (!ref) return null;

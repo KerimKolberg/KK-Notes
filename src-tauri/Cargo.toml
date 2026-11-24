@@ -49,6 +49,8 @@ tauri-plugin-autostart = "~2.5.1"
 windows = { version = "0.61", features = ["Foundation", "Foundation_Collections", "UI_Input_Inking", "Win32_System_Com"] }
 windows-collections = "0.2"
 windows-numerics = "0.2"
+# The web view's own events (a process it loses: `crash_log.rs`), at the version Tauri's web view already uses.
+webview2-com = "0.38"
 
 [features]
 default = ["cloud-sync"]
@@ -64,5 +66,6 @@ cloud-sync = ["dep:notex-http"]
 codegen-units = 1
 lto = true
 opt-level = "s"
-panic = "abort"
+# A native error in a command fails that command (and is written down: `crash_log.rs`) instead of ending the app.
+panic = "unwind"
 strip = true

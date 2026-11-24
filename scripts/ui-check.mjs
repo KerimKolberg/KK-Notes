@@ -1610,6 +1610,83 @@ async function checkWritingOnStyledTable(browser) {
 }
 
 /**
+ * Writing for a while (reported on the Flow Z13: the app closed a few seconds or a minute into writing with the pen).
+ * Not reproduced in the browser; this holds what the browser can show: 20 s of small words written with real pen
+ * input on a PDF, with nothing thrown, memory and the page's elements steady, and no canvas made per stroke (a
+ * page's canvas at a tablet's density and zoom is tens of megabytes of graphics memory).
+ */
+async function checkWritingForAWhile(browser) {
+  console.log('writing with the pen for 20 s on a PDF, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await ctx.addInitScript(() => {
+    window.__canvasesMade = 0;
+    const make = document.createElement.bind(document);
+    document.createElement = (tag, ...rest) => {
+      if (String(tag).toLowerCase() === 'canvas') window.__canvasesMade++;
+      return make(tag, ...rest);
+    };
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
+  page.on('crash', () => errors.push('the page crashed'));
+  await openDocument(page);
+  const t = await page.evaluateHandle(({ bytes }) => { const tr = new DataTransfer(); tr.items.add(new File([new Uint8Array(bytes)], 'Sheet.pdf', { type: 'application/pdf' })); return tr; }, { bytes: tinyPdf(3, 'Sheet') });
+  await page.dispatchEvent('[data-page-stage]', 'dragover', { dataTransfer: t });
+  await page.dispatchEvent('[data-page-stage]', 'drop', { dataTransfer: t });
+  await page.waitForFunction(() => /Sheet/.test(document.querySelector('[data-title]')?.value ?? ''), null, { timeout: 15_000 });
+  await page.waitForTimeout(500);
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send('Performance.enable');
+  const metrics = async () => {
+    const { metrics: m } = await cdp.send('Performance.getMetrics');
+    const g = (n) => m.find((x) => x.name === n)?.value ?? 0;
+    return { heapMB: g('JSHeapUsedSize') / 1e6, nodes: g('Nodes') };
+  };
+  const pen = (type, x, y, buttons = 1) => cdp.send('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' ? (buttons & 1 ? 'left' : 'none') : 'left', buttons, clickCount: 1, pointerType: 'pen', force: 0.5 });
+  const live = await page.$eval('[data-page-index="0"] [data-layer="live"]', (el) => el.getBoundingClientRect().toJSON());
+  const before = await metrics();
+  const madeBefore = await page.evaluate(() => window.__canvasesMade);
+  const started = Date.now();
+  let strokes = 0;
+  while (Date.now() - started < 20_000) {
+    const x0 = live.left + 40 + ((strokes * 37) % 600);
+    const y0 = live.top + 60 + (strokes % 40) * 15;
+    await pen('mouseMoved', x0, y0, 0);
+    await pen('mousePressed', x0, y0);
+    for (let i = 1; i <= 25; i++) await pen('mouseMoved', x0 + i * 1.2, y0 + Math.sin(i / 2) * 5);
+    await pen('mouseReleased', x0 + 30, y0, 0);
+    strokes++;
+    if (strokes % 6 === 0) await page.waitForTimeout(250);
+  }
+  await page.waitForTimeout(2000);
+  const after = await metrics();
+  check(`${strokes} strokes in 20 s, with nothing thrown`, strokes > 20 && errors.length === 0, errors.join(' | '));
+  check('memory stays small', after.heapMB < 60, `${before.heapMB.toFixed(1)} -> ${after.heapMB.toFixed(1)} MB`);
+  check('the page has as many elements as it had', Math.abs(after.nodes - before.nodes) < 40, `${before.nodes} -> ${after.nodes}`);
+  check('no canvas is made for a stroke', (await page.evaluate(() => window.__canvasesMade)) - madeBefore < 3, String((await page.evaluate(() => window.__canvasesMade)) - madeBefore));
+
+  // The web view's graphics process restarting gives every canvas back blank: the writing and the PDF come back.
+  const inked = () => page.$eval('[data-page-index="0"] [data-layer="committed"]', (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 40) n++; return n; });
+  const pdfPainted = () => page.$eval('[data-page-index="0"] [data-pdf-background]', (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 200) n++; return n; });
+  const ink = await inked();
+  const pdf = await pdfPainted();
+  await page.evaluate(() => {
+    for (const c of document.querySelectorAll('[data-page-index="0"] canvas')) {
+      const ctx = c.getContext('2d');
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, c.width, c.height);
+    }
+    for (const c of document.querySelectorAll('[data-page-index="0"] canvas')) c.dispatchEvent(new Event('contextrestored'));
+  });
+  await page.waitForTimeout(300);
+  check('after a graphics restart the writing is drawn again', (await inked()) === ink, `${ink} -> ${await inked()}`);
+  check('and so is the PDF page', pdf > 0 && (await pdfPainted()) === pdf, `${pdf} -> ${await pdfPainted()}`);
+  await ctx.close();
+}
+
+/**
  * Where everything stands on each dock. Sliding (the default), the toolbar is one line along its edge — the
  * keyboard first, then the tools, the colours and last the settings — one button thick, whichever edge it is on.
  *
@@ -5663,6 +5740,7 @@ try {
     checkPenAlwaysWrites,
     checkBarrelEverywhere,
     checkWritingOnStyledTable,
+    checkWritingForAWhile,
     checkAids,
     checkZoomWindow,
     checkSearch,

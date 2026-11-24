@@ -15,6 +15,7 @@
 
 mod background;
 mod commands;
+mod crash_log;
 mod data_dir;
 mod drive_commands;
 mod handwriting;
@@ -85,6 +86,7 @@ pub fn run() {
             background::set_background_settings,
             background::quit_app,
             data_dir::library_moved,
+            crash_log::take_native_problems,
         ])
         .setup(|app| {
             // Before anything reads or writes the app's folders, or the window's web view opens its own.
@@ -97,6 +99,10 @@ pub fn run() {
             // Make sure the per-user data directory exists before the first autosave.
             let data_dir = data_dir::get(app.handle()).map_err(std::io::Error::other)?;
             std::fs::create_dir_all(&data_dir)?;
+            // From here on a native error, or the web view losing a process, is written down for the next start
+            // (`crash_log.rs`), and a page whose process died is loaded again.
+            crash_log::install(data_dir.join("logs"));
+            crash_log::watch_webview(app.handle());
 
             // The library, its persisted sync records and the watcher over it.
             let handle = app.handle().clone();

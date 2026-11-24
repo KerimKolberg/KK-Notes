@@ -18,6 +18,7 @@ pub mod library;
 pub mod loopback;
 pub mod manager;
 pub mod oauth;
+pub mod problems;
 pub mod provider;
 pub mod relocate;
 pub mod secret;

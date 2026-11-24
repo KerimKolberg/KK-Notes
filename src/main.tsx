@@ -4,7 +4,8 @@ import './index.css';
 import App from './App.tsx';
 import { installAndroidInsets } from './ui/androidInsets';
 import { useDesktopStore } from './desktop/desktopStore';
-import { describeProblems, startProblemLog } from './lib/problemLog';
+import { addNativeProblems, describeProblems, startProblemLog, type PreviousRun } from './lib/problemLog';
+import { isTauri, tauriInvoke } from './desktop/tauri';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -17,12 +18,12 @@ installAndroidInsets();
 
 // How the last run went: if it ended while on screen, or something went wrong in it, say so once, with the details
 // to copy and send on (`lib/problemLog.ts`).
-const previousRun = startProblemLog();
-if (previousRun.endedUnexpectedly || previousRun.problems.length > 0) {
-  const details = describeProblems(previousRun);
+function sayHowTheLastRunWent(run: PreviousRun): void {
+  if (!run.endedUnexpectedly && run.problems.length === 0 && !run.native) return;
+  const details = describeProblems(run);
   useDesktopStore.getState().setNotice({
-    text: previousRun.endedUnexpectedly
-      ? 'KK-Notes closed unexpectedly last time. The details can be copied to send on.'
+    text: run.endedUnexpectedly || run.native
+      ? 'KK-Notes stopped unexpectedly last time. The details can be copied to send on.'
       : 'Something went wrong last time KK-Notes ran. The details can be copied to send on.',
     action: {
       label: 'Copy details',
@@ -34,6 +35,16 @@ if (previousRun.endedUnexpectedly || previousRun.problems.length > 0) {
       },
     },
   });
+}
+const previousRun = startProblemLog();
+if (isTauri()) {
+  // The native side's record too (`src-tauri/src/crash_log.rs`): the web view losing its page or graphics process,
+  // or a native error. What closes the window is written down there, not here.
+  void tauriInvoke<string>('take_native_problems')
+    .catch(() => '')
+    .then((text) => sayHowTheLastRunWent(addNativeProblems(text)));
+} else {
+  sayHowTheLastRunWent(previousRun);
 }
 
 createRoot(rootElement).render(
