@@ -1664,7 +1664,8 @@ async function checkWritingForAWhile(browser) {
   const after = await metrics();
   check(`${strokes} strokes in 20 s, with nothing thrown`, strokes > 20 && errors.length === 0, errors.join(' | '));
   check('memory stays small', after.heapMB < 60, `${before.heapMB.toFixed(1)} -> ${after.heapMB.toFixed(1)} MB`);
-  check('the page has as many elements as it had', Math.abs(after.nodes - before.nodes) < 40, `${before.nodes} -> ${after.nodes}`);
+  // Growth is what a leak looks like; fewer is a notice from opening the PDF gone meanwhile (seen on a slower machine).
+  check('the page has no more elements than it had', after.nodes - before.nodes < 40, `${before.nodes} -> ${after.nodes}`);
   check('no canvas is made for a stroke', (await page.evaluate(() => window.__canvasesMade)) - madeBefore < 3, String((await page.evaluate(() => window.__canvasesMade)) - madeBefore));
 
   // The web view's graphics process restarting gives every canvas back blank: the writing and the PDF come back.
