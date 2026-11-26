@@ -203,18 +203,32 @@ export function rotationFromPointer(image: MediaBox, p: Point, snapDeg = 0): num
 // Lists
 // ---------------------------------------------------------------------------
 
+/** A page's own text (`flow`): the page's, under everything placed on it. */
+export function isPageText(item: MediaBox): boolean {
+  const text = item as MediaBox & { kind?: string; flow?: boolean };
+  return text.kind === 'text' && text.flow === true;
+}
+
+/**
+ * The order things are stacked in: the page's own text first, whatever its number, then by number. Page text that
+ * was put on a page after a table (pressing the keyboard button) went on top of it, and every press on the table
+ * went into the text instead: the table could not be chosen again (reported on the Flow Z13).
+ */
+function byStack(a: MediaBox, b: MediaBox): number {
+  return (isPageText(a) ? 0 : 1) - (isPageText(b) ? 0 : 1) || a.zIndex - b.zIndex;
+}
+
 function renormalize<T extends MediaBox>(items: readonly T[]): T[] {
-  return [...items]
-    .sort((a, b) => a.zIndex - b.zIndex)
-    .map((item, i) => (item.zIndex === i + 1 ? item : { ...item, zIndex: i + 1 }));
+  return [...items].sort(byStack).map((item, i) => (item.zIndex === i + 1 ? item : { ...item, zIndex: i + 1 }));
 }
 
 export function sortedByZ<T extends MediaBox>(items: readonly T[]): T[] {
-  return [...items].sort((a, b) => a.zIndex - b.zIndex);
+  return [...items].sort(byStack);
 }
 
+/** Put something on a page: on top of what is there, or, for the page's own text, under all of it. */
 export function addImage<T extends MediaBox>(items: readonly T[], item: T): T[] {
-  return renormalize([...items, { ...item, zIndex: nextZIndex(items) }]);
+  return renormalize([...items, { ...item, zIndex: isPageText(item) ? 0 : nextZIndex(items) }]);
 }
 
 /**

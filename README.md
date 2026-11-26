@@ -2298,6 +2298,28 @@ turned table is left as it is, since its corners are not its box. And any object
 edge when they would fall past it (`TransformBox`), so even something let go half off its page can be taken hold of
 and made smaller; a drag moves its side by how far the pen goes, so it works the same from there.
 
+**Two kinds of table** (the Add menu's **Typed** / **Drawn lines**). A typed table is the object above: cells to
+type in, moved, sized and styled as one thing. A drawn table is no object at all (`drawnTable.ts`): a frame and the
+lines between its rows and columns, each a line stroke as the line tool makes, in the pen's colour and width, with
+cells the typed table's size and kept on the page. It goes on as one step of Undo (`commitStrokes`) and comes chosen
+with the lasso, to be dragged into place; after that it is ink like any other: written in, rubbed at with the area
+eraser (which takes just the bit it crosses), taken a line at a time with the stroke eraser.
+
+**A pen on a table's cells is the app's** (`usePenOnField`). Windows turns pen writing on a text field into typed
+text ("write in text fields with your pen"), and the web view lets it: a pen dragging a chosen table by its cells came
+out as letters typed into them (reported on the Flow Z13: ". c", "-", "1."). The CSS that asks for no handwriting
+(`touch-action: none` on inputs, `index.css`) is not honoured there; a pen press whose default is prevented is. So a
+pen's press on a cell, or on a note's text, is taken by the page: dragged past 6 px it moves the object, from where the
+pen came down; tapped, it puts the caret in the field, to type with the keyboard. A finger and a mouse work in the
+fields as before. A text box keeps Windows' handwriting: with the select tool, writing into one is typing.
+
+**The page's own text is under everything placed on the page** (`isPageText`, `sortedByZ`). Anything put on a page
+went on top, the page's text too: pressing the keyboard button on a page with a table put the text over the table,
+and every press on the table went into the text, so it could not be chosen again (reported on the Flow Z13). Page text
+is now stacked first wherever things are stacked (on screen, in page snapshots, in PDF export), whatever number a note
+saved before this gave it, and drawn under the rest. In front of the drawings it is in a layer of its own over the
+whole page: there only its lines take a press (`index.css`), and the page between them is left to what is under it.
+
 **How a table looks** (`tableStyle`, the toolbar's **Style**). Its lines take a colour, an opacity and a width; its
 background a colour and an opacity. Either opacity goes down to 0 %: lines alone over the page, or text alone over a
 PDF's own ruled table. The colours are kept as `#rrggbb` only, and a file's are checked on the way in

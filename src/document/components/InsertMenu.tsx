@@ -28,6 +28,8 @@ export interface InsertMenuProps {
   onInsertNote: (init: NoteInit) => void;
   onInsertText: () => void;
   onInsertTable: (init: TableInit) => void;
+  /** A table drawn as lines in the pen's colour and width (`drawnTable.ts`): ink, not cells. */
+  onInsertDrawnTable: (size: { rows: number; columns: number }) => void;
   /** Closes the popover the menu is rendered in. */
   onDone: () => void;
 }
@@ -47,7 +49,9 @@ const COLUMNS = Array.from({ length: MAX_TABLE_COLUMNS }, (_, i) => i + 1);
  * adding and removing rows one at a time, and the line weight is part of what
  * the table is for (a faint grid to write over, or a hard-ruled one).
  */
-export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onInsertTable, onDone }: InsertMenuProps) {
+export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onInsertTable, onInsertDrawnTable, onDone }: InsertMenuProps) {
+  /** Cells to type in, or lines drawn in the pen's colour (ink the eraser takes a bit of). */
+  const [tableKind, setTableKind] = useState<'typed' | 'drawn'>('typed');
   const [noteShape, setNoteShape] = useState<NoteShape>('rectangle');
   const [rows, setRows] = useState(DEFAULT_TABLE_ROWS);
   const [columns, setColumns] = useState(DEFAULT_TABLE_COLUMNS);
@@ -69,9 +73,10 @@ export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onInsert
   const toggleZoom = useZoomWindowStore((s) => s.toggle);
 
   const insertTable = useCallback(() => {
-    onInsertTable({ rows, columns, lineWidth, lineOpacity });
+    if (tableKind === 'drawn') onInsertDrawnTable({ rows, columns });
+    else onInsertTable({ rows, columns, lineWidth, lineOpacity });
     onDone();
-  }, [rows, columns, lineWidth, lineOpacity, onInsertTable, onDone]);
+  }, [tableKind, rows, columns, lineWidth, lineOpacity, onInsertTable, onInsertDrawnTable, onDone]);
 
   return (
     <div className="flex w-[min(20rem,calc(100vw-2.5rem))] flex-col gap-1" data-insert-menu>
@@ -194,6 +199,18 @@ export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onInsert
             {shown.rows} × {shown.columns}
           </span>
         </div>
+        <div className="flex gap-1 px-1 pb-1" role="radiogroup" aria-label="Kind of table">
+          <Chip active={tableKind === 'typed'} onClick={() => setTableKind('typed')} label="Cells to type in: moved, sized and styled as one thing">
+            <span data-table-kind="typed">Typed</span>
+          </Chip>
+          <Chip
+            active={tableKind === 'drawn'}
+            onClick={() => setTableKind('drawn')}
+            label="Lines drawn in the pen's colour and width: ink, which the eraser takes a bit of and the lasso moves"
+          >
+            <span data-table-kind="drawn">Drawn lines</span>
+          </Chip>
+        </div>
 
         {/* Grid picker. A press anywhere in it sets both counts at once; the
             number fields below are for the sizes a 20 × 20 grid cannot reach
@@ -257,39 +274,47 @@ export function InsertMenu({ onInsertImage, onInsertNote, onInsertText, onInsert
             onChange={(e) => setColumns(clamp(Number(e.target.value), MAX_TABLE_COLUMNS))}
           />
         </Row>
-        <Row label="Grid line width">
-          <input
-            type="range"
-            className="h-1 w-28 accent-blue-600"
-            min={MIN_TABLE_LINE_WIDTH}
-            max={MAX_TABLE_LINE_WIDTH}
-            step={0.25}
-            value={lineWidth}
-            aria-label="Grid line width"
-            data-table-line-width
-            onChange={(e) => setLineWidth(Number(e.target.value))}
-          />
-          <span className="w-10 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400">{lineWidth}px</span>
-        </Row>
-        <Row label="Grid line opacity">
-          <input
-            type="range"
-            className="h-1 w-28 accent-blue-600"
-            min={MIN_TABLE_LINE_OPACITY}
-            max={MAX_TABLE_LINE_OPACITY}
-            step={0.05}
-            value={lineOpacity}
-            aria-label="Grid line opacity"
-            data-table-line-opacity
-            onChange={(e) => setLineOpacity(Number(e.target.value))}
-          />
-          <span className="w-10 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
-            {Math.round(lineOpacity * 100)}%
-          </span>
-        </Row>
+        {tableKind === 'drawn' ? (
+          <p className="px-1 text-xs text-zinc-500 dark:text-zinc-400" data-drawn-table-note>
+            In the pen's colour and width. Write in it, rub a bit out with the area eraser, move it with the lasso.
+          </p>
+        ) : (
+          <>
+          <Row label="Grid line width">
+            <input
+              type="range"
+              className="h-1 w-28 accent-blue-600"
+              min={MIN_TABLE_LINE_WIDTH}
+              max={MAX_TABLE_LINE_WIDTH}
+              step={0.25}
+              value={lineWidth}
+              aria-label="Grid line width"
+              data-table-line-width
+              onChange={(e) => setLineWidth(Number(e.target.value))}
+            />
+            <span className="w-10 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400">{lineWidth}px</span>
+          </Row>
+          <Row label="Grid line opacity">
+            <input
+              type="range"
+              className="h-1 w-28 accent-blue-600"
+              min={MIN_TABLE_LINE_OPACITY}
+              max={MAX_TABLE_LINE_OPACITY}
+              step={0.05}
+              value={lineOpacity}
+              aria-label="Grid line opacity"
+              data-table-line-opacity
+              onChange={(e) => setLineOpacity(Number(e.target.value))}
+            />
+            <span className="w-10 text-right text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+              {Math.round(lineOpacity * 100)}%
+            </span>
+          </Row>
+          </>
+        )}
         <div className="px-1 pt-1">
-          <Chip onClick={insertTable} label={`Insert a ${rows} by ${columns} table`}>
-            <span data-insert-table>Insert table</span>
+          <Chip onClick={insertTable} label={`Insert a ${rows} by ${columns} ${tableKind === 'drawn' ? 'table of drawn lines' : 'table'}`}>
+            <span data-insert-table>{tableKind === 'drawn' ? 'Draw table' : 'Insert table'}</span>
           </Chip>
         </div>
       </div>

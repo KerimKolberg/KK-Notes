@@ -27,6 +27,7 @@ import {
   imageCenter,
   isAboveInk,
   isLocked,
+  isPageText,
   moveImage,
   removeTableColumn,
   removeTableRow,
@@ -265,8 +266,12 @@ export const MediaLayer = memo(function MediaLayer({ page, zoom, active, layer =
             height: item.height,
             transform: `rotate(${item.rotation}deg)`,
             transformOrigin: 'center',
-            zIndex: item.zIndex,
-            pointerEvents: active ? 'auto' : 'none',
+            // The page's own text is under everything placed on the page, whatever its number says (one saved
+            // before it was put at the bottom can be on top): a press on a table over it is the table's.
+            zIndex: isPageText(item) ? -1 : item.zIndex,
+            // In front of the drawings it is in a layer of its own over the whole page: there only its lines take a
+            // press (`index.css`), and the page between them is left to what is under it.
+            pointerEvents: active && !(above && isPageText(item)) ? 'auto' : 'none',
             // Page text is the page's own: no frame around it as around a placed object.
             outline: item.id === selectedId && !(item.kind === 'text' && item.flow) ? '1.5px solid rgba(37, 99, 235, 0.9)' : 'none',
             outlineOffset: -1,
@@ -479,6 +484,63 @@ function MediaGrips({ item, zoom, selected, locked, onSelect, onDragBody }: Medi
   );
 }
 
+/** How far a pen moves on a field before it is a drag rather than a tap, CSS px. */
+const PEN_DRAG_SLOP = 6;
+
+/**
+ * A pen on a table's cell or a note's text: the app's, not Windows'. Windows turns pen writing on a text field into
+ * typed text (its "write in text fields"), and the web view lets it; a pen dragging a table by its cells came out as
+ * letters typed into them (reported on the Flow Z13: ". c", "-", "1." in a table moved about). The fields' CSS that
+ * asks for no handwriting (`touch-action: none`, `index.css`) is not honoured there; a pen press whose default is
+ * prevented is. So a pen press on a field is taken here: dragged, it moves the object (as its body does); tapped, it
+ * puts the caret in the field, to type with the keyboard. A finger and a mouse work in the field as before.
+ */
+function usePenOnField(onDragBody: BodyHandlers, editable: boolean) {
+  const press = useRef<{ id: number; x: number; y: number; down: ReactPointerEvent<HTMLElement>; dragging: boolean } | null>(null);
+  return {
+    onPointerDown: (e: ReactPointerEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      e.stopPropagation();
+      if (e.pointerType !== 'pen' || !editable || e.button !== 0) return;
+      e.preventDefault();
+      press.current = { id: e.pointerId, x: e.clientX, y: e.clientY, down: e, dragging: false };
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* synthetic pointer */
+      }
+    },
+    onPointerMove: (e: ReactPointerEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const p = press.current;
+      if (!p || p.id !== e.pointerId) return;
+      if (!p.dragging) {
+        if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < PEN_DRAG_SLOP) return;
+        p.dragging = true;
+        // From where the pen came down, so the object follows the pen exactly.
+        onDragBody.onPointerDown(p.down);
+      }
+      onDragBody.onPointerMove(e);
+    },
+    onPointerUp: (e: ReactPointerEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const p = press.current;
+      if (!p || p.id !== e.pointerId) return;
+      press.current = null;
+      if (p.dragging) {
+        onDragBody.onPointerUp(e);
+        return;
+      }
+      const field = e.currentTarget;
+      field.focus();
+      field.setSelectionRange(field.value.length, field.value.length);
+    },
+    onPointerCancel: (e: ReactPointerEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const p = press.current;
+      if (!p || p.id !== e.pointerId) return;
+      press.current = null;
+      if (p.dragging) onDragBody.onPointerCancel(e);
+    },
+  };
+}
+
 interface NoteCardProps {
   note: StickyNote;
   box: CSSProperties;
@@ -501,6 +563,7 @@ interface NoteCardProps {
  * curve of an oval.
  */
 function NoteCard({ note, box, editable, onDragBody, onText }: NoteCardProps) {
+  const pen = usePenOnField(onDragBody, editable);
   const shape = noteShapeOf(note);
   const body = noteBodyBox(note);
   const text = noteTextLocalBox(note);
@@ -569,7 +632,7 @@ function NoteCard({ note, box, editable, onDragBody, onText }: NoteCardProps) {
         readOnly={!editable}
         placeholder={editable ? 'Note…' : ''}
         onChange={(e) => onText(e.target.value)}
-        onPointerDown={(e) => e.stopPropagation()}
+        {...pen}
         style={{
           position: 'absolute',
           left: text.x,
@@ -618,6 +681,7 @@ function gridLine(table: TableLayer): { width: number; color: string; fill: stri
  * view state that evaporates on reload.
  */
 function TableCard({ table, box, editable, selected, zoom, onDragBody, onCell, onPatch }: TableCardProps) {
+  const pen = usePenOnField(onDragBody, editable);
   const columns = columnFractions(table);
   const rows = rowFractions(table);
   const line = gridLine(table);
@@ -666,7 +730,7 @@ function TableCard({ table, box, editable, selected, zoom, onDragBody, onCell, o
               value={tableCell(table, row, column)}
               readOnly={!editable}
               onChange={(e) => onCell(row, column, e.target.value)}
-              onPointerDown={(e) => e.stopPropagation()}
+              {...pen}
               style={{
                 minWidth: 0,
                 border: `${line.width}px solid ${line.color}`,

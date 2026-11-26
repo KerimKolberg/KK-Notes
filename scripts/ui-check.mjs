@@ -1723,6 +1723,126 @@ async function checkCrashIsReported(browser) {
 }
 
 /**
+ * Tables, as reported on the Flow Z13:
+ * - after typing on the page (the keyboard button), a table could not be chosen again: the page's text had gone on
+ *   top of it and took every press, behind the drawings or in front;
+ * - a pen dragging a table by its cells came out as letters typed into them (Windows' handwriting into text fields):
+ *   a pen's press on a cell is the app's now, a drag moves the table and a tap puts the caret in the cell;
+ * - a second kind of table, drawn as lines in the pen's colour, which the area eraser takes a bit of.
+ */
+async function checkTablesAndPageText(browser) {
+  console.log('tables over page text, the pen on a table\'s cells, and drawn tables, 1280x800:');
+  for (const front of [false, true]) {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+    await page.click('[data-new-document]');
+    await page.waitForSelector('[data-palette-keyboard]', { state: 'visible', timeout: 20_000 });
+    await page.click('[data-insert-trigger]');
+    await page.click('[data-insert-table]');
+    await page.waitForSelector('[data-cell="0-0"]');
+    await page.click('[data-palette-keyboard]');
+    await page.waitForSelector('[data-tool-palette][data-typing="true"]', { timeout: 3_000 });
+    await page.keyboard.type('Some text on the page');
+    if (front) await page.click('[data-text-above-ink]');
+    await page.waitForTimeout(150);
+    await page.click('[data-palette-draw]').catch(() => {});
+    await page.click('[data-palette-tool="select"]');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(150);
+    const middle = await page.$eval('[data-media-kind="table"]', (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+    await page.mouse.click(middle.x, middle.y);
+    await page.waitForTimeout(150);
+    check(`after typing on the page (${front ? 'in front of' : 'behind'} the drawings), a click chooses the table again`, (await page.$('[data-media-toolbar]')) !== null);
+    if (front) {
+      const text = await page.$eval('[data-media-layer-above] [data-text-flow] .rt > *', (el) => { const r = el.getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; });
+      const hit = await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('[data-text-flow]'), [text.x, text.y]);
+      check('and the text in front still takes a press on its line', hit);
+    }
+    check('no page errors', errors.length === 0, errors.join(' | '));
+
+    if (!front) {
+      // The pen on a chosen table's cells, with real pen input.
+      const cdp = await ctx.newCDPSession(page);
+      const pen = (type, x, y, buttons = 1) => cdp.send('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' ? (buttons & 1 ? 'left' : 'none') : 'left', buttons, clickCount: 1, pointerType: 'pen', force: 0.5 });
+      // Seen on its way in, and read once it has been everywhere it goes (the cell keeps it from going further).
+      await page.evaluate(() => { window.__penDowns = []; window.addEventListener('pointerdown', (e) => { if (e.pointerType === 'pen') setTimeout(() => window.__penDowns.push(e.defaultPrevented), 0); }, true); });
+      const cell = await page.$eval('[data-cell="1-1"]', (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      const before = await page.$eval('[data-media-kind="table"]', (el) => el.getBoundingClientRect().toJSON());
+      await pen('mouseMoved', cell.x, cell.y, 0);
+      await pen('mousePressed', cell.x, cell.y);
+      for (let i = 1; i <= 12; i++) await pen('mouseMoved', cell.x + i * 6, cell.y + i * 4);
+      await pen('mouseReleased', cell.x + 72, cell.y + 48, 0);
+      await page.waitForTimeout(150);
+      const after = await page.$eval('[data-media-kind="table"]', (el) => el.getBoundingClientRect().toJSON());
+      check('a pen dragged on a chosen table\'s cell moves the table', Math.abs(after.left - before.left - 72) < 3 && Math.abs(after.top - before.top - 48) < 3, `${Math.round(after.left - before.left)}, ${Math.round(after.top - before.top)}`);
+      check('and the pen\'s press is the app\'s, not Windows\' to write into the field', JSON.stringify(await page.evaluate(() => window.__penDowns)) === '[true]', JSON.stringify(await page.evaluate(() => window.__penDowns)));
+      check('nothing is typed into the cells', (await page.$$eval('[data-cell]', (els) => els.map((e) => e.value).join(''))) === '');
+      const moved = await page.$eval('[data-cell="0-1"]', (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+      await pen('mouseMoved', moved.x, moved.y, 0);
+      await pen('mousePressed', moved.x, moved.y);
+      await pen('mouseReleased', moved.x, moved.y, 0);
+      await page.waitForTimeout(100);
+      check('a pen tap puts the caret in the cell, to type', await page.evaluate(() => document.activeElement?.getAttribute('data-cell') === '0-1'));
+      await page.keyboard.type('ok');
+      check('and the keyboard types there', (await page.$eval('[data-cell="0-1"]', (el) => el.value)) === 'ok');
+    }
+    await ctx.close();
+  }
+
+  // A table drawn as lines.
+  const { ctx, page, errors } = await openPenDocument(browser);
+  await page.click('[data-insert-trigger]');
+  await page.click('[data-table-kind="drawn"]');
+  await page.click('[data-table-grid] [aria-label="3 by 4"]');
+  await page.click('[data-insert-table]');
+  await page.waitForTimeout(300);
+  const strokes = await page.evaluate(() => window.__pen.ink());
+  check('a drawn table is ink on the page', strokes > 0);
+  check('chosen with the lasso, to move it into place', (await page.$('[data-selection-box]')) !== null && (await page.$eval('[data-palette-tool][aria-pressed="true"]', (el) => el.getAttribute('data-palette-tool'))) === 'lasso');
+  check('with no table object on the page', (await page.$('[data-media-kind="table"]')) === null);
+  const box = await page.$eval('[data-selection-box]', (el) => el.getBoundingClientRect().toJSON());
+  const inkAt = (x, y) =>
+    page.$eval('[data-page-index="0"] [data-layer="committed"]', (c, [px, py]) => {
+      const b = c.getBoundingClientRect();
+      const k = c.width / b.width;
+      const d = c.getContext('2d').getImageData(Math.round((px - b.left - 3) * k), Math.round((py - b.top - 3) * k), Math.round(6 * k), Math.round(6 * k)).data;
+      let n = 0;
+      for (let i = 3; i < d.length; i += 4) if (d[i] > 40) n++;
+      return n;
+    }, [x, y]);
+  // The table's top line, at a quarter and at three quarters along.
+  const top = box.top + (box.height - (await page.$eval('[data-selection-box]', (el) => el.getBoundingClientRect().height))) + 0;
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(150);
+  const lineY = await page.evaluate(([x0, y0, x1, y1]) => {
+    const c = document.querySelector('[data-page-index="0"] [data-layer="committed"]');
+    const b = c.getBoundingClientRect();
+    const k = c.width / b.width;
+    const ctx = c.getContext('2d');
+    const x = Math.round((x0 + (x1 - x0) / 4 - b.left) * k);
+    for (let y = Math.round((y0 - b.top) * k); y < (y1 - b.top) * k; y++) if (ctx.getImageData(x, y, 1, 1).data[3] > 40) return b.top + y / k;
+    return -1;
+  }, [box.left, box.top, box.right, box.bottom]);
+  check('its top line is there', lineY > 0 && (await inkAt(box.left + box.width * 0.25, lineY)) > 0 && (await inkAt(box.left + box.width * 0.75, lineY)) > 0, String(lineY));
+  // The area eraser across the top line at a quarter along, and nowhere else.
+  await page.click('[data-palette-tool="eraser"]');
+  await page.click('[data-palette-tool="eraser"]');
+  await page.click('[data-eraser-mode="area"]');
+  await page.keyboard.press('Escape');
+  const ex = box.left + box.width * 0.25;
+  await page.evaluate(([pts]) => window.__pen.stroke(pts, 1), [Array.from({ length: 10 }, (_, i) => [ex, lineY - 15 + i * 3])]);
+  await page.waitForTimeout(200);
+  check('the area eraser takes a bit of a line', (await inkAt(ex, lineY)) === 0, String(await inkAt(ex, lineY)));
+  check('and leaves the rest of it', (await inkAt(box.left + box.width * 0.75, lineY)) > 0);
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  void top;
+  await ctx.close();
+}
+
+/**
  * Where everything stands on each dock. Sliding (the default), the toolbar is one line along its edge — the
  * keyboard first, then the tools, the colours and last the settings — one button thick, whichever edge it is on.
  *
@@ -5778,6 +5898,7 @@ try {
     checkWritingOnStyledTable,
     checkWritingForAWhile,
     checkCrashIsReported,
+    checkTablesAndPageText,
     checkAids,
     checkZoomWindow,
     checkSearch,

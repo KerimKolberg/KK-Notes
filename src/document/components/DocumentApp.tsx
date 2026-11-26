@@ -12,6 +12,8 @@ import { createStickyNote, createTable, createTextBox, nextZIndex, type NoteInit
 import { usePageDefaultsSource } from '../../preferences/usePageDefaultsSource';
 import type { MediaObject, Page } from '../types';
 import { InsertMenu } from './InsertMenu';
+import { drawnTableStrokes } from '../drawnTable';
+import { styleForTool } from '../../inking/engine/toolStyles';
 
 /** PDF.js only loads when the import dialog is actually opened. */
 const ImportPdfDialog = lazy(() => import('../../pdf/ImportPdfDialog').then((m) => ({ default: m.ImportPdfDialog })));
@@ -170,6 +172,22 @@ export function DocumentApp() {
   const insertTable = useCallback(
     (init: TableInit) => insertMedia((page, z) => createTable(page.dimensions, z, undefined, init)),
     [insertMedia],
+  );
+  /** A table of lines (`drawnTable.ts`): ink in the pen's colour and width, chosen with the lasso to move into place. */
+  const insertDrawnTable = useCallback(
+    (size: { rows: number; columns: number }) => {
+      const state = useDocumentStore.getState();
+      if (state.readOnly) return;
+      const page = state.document.pages[state.document.activePageIndex];
+      if (!page) return;
+      const settings = settingsRef.current;
+      const style = styleForTool('line', { ...settings, linePattern: 'solid', lineArrowheads: 'none' }, 'pen');
+      const strokes = drawnTableStrokes(page.dimensions, { ...size, style });
+      state.commitStrokes(page.id, strokes);
+      updateSettings({ tool: 'lasso' });
+      useDocumentStore.getState().setLassoSelection({ pageId: page.id, strokeIds: strokes.map((stroke) => stroke.id) });
+    },
+    [settingsRef, updateSettings],
   );
 
   const clearPageInkActive = useCallback(
@@ -479,6 +497,7 @@ export function DocumentApp() {
                 onInsertNote={insertNote}
                 onInsertText={insertTextBox}
                 onInsertTable={insertTable}
+                onInsertDrawnTable={insertDrawnTable}
                 onDone={onInsertDone}
               />
             )}
