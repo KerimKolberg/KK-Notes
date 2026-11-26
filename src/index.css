@@ -61,9 +61,10 @@ body {
   touch-action: none;
 }
 
-/* The page's text in front of the drawings is in a layer over the whole page: only its lines take a press, so a
-   table, a note or a picture under the rest of it can still be chosen (`MediaLayer.tsx`). */
-[data-media-layer-above] [data-text-flow] .rt > * {
+/* The page's text in front of the drawings is in a layer over the whole page: with the select tool only its lines
+   take a press, so a table, a note or a picture under the rest of it can still be chosen (`MediaLayer.tsx`). With any
+   other tool none of it does: the pen writes over it. */
+[data-media-layer-above][data-media-active='true'] [data-text-flow] .rt > * {
   pointer-events: auto;
 }
 

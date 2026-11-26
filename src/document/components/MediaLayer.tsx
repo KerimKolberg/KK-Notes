@@ -230,6 +230,7 @@ export const MediaLayer = memo(function MediaLayer({ page, zoom, active, layer =
       style={{ pointerEvents: active && !above ? 'auto' : 'none' }}
       data-media-layer={page.id}
       data-media-layer-above={above ? '' : undefined}
+      data-media-active={active ? 'true' : undefined}
       onPointerDown={(e) => {
         // Typing with the keyboard, a tap on the page is a place for the caret (below), not "select nothing".
         if (onPage(e) && !useTypingStore.getState().keyboard) selectMedia(null);
