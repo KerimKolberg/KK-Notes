@@ -24,6 +24,13 @@ mod transport;
 
 use tauri::Manager;
 
+pub use handwriting::HELPER_ARG as HANDWRITING_HELPER_ARG;
+
+/// The app started as the handwriting helper (`handwriting::HELPER_ARG`): read one page, answer, and end.
+pub fn run_handwriting_helper() {
+    handwriting::run_helper();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();

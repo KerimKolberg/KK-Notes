@@ -1688,6 +1688,41 @@ async function checkWritingForAWhile(browser) {
 }
 
 /**
+ * A crash is reported, even after a restored draft (reported: the app on Windows closed by itself, and no report was
+ * ever seen; the "Restored autosaved draft" notice that follows a crash took the place of the crash's own). A second
+ * page in the same browser starts while the first is still marked as running, as the app does after its window
+ * vanished.
+ */
+async function checkCrashIsReported(browser) {
+  console.log('a crash is reported after the draft it restores, and kept for the report, 1280x800:');
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const first = await ctx.newPage();
+  await openDocument(first);
+  await first.waitForSelector('[data-layer="live"]', { state: 'attached' });
+  await first.evaluate(() => {
+    const live = document.querySelector('[data-layer="live"]');
+    const fire = (type, x, y, buttons) => live.dispatchEvent(new PointerEvent(type, { pointerType: 'pen', pointerId: 5, isPrimary: true, bubbles: true, cancelable: true, clientX: x, clientY: y, buttons, button: type === 'pointermove' ? -1 : 0, pressure: 0.5 }));
+    fire('pointerdown', 500, 300, 1);
+    for (let i = 1; i < 20; i++) fire('pointermove', 500 + i * 5, 300 + Math.sin(i) * 8, 1);
+    fire('pointerup', 600, 300, 0);
+  });
+  await first.waitForTimeout(2500); // the draft is written
+  // The app starts again while the first is still marked as running: it ended on screen.
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  const crashNotice = await page.waitForFunction(() => /stopped unexpectedly/.test(document.body.textContent ?? ''), null, { timeout: 25_000 }).then(() => true).catch(() => false);
+  check('the next start says the app stopped unexpectedly', crashNotice);
+  check('with the details to copy', (await page.$$eval('button', (els) => els.some((b) => /Copy details/.test(b.textContent ?? '')))));
+  await first.close();
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  const report = await page.evaluate(() => JSON.parse(localStorage.getItem('kknotes.problems.v1') ?? '[]').map((p) => p.what));
+  check('and the history keeps it for the report', report.includes('The app ended while it was on screen'), JSON.stringify(report));
+  await ctx.close();
+}
+
+/**
  * Where everything stands on each dock. Sliding (the default), the toolbar is one line along its edge — the
  * keyboard first, then the tools, the colours and last the settings — one button thick, whichever edge it is on.
  *
@@ -5742,6 +5777,7 @@ try {
     checkBarrelEverywhere,
     checkWritingOnStyledTable,
     checkWritingForAWhile,
+    checkCrashIsReported,
     checkAids,
     checkZoomWindow,
     checkSearch,

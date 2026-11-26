@@ -4,7 +4,7 @@ import './index.css';
 import App from './App.tsx';
 import { installAndroidInsets } from './ui/androidInsets';
 import { useDesktopStore } from './desktop/desktopStore';
-import { addNativeProblems, describeProblems, startProblemLog, type PreviousRun } from './lib/problemLog';
+import { addNativeProblems, describeProblems, markProblemsShown, startProblemLog, type PreviousRun } from './lib/problemLog';
 import { isTauri, tauriInvoke } from './desktop/tauri';
 
 const rootElement = document.getElementById('root');
@@ -18,11 +18,45 @@ installAndroidInsets();
 
 // How the last run went: if it ended while on screen, or something went wrong in it, say so once, with the details
 // to copy and send on (`lib/problemLog.ts`).
+/** How long start-up is given to say its own things (a restored draft) before this is said. */
+const AFTER_START_MS = 3_000;
+/** The longest this waits for a notice already showing to go. */
+const NOTICE_WAIT_MS = 15_000;
+
+/**
+ * After start-up, and after any notice already showing: a crash is followed by a restored draft, whose notice
+ * ("Restored autosaved draft…") took the place of this one, so the crash was never seen to be reported.
+ */
+function whenStartedAndQuiet(say: () => void): void {
+  window.setTimeout(() => {
+    if (!useDesktopStore.getState().notice) {
+      say();
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      stop();
+      say();
+    }, NOTICE_WAIT_MS);
+    const stop = useDesktopStore.subscribe((s) => {
+      if (s.notice) return;
+      window.clearTimeout(timer);
+      stop();
+      say();
+    });
+  }, AFTER_START_MS);
+}
+
 function sayHowTheLastRunWent(run: PreviousRun): void {
-  if (!run.endedUnexpectedly && run.problems.length === 0 && !run.native) return;
+  if (!run.endedUnexpectedly && run.problems.length === 0) return;
+  whenStartedAndQuiet(() => sayNow(run));
+}
+
+function sayNow(run: PreviousRun): void {
   const details = describeProblems(run);
+  // Said once; the history stays for *Copy problem report* in the toolbar's settings.
+  markProblemsShown();
   useDesktopStore.getState().setNotice({
-    text: run.endedUnexpectedly || run.native
+    text: run.endedUnexpectedly
       ? 'KK-Notes stopped unexpectedly last time. The details can be copied to send on.'
       : 'Something went wrong last time KK-Notes ran. The details can be copied to send on.',
     action: {

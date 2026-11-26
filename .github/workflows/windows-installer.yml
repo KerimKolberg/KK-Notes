@@ -65,6 +65,22 @@ jobs:
         # MSI is still built by `npm run desktop:build` on a machine of your own.
         run: npm run tauri build -- --bundles nsis
 
+      # Handwriting is read by the app started again as a helper, apart from it (`handwriting.rs`): the
+      # built program is asked as the app asks it. A warning, not a failure: a server may have no
+      # handwriting recognition installed, which says nothing about the app.
+      - name: Check the handwriting helper answers
+        shell: bash
+        run: |
+          APP="$(find src-tauri/target/release -maxdepth 1 -name '*.exe' | head -1)"
+          [ -n "$APP" ] || { echo "::warning::No app program found to ask"; exit 0; }
+          ask() {
+            OUT="$(printf '%s' "$1" | "$APP" --kk-handwriting-helper)"; CODE=$?
+            echo "Asked $1"; echo "Answer (exit $CODE): $OUT"
+            case "$OUT" in *'"ok":'*) ;; *) echo "::warning::The handwriting helper did not answer (exit $CODE)";; esac
+          }
+          ask '{"ask":"recognizers"}'
+          ask '{"ask":"recognize","strokes":[{"points":[10,10,0.5,20,25,0.5,30,10,0.5,40,25,0.5]}],"recognizer":null}'
+
       - name: Locate the installer
         id: exe
         shell: bash

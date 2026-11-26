@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { addNativeProblems, describeProblems, problemReport, recordProblem, startProblemLog } from '../problemLog';
+import { ENDED_UNEXPECTEDLY, addNativeProblems, describeProblems, markProblemsShown, problemReport, recordProblem, startProblemLog } from '../problemLog';
 
 // The tests run without a browser: a page's storage, events and visibility, as the log uses them.
 const store = new Map<string, string>();
@@ -14,7 +14,7 @@ vi.stubGlobal('localStorage', localStorage);
 vi.stubGlobal('window', window);
 vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible' }));
 
-describe('what went wrong, kept for the next start', () => {
+describe('what went wrong, kept on the device until it is sent on', () => {
   beforeEach(() => localStorage.clear());
 
   it('finds a run that ended while on screen, and what went wrong in it', () => {
@@ -23,56 +23,57 @@ describe('what went wrong, kept for the next start', () => {
     // The app is gone without closing: the next start finds it still marked as running.
     const next = startProblemLog();
     expect(next.endedUnexpectedly).toBe(true);
-    expect(next.problems).toHaveLength(1);
+    expect(next.problems.map((p) => p.what)).toEqual(['Drawing this note failed', ENDED_UNEXPECTEDLY]);
     expect(next.problems[0]!.detail).toContain('Error: boom');
-  });
-
-  it('shows the record once', () => {
-    recordProblem('x', 'y');
-    startProblemLog();
-    window.dispatchEvent(new Event('pagehide'));
-    expect(startProblemLog().problems).toHaveLength(0);
   });
 
   it('is not a crash when the app closed itself', () => {
     startProblemLog();
     window.dispatchEvent(new Event('pagehide'));
-    expect(startProblemLog().endedUnexpectedly).toBe(false);
+    const next = startProblemLog();
+    expect(next.endedUnexpectedly).toBe(false);
+    expect(next.problems).toHaveLength(0);
   });
 
-  it('keeps only the newest few', () => {
-    for (let i = 0; i < 20; i++) recordProblem(`problem ${i}`, 'x');
-    const run = startProblemLog();
-    expect(run.problems.length).toBeLessThanOrEqual(8);
-    expect(run.problems.at(-1)!.what).toBe('problem 19');
+  it('says once what is new, and keeps the history for the report', () => {
+    recordProblem('Once', 'x');
+    expect(startProblemLog().problems).toHaveLength(1);
+    markProblemsShown();
+    window.dispatchEvent(new Event('pagehide'));
+    expect(startProblemLog().problems).toHaveLength(0);
+    expect(problemReport()).toContain('Once');
+  });
+
+  it('keeps only the newest twenty', () => {
+    for (let i = 0; i < 30; i++) recordProblem(`problem ${i}`, 'x');
+    const report = problemReport();
+    expect(report).toContain('problem 29');
+    expect(report).not.toContain('problem 9\n');
+    expect(report).toMatch(/The last 20 problem/);
   });
 
   it('says when nothing was recorded that it was not the app\'s code', () => {
     expect(describeProblems({ endedUnexpectedly: true, problems: [] })).toMatch(/web view or Windows/);
   });
 
-  it('reports this run too', () => {
+  it('takes in what the native side wrote down: when, what, and why', () => {
     startProblemLog();
-    recordProblem('Now', new TypeError('bad'));
-    expect(problemReport()).toContain('TypeError: bad');
+    const run = addNativeProblems("1763990000\tThe handwriting reader failed (kept apart from the app)\texit code 0xc0000005; \n");
+    expect(run.problems.at(-1)!.what).toBe('The handwriting reader failed (kept apart from the app) (native)');
+    expect(run.problems.at(-1)!.at).toMatch(/^2025-11-24T/);
+    expect(describeProblems(run)).toContain('0xc0000005');
+    expect(problemReport()).toContain('0xc0000005');
   });
 
-  it('reads in what the native side wrote down: when, what, and why', () => {
+  it('takes nothing from a native side that answered with nothing', () => {
     startProblemLog();
-    const run = addNativeProblems("1763990000\tThe web view lost a process\tthe page's process exited (out of memory), exit code 0xe0000008\n");
-    const report = describeProblems(run);
-    expect(report).toContain('The web view lost a process (native)');
-    expect(report).toContain('out of memory');
-    expect(report).toContain('2025-11-24T');
-    expect(report).not.toMatch(/No errors were recorded/);
-    expect(problemReport()).toContain('out of memory');
+    for (const nothing of ['   ', null, undefined, { odd: true }]) expect(addNativeProblems(nothing).problems).toHaveLength(0);
   });
 
-  it('leaves the report as it was when the native side wrote nothing, or answered with nothing', () => {
+  it('counts the times the app ended while on screen, in the report', () => {
     startProblemLog();
-    const before = describeProblems(addNativeProblems('   '));
-    expect(describeProblems(addNativeProblems(null))).toBe(before);
-    expect(describeProblems(addNativeProblems(undefined))).toBe(before);
-    expect(describeProblems(addNativeProblems({ odd: true }))).toBe(before);
+    startProblemLog();
+    startProblemLog();
+    expect(problemReport()).toContain('Ended while on screen: 2.');
   });
 });

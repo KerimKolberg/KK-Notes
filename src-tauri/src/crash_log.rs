@@ -21,6 +21,11 @@ pub fn install(dir: std::path::PathBuf) {
     problems::install(&dir);
 }
 
+/// Write one problem down (see `notes_sync::problems::record`).
+pub fn record(what: &str, detail: &str) {
+    problems::record(what, detail);
+}
+
 /// The record so far, for the page's problem report; read once, then started afresh.
 #[tauri::command]
 pub fn take_native_problems() -> Result<String, String> {

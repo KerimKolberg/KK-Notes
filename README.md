@@ -347,7 +347,11 @@ recording: the pen chose tools but drew nothing, the mouse drew):
   pressed with a button no tool is set for says so at once. Using the button to erase something on purpose says
   nothing.
 
-**What went wrong is kept for the next start** (`lib/problemLog.ts`). "It crashed" is all a writer can report, and on
+**What went wrong is kept until it is sent on** (`lib/problemLog.ts`). It is a **history** of the last 20 problems
+(each crash found at start among them, as "The app ended while it was on screen"), not shown once and forgotten:
+*Copy problem report* in the toolbar's settings copies all of it at any time. The notice about a crash waits until
+start-up has said its own things: a crash is followed by a restored draft, whose notice used to take its place, so a
+crash was never seen to be reported (`checkCrashIsReported`). The first version of this record: "It crashed" is all a writer can report, and on
 a Windows tablet nothing else is left. So the app keeps the last few errors on the device (an error nobody caught, a
 failure nobody caught, a screen that failed to draw: with where, and which build), and marks itself as running while
 it is on screen (not while hidden, when Android may end it, which is no crash). Found still running at the next start,
@@ -1001,6 +1005,16 @@ reads them with `InkRecognizerContainer.RecognizeAsync` on a blocking thread in 
 hands back each word with its box. It reads in the languages that have handwriting installed in Windows (Settings
 → Time & language → Language & region → a language's options → Handwriting); the settings offer them, Windows'
 own pick by default. Elsewhere the shell has no recogniser and says so.
+
+**The recogniser runs apart from the app** (`HELPER_ARG`, `ask_helper`). It is Windows' own code, loaded into
+whatever process asks it to read, and the app on Windows was reported closing outright (the window simply gone, no
+error anywhere) a moment after small letters were written: which is when a page is read, 1.5 s after the pen leaves.
+A fault in code loaded into the app takes the whole app with it and leaves no word. So the app starts itself again as
+a small helper with no window (`KK-Notes --kk-handwriting-helper`), writes the request (the strokes, or "which
+recognisers") as JSON to its input, reads the answer from its output, and stops it after 30 s. If the recogniser
+fails, the helper goes and the app does not: what failed and its exit code are written down (`crash_log.rs`, in the
+problem report), the page is told it could not be read, and the reader gives up after three failures. If the app
+still closes with the helper in place, the recogniser is ruled out.
 
 - **What is read.** Only what the pen wrote (`tool: 'pen'` freehand strokes), not the highlighter, tape, shapes or
   the pixel eraser. Each stroke goes over as a flat run of x, y, pressure in page units, points closer than a unit
